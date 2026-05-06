@@ -65,17 +65,21 @@ const buildContextMessages = async (newQuery, topicId) => {
 
   const summary = await summarizeWithGemini(historyText);
 
-  return {
-    context: [{
-      role: 'user',
-      content: `Use this previous conversation context to answer the user's next message. If the user says "this", "that", "same", "previous", "above", "relate", or asks a follow-up, connect it to this context.
+return {
+  context: [{
+    role: 'user',
+    content: `You are continuing the same chat topic. Use the previous conversation below to answer the user's next message. Do not say the previous context is missing unless the raw messages truly do not contain it. If the user's message is short or vague, infer it from the previous conversation.
 
 [PREVIOUS CONVERSATION SUMMARY]
 ${summary}
-[END PREVIOUS CONVERSATION SUMMARY]`,
-    }],
-    isNewTopic: false,
-  };
+[END PREVIOUS CONVERSATION SUMMARY]
+
+[RECENT RAW CONVERSATION]
+${historyText}
+[END RECENT RAW CONVERSATION]`,
+  }],
+  isNewTopic: false,
+};
 };
 
 /**
