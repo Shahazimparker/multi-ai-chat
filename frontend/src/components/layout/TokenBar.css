@@ -1,0 +1,35 @@
+/* ============================================================
+   FILE: frontend/src/components/layout/TokenBar.css
+   ============================================================ */
+.token-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  background: rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  font-size: 0.75rem;
+  font-family: 'Inter', sans-serif;
+  flex-wrap: wrap;
+}
+.token-icon  { color: #fbbf24; flex-shrink:0; }
+.token-label { color: rgba(255,255,255,0.4); flex-shrink:0; }
+
+.token-track {
+  width: 120px; height: 5px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 999px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.token-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.5s ease, background 0.5s ease;
+}
+
+.token-stat { color: rgba(255,255,255,0.7); font-weight:500; }
+.token-stat.used  { color: #fff; }
+.token-stat.total { color: rgba(255,255,255,0.4); }
+.token-sep        { color: rgba(255,255,255,0.2); }
+.token-remaining  { font-weight:600; font-size:0.72rem; }

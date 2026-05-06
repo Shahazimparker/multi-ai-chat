@@ -1,0 +1,245 @@
+/* ============================================================
+   FILE: frontend/src/pages/LoginPage.css
+   PURPOSE: Login page styles — dark glassmorphism + colorful orbs
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Inter:wght@300;400;500&display=swap');
+
+.login-root {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #080b14;
+  position: relative;
+  overflow: hidden;
+  font-family: 'Inter', sans-serif;
+}
+
+/* ── Background orbs ─────────────────────────────── */
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.35;
+  animation: float 8s ease-in-out infinite;
+}
+.orb-1 { width:500px; height:500px; background:#7c3aed; top:-150px; left:-150px; animation-delay:0s; }
+.orb-2 { width:400px; height:400px; background:#0ea5e9; bottom:-100px; right:-100px; animation-delay:-2s; }
+.orb-3 { width:300px; height:300px; background:#f59e0b; top:40%; left:60%; animation-delay:-4s; }
+.orb-4 { width:250px; height:250px; background:#10b981; bottom:20%; left:10%; animation-delay:-6s; }
+
+@keyframes float {
+  0%,100% { transform: translateY(0) scale(1); }
+  50%      { transform: translateY(-30px) scale(1.05); }
+}
+
+/* ── Card ─────────────────────────────────────────── */
+.login-card {
+  position: relative;
+  z-index: 10;
+  background: rgba(255,255,255,0.04);
+  backdrop-filter: blur(24px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 24px;
+  padding: 48px 40px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 32px 80px rgba(0,0,0,0.5);
+  animation: slideUp 0.6s cubic-bezier(0.16,1,0.3,1);
+}
+
+@keyframes slideUp {
+  from { opacity:0; transform:translateY(40px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+
+/* ── Logo ──────────────────────────────────────────── */
+.login-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.logo-icon { color: #a78bfa; }
+.logo-text {
+  font-family: 'Syne', sans-serif;
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: #fff;
+}
+.logo-accent { color: #a78bfa; }
+.login-sub {
+  color: rgba(255,255,255,0.45);
+  font-size: 0.85rem;
+  margin-bottom: 20px;
+}
+
+/* ── Model pills ────────────────────────────────────── */
+.model-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 24px;
+}
+.pill {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  border: 1px solid rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.6);
+  background: rgba(255,255,255,0.05);
+}
+
+/* ── Error ──────────────────────────────────────────── */
+.login-error {
+  background: rgba(239,68,68,0.15);
+  border: 1px solid rgba(239,68,68,0.4);
+  color: #fca5a5;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.83rem;
+  margin-bottom: 16px;
+}
+
+/* ── Form ────────────────────────────────────────────── */
+.login-form { display: flex; flex-direction: column; gap: 14px; }
+
+.input-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.input-icon {
+  position: absolute;
+  left: 14px;
+  color: rgba(255,255,255,0.35);
+  pointer-events: none;
+}
+.input-group input {
+  width: 100%;
+  padding: 12px 14px 12px 40px;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 12px;
+  color: #fff;
+  font-size: 0.9rem;
+  font-family: 'Inter', sans-serif;
+  outline: none;
+  transition: border-color 0.2s, background 0.2s;
+}
+.input-group input:focus {
+  border-color: rgba(167,139,250,0.6);
+  background: rgba(255,255,255,0.1);
+}
+.input-group input::placeholder { color: rgba(255,255,255,0.3); }
+
+.eye-btn {
+  position: absolute;
+  right: 12px;
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.4);
+  cursor: pointer;
+  padding: 4px;
+}
+.eye-btn:hover { color: rgba(255,255,255,0.7); }
+
+.remember-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255,255,255,0.5);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+/* ── Login button ─────────────────────────────────── */
+.btn-login {
+  padding: 13px;
+  background: linear-gradient(135deg, #7c3aed, #0ea5e9);
+  border: none;
+  border-radius: 12px;
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-family: 'Syne', sans-serif;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+}
+.btn-login:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+.btn-login:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-spinner {
+  width: 18px; height: 18px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+}
+
+/* ── Divider ──────────────────────────────────────── */
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0;
+  color: rgba(255,255,255,0.2);
+  font-size: 0.8rem;
+}
+.login-divider::before,
+.login-divider::after { content: ''; flex: 1; height: 1px; background: rgba(255,255,255,0.1); }
+
+/* ── Anonymous button ─────────────────────────────── */
+.btn-anonymous {
+  width: 100%;
+  padding: 12px;
+  background: rgba(255,255,255,0.05);
+  border: 1px dashed rgba(255,255,255,0.2);
+  border-radius: 12px;
+  color: rgba(255,255,255,0.65);
+  font-size: 0.9rem;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  transition: background 0.2s, border-color 0.2s;
+}
+.btn-anonymous:hover {
+  background: rgba(255,255,255,0.09);
+  border-color: rgba(255,255,255,0.35);
+  color: #fff;
+}
+.anon-note {
+  display: block;
+  width: 100%;
+  font-size: 0.72rem;
+  color: rgba(255,255,255,0.3);
+  margin-top: 2px;
+}
+
+/* ── Loading screen ───────────────────────────────── */
+.loading-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #080b14;
+}
+.spinner {
+  width: 36px; height: 36px;
+  border: 3px solid rgba(167,139,250,0.3);
+  border-top-color: #a78bfa;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

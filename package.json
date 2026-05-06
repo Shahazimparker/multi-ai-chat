@@ -1,0 +1,16 @@
+{
+  "name": "multi-ai-chat",
+  "version": "1.0.0",
+  "description": "MultiAI Chat Platform — monorepo root",
+  "private": true,
+  "scripts": {
+    "install:all":   "cd backend && npm install && cd ../frontend && npm install",
+    "dev:backend":   "cd backend && npm run dev",
+    "dev:frontend":  "cd frontend && npm start",
+    "build:frontend":"cd frontend && npm run build",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

@@ -1,0 +1,23 @@
+# Env files — NEVER commit
+.env
+.env.local
+.env.production
+**/.env
+**/.env.local
+
+# Node
+node_modules/
+**/node_modules/
+npm-debug.log*
+
+# React build
+frontend/build/
+frontend/.cache/
+
+# Vercel
+.vercel/
+
+# OS
+.DS_Store
+Thumbs.db
+.vscode/settings.json
