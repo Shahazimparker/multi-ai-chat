@@ -8,12 +8,11 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const supabase                = require('../config/supabase');
 const { SUMMARY_MODEL }       = require('../config/models');
-const { isSameTopic }         = require('./similarity.service');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 /**
- * getRecentMessages — fetch last N messages for a topic
+ * getRecentMessages - fetch last N messages for a topic
  */
 const getRecentMessages = async (topicId, limit = 10) => {
   const { data, error } = await supabase
@@ -28,7 +27,7 @@ const getRecentMessages = async (topicId, limit = 10) => {
 };
 
 /**
- * summarizeWithGemini — creates a concise summary of messages
+ * summarizeWithGemini - creates a concise summary of messages
  * Always uses Gemini Flash regardless of selected model
  * @param {string} text  text to summarize
  * @returns {string}     summary
@@ -47,14 +46,12 @@ const summarizeWithGemini = async (text) => {
 };
 
 /**
- * buildContextMessages — main function used by chat controller
+ * buildContextMessages - main function used by chat controller
  * Returns array of {role, content} messages to prepend to the AI call
  *
  * Logic:
- *  1. If no topicId → new chat, no context
- *  2. If new query is similar to recent messages → inject summary as context
- *  3. If new query is different → treat as new topic, no history
- *  4. If new query itself is >500 words → summarize before sending
+ *  1. If no topicId -> new chat, no context
+ *  2. If topicId exists -> summarize recent messages and inject as context
  */
 const buildContextMessages = async (newQuery, topicId) => {
   if (!topicId) return { context: [], isNewTopic: true };
@@ -62,37 +59,32 @@ const buildContextMessages = async (newQuery, topicId) => {
   const recent = await getRecentMessages(topicId, 10);
   if (recent.length === 0) return { context: [], isNewTopic: true };
 
-  // Check topic similarity
-  const sameTopic = isSameTopic(newQuery, recent);
-
-  if (!sameTopic) {
-    return { context: [], isNewTopic: true };
-  }
-
-  // Build conversation text for summarization
   const historyText = recent
     .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
     .join('\n');
 
   const summary = await summarizeWithGemini(historyText);
 
-  // Return as a system-style context message
   return {
     context: [{
       role: 'user',
-      content: `[CONVERSATION CONTEXT - Previous discussion summary]\n${summary}\n[END CONTEXT]\n\nContinue the conversation based on the above context.`,
+      content: `Use this previous conversation context to answer the user's next message. If the user says "this", "that", "same", "previous", "above", "relate", or asks a follow-up, connect it to this context.
+
+[PREVIOUS CONVERSATION SUMMARY]
+${summary}
+[END PREVIOUS CONVERSATION SUMMARY]`,
     }],
     isNewTopic: false,
   };
 };
 
 /**
- * maybeCompressQuery — if query is long, summarize it first
+ * maybeCompressQuery - if query is long, summarize it first
  * Reduces input tokens for expensive paid models
  */
 const maybeCompressQuery = async (query) => {
   const wordCount = query.split(/\s+/).length;
-  if (wordCount < 150) return query; // short enough — skip
+  if (wordCount < 150) return query; // short enough - skip
 
   try {
     const model = genAI.getGenerativeModel({ model: SUMMARY_MODEL.model });
