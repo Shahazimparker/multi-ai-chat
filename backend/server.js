@@ -42,39 +42,6 @@ app.use('/api/chat',    chatRoutes);     // send message, stream
 app.use('/api/admin',   adminRoutes);    // user management, analytics
 app.use('/api/history', historyRoutes);  // chat history, topics
 
-// ── debug ─────────────────────────────────────────────
-const bcrypt = require('bcryptjs');
-const supabase = require('./config/supabase');
-
-app.get('/api/debug/admin-login', async (req, res) => {
-  const { data: user, error } = await supabase
-    .from('users')
-    .select('id, email, username, role, is_active, expires_at, password_hash')
-    .eq('username', 'admin')
-    .single();
-
-  if (error) {
-    return res.status(500).json({
-      found: false,
-      supabaseError: error.message,
-      code: error.code,
-    });
-  }
-
-  const passwordMatches = await bcrypt.compare('Admin@1234', user.password_hash);
-
-  res.json({
-    found: true,
-    username: user.username,
-    email: user.email,
-    role: user.role,
-    isActive: user.is_active,
-    expiresAt: user.expires_at,
-    hashPrefix: user.password_hash?.slice(0, 7),
-    passwordMatches,
-  });
-});
-
 // ── 404 handler ─────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
