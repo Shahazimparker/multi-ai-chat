@@ -39,6 +39,7 @@
 /* ── Dropdown ───────────────────────────────────── */
 .model-dropdown {
   position: absolute;
+  z-index: 101;
   top: calc(100% + 8px);
   left: 0;
   min-width: 280px;
