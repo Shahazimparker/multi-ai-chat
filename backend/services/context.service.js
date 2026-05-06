@@ -56,27 +56,22 @@ const summarizeWithGemini = async (text) => {
 const buildContextMessages = async (newQuery, topicId) => {
   if (!topicId) return { context: [], isNewTopic: true };
 
-  const recent = await getRecentMessages(topicId, 10);
+  const recent = await getRecentMessages(topicId, 6);
   if (recent.length === 0) return { context: [], isNewTopic: true };
 
   const historyText = recent
     .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
     .join('\n');
 
-  const summary = await summarizeWithGemini(historyText);
 
 return {
   context: [{
     role: 'user',
-    content: `You are continuing the same chat topic. Use the previous conversation below to answer the user's next message. Do not say the previous context is missing unless the raw messages truly do not contain it. If the user's message is short or vague, infer it from the previous conversation.
+    content: `You are continuing the same chat topic. Use the recent conversation below to answer the user's next message. If the user's message is short or vague, infer it from this recent conversation.
 
-[PREVIOUS CONVERSATION SUMMARY]
-${summary}
-[END PREVIOUS CONVERSATION SUMMARY]
-
-[RECENT RAW CONVERSATION]
+[RECENT CONVERSATION]
 ${historyText}
-[END RECENT RAW CONVERSATION]`,
+[END RECENT CONVERSATION]`,
   }],
   isNewTopic: false,
 };
