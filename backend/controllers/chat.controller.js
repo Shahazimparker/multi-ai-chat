@@ -31,6 +31,7 @@ const sendMessage = async (req, res) => {
   const startTime   = Date.now();
   const {
   modelId,
+  providerModelId,
   message,
   topicId,
   memoryMode = 'summarized',
