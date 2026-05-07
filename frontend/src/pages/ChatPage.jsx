@@ -13,6 +13,7 @@ import TokenBar      from '../components/layout/TokenBar';
 import { useAuth }   from '../context/AuthContext';
 import api           from '../config/api';
 import './ChatPage.css';
+import UnifiedModelModal from '../components/chat/UnifiedModelModal';
 
 const ChatPage = () => {
   const { refreshTokenStats } = useAuth();
@@ -30,6 +31,10 @@ const ChatPage = () => {
   const [memoryMode, setMemoryMode] = useState('summarized');
   const [historyLimit, setHistoryLimit] = useState(10);
   const [showAdvancedMemory, setShowAdvancedMemory] = useState(false);
+  const [unifiedProvider, setUnifiedProvider] = useState(null);
+  const [providerModelId, setProviderModelId] = useState(null);
+  const [failedMessage, setFailedMessage] = useState(null);
+  const [llmError, setLlmError] = useState(null);
 
 
   // Auto-scroll to latest message
@@ -66,6 +71,7 @@ const ChatPage = () => {
   const handleSend = useCallback(async () => {
     if (!input.trim() || loading || !model) return;
     const userMsg = input.trim();
+	setFailedMessage(userMsg);
     setInput('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setError('');
@@ -81,6 +87,7 @@ const ChatPage = () => {
         topicId: activeTopic?.id || undefined,
 		memoryMode,
 		historyLimit,
+		providerModelId,
       });
 
       const { reply, tokensUsed, topicId, cacheHit, model: modelLabel } = res.data;
@@ -99,12 +106,17 @@ const ChatPage = () => {
 
       await refreshTokenStats(); // refresh token bar
     } catch (err) {
-      const msg = err.response?.data?.error || 'Something went wrong. Try again.';
-      setError(msg);
-      setMessages(prev => [...prev, { role: 'assistant', content: `❌ Error: ${msg}` }]);
-    } finally {
-      setLoading(false);
-    }
+  if (err.response?.data?.retryable) {
+    setLlmError(err.response.data);
+    return;
+  }
+
+  const msg = err.response?.data?.error || 'Something went wrong. Try again.';
+  setError(msg);
+  setMessages(prev => [...prev, { role: 'assistant', content: `❌ Error: ${msg}` }]);
+} finally {
+  setLoading(false);
+}
   }, [input, loading, model, activeTopic, refreshTokenStats]);
 
   // Ctrl+Enter or Enter (without shift) to send
@@ -130,7 +142,15 @@ const ChatPage = () => {
 
         {/* Toolbar */}
         <div className="chat-toolbar">
-          <ModelSelector selectedModel={model} onModelChange={setModel} />
+          <ModelSelector
+  selectedModel={model}
+  onModelChange={(nextModel) => {
+    setModel(nextModel);
+    setProviderModelId(null);
+  }}
+  onUnifiedProviderSelect={setUnifiedProvider}
+/>
+
           {activeTopic && (
             <span className="topic-hint">
               Continuing topic · {messages.length} messages
@@ -214,7 +234,6 @@ const ChatPage = () => {
     </label>
   )}
 </div>
-
           <div className="input-box">
             <textarea
               ref={textareaRef}
@@ -236,7 +255,43 @@ const ChatPage = () => {
           <p className="input-hint">Enter to send · Shift+Enter for new line</p>
         </div>
       </main>
+	  {llmError && (
+  <div className="llm-error-backdrop">
+    <div className="llm-error-modal">
+      <h3>Selected LLM unavailable</h3>
+      <p>{llmError.error}</p>
+      <p className="llm-error-note">Choose another model from the dropdown, then continue.</p>
+      <div className="llm-error-actions">
+        <button onClick={() => setLlmError(null)}>Cancel</button>
+        <button
+          onClick={() => {
+            if (failedMessage) setInput(failedMessage);
+            setLlmError(null);
+          }}
+        >
+          Continue with new LLM
+        </button>
+      </div>
     </div>
+  </div>
+)}
+    </div>
+
+{unifiedProvider && (
+  <UnifiedModelModal
+    provider={unifiedProvider}
+    onClose={() => setUnifiedProvider(null)}
+    onSelect={(providerModel) => {
+      setModel({
+        ...unifiedProvider,
+        label: `${unifiedProvider.label}: ${providerModel.label}`,
+        paid: providerModel.paid,
+      });
+      setProviderModelId(providerModel.id);
+      setUnifiedProvider(null);
+    }}
+  />
+)}
   );
 };
 

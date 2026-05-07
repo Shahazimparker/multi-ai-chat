@@ -41,9 +41,9 @@ const LoginPage = () => {
         {/* Logo */}
         <div className="login-logo">
           <Sparkles size={32} className="logo-icon" />
-          <span className="logo-text">MultiAI<span className="logo-accent">Chat</span></span>
+          <span className="logo-text">Shahazim's AI Chat Bot<span className="logo-accent">Chat</span></span>
         </div>
-        <p className="login-sub">Access 8 AI Models in One Place</p>
+        <p className="login-sub">Unified AI models in one place</p>
 
         {/* AI model pills */}
         <div className="model-pills">
