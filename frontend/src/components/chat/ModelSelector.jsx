@@ -19,11 +19,11 @@ const PROVIDER_META = {
   claude:  { label: 'Anthropic Claude', color: '#f59e0b', emoji: '🧠' },
 };
 
-const ModelSelector = ({ selectedModel, onModelChange }) => {
+const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }) => {
   const [models,  setModels]  = useState([]);
   const [open,    setOpen]    = useState(false);
   const [loading, setLoading] = useState(true);
-  const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }) => {
+  
 
   // Fetch models from backend on mount
   useEffect(() => {

@@ -275,8 +275,6 @@ const ChatPage = () => {
     </div>
   </div>
 )}
-    </div>
-
 {unifiedProvider && (
   <UnifiedModelModal
     provider={unifiedProvider}
@@ -290,8 +288,9 @@ const ChatPage = () => {
       setProviderModelId(providerModel.id);
       setUnifiedProvider(null);
     }}
-  />
+	  />
 )}
+    </div>
   );
 };
 
