@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 .unified-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -97,7 +96,7 @@
 
 .unified-model-option small {
   color: #34d399;
-=======
+
 .unified-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -196,7 +195,6 @@
 
 .unified-model-option small {
   color: #34d399;
->>>>>>> c9ec5b9f4d670d2a03b23ffc88d06e047ea4f7f1
 }
 .unified-header-actions {
   display: flex;
