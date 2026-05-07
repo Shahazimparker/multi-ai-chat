@@ -27,6 +27,10 @@ const ChatPage = () => {
 
   const bottomRef    = useRef(null);
   const textareaRef  = useRef(null);
+  const [memoryMode, setMemoryMode] = useState('summarized');
+  const [historyLimit, setHistoryLimit] = useState(10);
+  const [showAdvancedMemory, setShowAdvancedMemory] = useState(false);
+
 
   // Auto-scroll to latest message
   useEffect(() => {
@@ -75,6 +79,8 @@ const ChatPage = () => {
         modelId: model.id,
         message: userMsg,
         topicId: activeTopic?.id || undefined,
+		memoryMode,
+		historyLimit,
       });
 
       const { reply, tokensUsed, topicId, cacheHit, model: modelLabel } = res.data;
@@ -165,6 +171,50 @@ const ChatPage = () => {
         {/* Input area */}
         <div className="input-area">
           {error && <div className="chat-error">{error}</div>}
+		  <div className="memory-controls">
+  <button
+    type="button"
+    className={`memory-mode-btn ${memoryMode === 'summarized' ? 'active' : ''}`}
+    title="Token friendly. Summarizes older context and sends only the latest raw messages."
+    onClick={() => setMemoryMode('summarized')}
+  >
+    Summarized+
+  </button>
+
+  <button
+    type="button"
+    className={`memory-mode-btn ${memoryMode === 'accurate' ? 'active' : ''}`}
+    title="Higher token use. Sends more raw chat history for better exact continuity."
+    onClick={() => setMemoryMode('accurate')}
+  >
+    Accurate+
+  </button>
+
+  <button
+    type="button"
+    className="memory-advanced-btn"
+    title="Change how many previous messages can be used for memory."
+    onClick={() => setShowAdvancedMemory(p => !p)}
+  >
+    Advanced
+  </button>
+
+  {showAdvancedMemory && (
+    <label className="memory-limit-control" title="Previous messages include both user messages and AI replies.">
+      Last
+      <input
+        type="number"
+        min="2"
+        max="20"
+        value={historyLimit}
+        onChange={e => setHistoryLimit(e.target.value)}
+        onBlur={() => setHistoryLimit(Math.max(2, Math.min(20, Number(historyLimit) || 10)))}
+      />
+      msgs
+    </label>
+  )}
+</div>
+
           <div className="input-box">
             <textarea
               ref={textareaRef}
