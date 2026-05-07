@@ -10,7 +10,6 @@ const { callMistral } = require('./mistral.service');
 const { callCohere }  = require('./cohere.service');
 const { callOpenAI }  = require('./openai.service');
 const { callClaude }  = require('./claude.service');
-const { callUnified } = require('./unified.service');
 const { callOpenRouter } = require('./openrouter.service');
 const { callTogether }   = require('./together.service');
 const { callAnyAPI }     = require('./anyapi.service');
