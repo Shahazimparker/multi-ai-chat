@@ -42,6 +42,9 @@ const sendMessage = async (req, res) => {
   try {
     // ── 1. Validate model ────────────────────────────────────
     const modelConfig = MODELS[modelId];
+	const effectiveModelConfig = providerModelId
+  ? { ...modelConfig, model: providerModelId }
+  : modelConfig;
     if (!modelConfig) {
       return res.status(400).json({ error: `Unknown model: ${modelId}` });
     }
@@ -103,7 +106,7 @@ const sendMessage = async (req, res) => {
     messages.push({ role: 'user', content: finalQuery });
 
     // ── 9. Call AI ───────────────────────────────────────────
-    const { text: reply, tokensUsed } = await dispatchToAI(modelConfig, messages);
+    const { text: reply, tokensUsed } = await dispatchToAI(effectiveModelConfig, messages);
 
     // ── 10. Cache the response for future repeated queries ────
     await setCachedResponse(finalQuery, modelId, reply);
@@ -166,8 +169,32 @@ const sendMessage = async (req, res) => {
     });
 
   } catch (err) {
-    console.error('[Chat] Error:', err.message);
-    res.status(500).json({ error: err.message || 'Chat processing failed' });
+  console.error('[Chat] Error:', err.message);
+
+  const messageText = err.message || '';
+  let errorType = 'unknown';
+  let userMessage = 'The selected LLM is temporarily unavailable.';
+
+  if (/quota|insufficient|credit|billing|exceeded/i.test(messageText)) {
+    errorType = 'quota_exhausted';
+    userMessage = 'The selected LLM token quota is exhausted.';
+  } else if (/rate limit|429|too many/i.test(messageText)) {
+    errorType = 'rate_limited';
+    userMessage = 'The selected LLM is rate limited right now.';
+  } else if (/decommissioned|not found|unsupported|model/i.test(messageText)) {
+    errorType = 'model_unavailable';
+    userMessage = 'The selected LLM model is unavailable or no longer supported.';
+  } else if (/api key|authentication|unauthorized|401/i.test(messageText)) {
+    errorType = 'api_key_missing';
+    userMessage = 'The selected LLM is not configured correctly.';
+  }
+
+  res.status(503).json({
+    error: userMessage,
+    errorType,
+    retryable: true,
+    failedModelId: modelId,
+  });
   }
 };
 
