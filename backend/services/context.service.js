@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 // ============================================================
 // FILE: backend/services/context.service.js
 // PURPOSE: Builds chat memory context using memory modes
@@ -95,7 +94,6 @@ const maybeCompressQuery = async (query) => {
   return summary || query;
 };
 
-=======
 // ============================================================
 // FILE: backend/services/context.service.js
 // PURPOSE: Builds chat memory context using memory modes
@@ -192,5 +190,4 @@ const maybeCompressQuery = async (query) => {
   return summary || query;
 };
 
->>>>>>> c9ec5b9f4d670d2a03b23ffc88d06e047ea4f7f1
 module.exports = { buildContextMessages, maybeCompressQuery, getRecentMessages };

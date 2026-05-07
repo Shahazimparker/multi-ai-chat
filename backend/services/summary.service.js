@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 // ============================================================
 // FILE: backend/services/summary.service.js
 // PURPOSE: Internal summarization using separate API keys/accounts
@@ -129,7 +128,6 @@ const summarizeMemory = async (text) => {
   };
 };
 
-=======
 // ============================================================
 // FILE: backend/services/summary.service.js
 // PURPOSE: Internal summarization using separate API keys/accounts
@@ -260,5 +258,4 @@ const summarizeMemory = async (text) => {
   };
 };
 
->>>>>>> c9ec5b9f4d670d2a03b23ffc88d06e047ea4f7f1
 module.exports = { summarizeMemory };
