@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 .unified-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -96,4 +97,104 @@
 
 .unified-model-option small {
   color: #34d399;
+=======
+.unified-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.unified-modal {
+  width: min(520px, calc(100vw - 32px));
+  max-height: min(620px, calc(100vh - 48px));
+  background: #0f1629;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 16px;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.65);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.unified-modal-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.unified-modal-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.unified-modal-header p {
+  margin: 4px 0 0;
+  color: rgba(255,255,255,0.45);
+  font-size: 0.78rem;
+}
+
+.unified-modal-header button {
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #fff;
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+}
+
+.unified-search {
+  margin: 14px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.unified-search input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: #fff;
+}
+
+.unified-model-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.unified-model-option {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(255,255,255,0.82);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.unified-model-option:hover {
+  background: rgba(167,139,250,0.15);
+  border-color: rgba(167,139,250,0.32);
+  color: #fff;
+}
+
+.unified-model-option small {
+  color: #34d399;
+>>>>>>> c9ec5b9f4d670d2a03b23ffc88d06e047ea4f7f1
 }
