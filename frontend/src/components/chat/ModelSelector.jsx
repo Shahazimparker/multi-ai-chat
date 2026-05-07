@@ -23,6 +23,7 @@ const ModelSelector = ({ selectedModel, onModelChange }) => {
   const [models,  setModels]  = useState([]);
   const [open,    setOpen]    = useState(false);
   const [loading, setLoading] = useState(true);
+  const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }) => {
 
   // Fetch models from backend on mount
   useEffect(() => {
@@ -86,7 +87,14 @@ const ModelSelector = ({ selectedModel, onModelChange }) => {
                   <button
                     key={model.id}
                     className={`model-option ${selectedModel?.id === model.id ? 'active' : ''}`}
-                    onClick={() => { onModelChange(model); setOpen(false); }}
+                    onClick={() => {
+  if (model.unified) {
+    onUnifiedProviderSelect?.(model);
+  } else {
+    onModelChange(model);
+  }
+  setOpen(false);
+}}
                   >
                     <span className="option-label">{model.label}</span>
                     <span className={`model-badge sm ${model.paid ? 'paid' : 'free'}`}>
