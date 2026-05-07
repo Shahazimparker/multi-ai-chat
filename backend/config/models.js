@@ -120,6 +120,46 @@ const MODELS = {
     paid:     true,
     maxTokens: 4096,
   },
+  'openrouter': {
+  label: 'OpenRouter',
+  provider: 'openrouter',
+  apiKey: process.env.OPENROUTER_API_KEY,
+  model: 'meta-llama/llama-3.1-8b-instruct:free',
+  paid: false,
+  unified: true,
+  models: [
+    { id: 'meta-llama/llama-3.1-8b-instruct:free', label: 'Llama 3.1 8B Instruct (Free)', paid: false },
+    { id: 'google/gemini-flash-1.5', label: 'Gemini Flash 1.5', paid: false },
+    { id: 'mistralai/mistral-7b-instruct:free', label: 'Mistral 7B Instruct (Free)', paid: false },
+  ],
+},
+
+'together': {
+  label: 'Together AI',
+  provider: 'together',
+  apiKey: process.env.TOGETHER_API_KEY,
+  model: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
+  paid: false,
+  unified: true,
+  models: [
+    { id: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo', label: 'Llama 3.1 8B Turbo', paid: false },
+    { id: 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo', label: 'Llama 3.1 70B Turbo', paid: true },
+  ],
+},
+
+'anyapi': {
+  label: 'AnyAPI',
+  provider: 'anyapi',
+  apiKey: process.env.ANYAPI_API_KEY,
+  model: 'gpt-4o-mini',
+  paid: true,
+  unified: true,
+  models: [
+    { id: 'gpt-4o-mini', label: 'GPT-4o Mini', paid: true },
+    { id: 'gpt-4o', label: 'GPT-4o', paid: true },
+    { id: 'claude-3-5-sonnet-latest', label: 'Claude 3.5 Sonnet', paid: true },
+  ],
+},
 };
 
 // Gemini Flash is always used for summarization (cheapest/fastest)
