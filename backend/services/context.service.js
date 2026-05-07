@@ -1,19 +1,17 @@
 // ============================================================
 // FILE: backend/services/context.service.js
-// PURPOSE: Fetches last 10 messages of a topic and creates a
-//          trimmed summary using Gemini Flash for context injection
-//          Also compresses long new queries using Gemini Flash
+// PURPOSE: Builds chat memory context using memory modes
 // ============================================================
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const supabase                = require('../config/supabase');
-const { SUMMARY_MODEL }       = require('../config/models');
+const supabase = require('../config/supabase');
+const { summarizeMemory } = require('./summary.service');
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const clamp = (value, min, max) => {
+  const number = Number(value);
+  if (Number.isNaN(number)) return min;
+  return Math.max(min, Math.min(max, number));
+};
 
-/**
- * getRecentMessages - fetch last N messages for a topic
- */
 const getRecentMessages = async (topicId, limit = 10) => {
   const { data, error } = await supabase
     .from('messages')
@@ -23,77 +21,77 @@ const getRecentMessages = async (topicId, limit = 10) => {
     .limit(limit);
 
   if (error) return [];
-  return (data || []).reverse(); // oldest first
+  return (data || []).reverse();
 };
 
-/**
- * summarizeWithGemini - creates a concise summary of messages
- * Always uses Gemini Flash regardless of selected model
- * @param {string} text  text to summarize
- * @returns {string}     summary
- */
-const summarizeWithGemini = async (text) => {
-  try {
-    const model = genAI.getGenerativeModel({ model: SUMMARY_MODEL.model });
-    const result = await model.generateContent(
-      `Summarize the following conversation in 3-5 concise bullet points. Focus on key topics, decisions, and context needed to continue the conversation:\n\n${text}`
-    );
-    return result.response.text();
-  } catch (err) {
-    console.error('[Context] Gemini summarization failed:', err.message);
-    return text.slice(0, 500); // fallback: truncate
-  }
-};
-
-/**
- * buildContextMessages - main function used by chat controller
- * Returns array of {role, content} messages to prepend to the AI call
- *
- * Logic:
- *  1. If no topicId -> new chat, no context
- *  2. If topicId exists -> summarize recent messages and inject as context
- */
-const buildContextMessages = async (newQuery, topicId) => {
-  if (!topicId) return { context: [], isNewTopic: true };
-
-  const recent = await getRecentMessages(topicId, 6);
-  if (recent.length === 0) return { context: [], isNewTopic: true };
-
-  const historyText = recent
+const formatMessages = (messages) => {
+  return messages
     .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
     .join('\n');
-
-
-return {
-  context: [{
-    role: 'user',
-    content: `You are continuing the same chat topic. Use the recent conversation below to answer the user's next message. If the user's message is short or vague, infer it from this recent conversation.
-
-[RECENT CONVERSATION]
-${historyText}
-[END RECENT CONVERSATION]`,
-  }],
-  isNewTopic: false,
-};
 };
 
-/**
- * maybeCompressQuery - if query is long, summarize it first
- * Reduces input tokens for expensive paid models
- */
+const buildContextMessages = async (newQuery, topicId, options = {}) => {
+  if (!topicId) return { context: [], isNewTopic: true };
+
+  const memoryMode = options.memoryMode || 'summarized';
+  const requestedLimit = clamp(options.historyLimit || 10, 2, 20);
+
+  const rawLimit = memoryMode === 'accurate'
+    ? requestedLimit
+    : Math.max(4, Math.min(requestedLimit, 8));
+
+  const recent = await getRecentMessages(topicId, rawLimit);
+  if (recent.length === 0) return { context: [], isNewTopic: true };
+
+  let memoryText = '';
+
+  if (memoryMode === 'accurate') {
+    memoryText = `You are continuing the same chat topic. Use the raw previous conversation below to answer the user's next message. If the user's message is short or vague, infer it from this context.
+
+[RECENT RAW CONVERSATION]
+${formatMessages(recent)}
+[END RECENT RAW CONVERSATION]`;
+  } else {
+    const latestRawCount = 4;
+    const olderMessages = recent.slice(0, Math.max(0, recent.length - latestRawCount));
+    const latestMessages = recent.slice(-latestRawCount);
+
+    let olderSummaryBlock = '';
+
+    if (olderMessages.length > 0) {
+      const olderText = formatMessages(olderMessages);
+      const { summary, provider, model } = await summarizeMemory(olderText);
+
+      olderSummaryBlock = `[OLDER CONVERSATION SUMMARY]
+${summary}
+[SUMMARY SOURCE: ${provider}/${model}]
+[END OLDER CONVERSATION SUMMARY]
+
+`;
+    }
+
+    memoryText = `You are continuing the same chat topic. Use the memory below to answer the user's next message. If the user's message is short or vague, infer it from this context.
+
+${olderSummaryBlock}[LATEST RAW CONVERSATION]
+${formatMessages(latestMessages)}
+[END LATEST RAW CONVERSATION]`;
+  }
+
+  return {
+    context: [{
+      role: 'user',
+      content: memoryText,
+    }],
+    isNewTopic: false,
+  };
+};
+
 const maybeCompressQuery = async (query) => {
   const wordCount = query.split(/\s+/).length;
-  if (wordCount < 150) return query; // short enough - skip
+  if (wordCount < 150) return query;
 
-  try {
-    const model = genAI.getGenerativeModel({ model: SUMMARY_MODEL.model });
-    const result = await model.generateContent(
-      `Compress this query to its essential meaning in under 100 words while keeping all technical details:\n\n${query}`
-    );
-    return result.response.text();
-  } catch {
-    return query; // fallback to original
-  }
+  const { summary } = await summarizeMemory(query);
+  return summary || query;
 };
 
 module.exports = { buildContextMessages, maybeCompressQuery, getRecentMessages };
