@@ -10,6 +10,7 @@ const { sendMessage } = require('../controllers/chat.controller');
 const { requireAuth } = require('../middleware/auth');
 const { tokenCheck }  = require('../middleware/tokenCheck');
 const { MODELS }      = require('../config/models');
+const { getProviderModels } = require('../services/modelCatalog.service');
 
 // Rate limit: 30 requests/minute per IP
 const chatLimiter = rateLimit({
@@ -53,6 +54,23 @@ router.get('/models', (req, res) => {
 	models: cfg.models || [],
   }));
   res.json({ models });
+});
+router.get('/provider-models/:provider', async (req, res) => {
+  try {
+    const refresh = req.query.refresh === 'true';
+    const result = await getProviderModels(req.params.provider, { refresh });
+
+    res.json({
+      provider: result.provider,
+      cached: result.cached,
+      models: result.models,
+    });
+  } catch (err) {
+    res.status(500).json({
+      error: err.message || 'Failed to fetch provider models',
+      models: [],
+    });
+  }
 });
 
 // POST /api/chat/message
