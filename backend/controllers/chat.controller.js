@@ -29,7 +29,13 @@ const CHARS_PER_TOKEN = 4;
  */
 const sendMessage = async (req, res) => {
   const startTime   = Date.now();
-  const { modelId, message, topicId } = req.body;
+  const {
+  modelId,
+  message,
+  topicId,
+  memoryMode = 'summarized',
+  historyLimit = 10,
+} = req.body;
   const user        = req.user;        // null for anonymous
   const isAnonymous = !user;
 
@@ -73,10 +79,11 @@ const sendMessage = async (req, res) => {
     const ragContext = await buildRAGContext(finalQuery);
 
     // ── 7. Fetch conversation history context ────────────────
-    const { context: historyContext } = await buildContextMessages(
-      finalQuery,
-      isAnonymous ? null : topicId
-    );
+	const { context: historyContext } = await buildContextMessages(
+		finalQuery,
+		isAnonymous ? null : topicId,
+		{ memoryMode, historyLimit }
+	);
 
     // ── 8. Build final messages array ────────────────────────
     const messages = [];
