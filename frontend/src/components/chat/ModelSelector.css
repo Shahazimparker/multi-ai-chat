@@ -2,7 +2,10 @@
    FILE: frontend/src/components/chat/ModelSelector.css
    ============================================================ */
 
-.model-selector { position: relative; z-index: 100; }
+.model-selector {
+	position: relative; 
+	z-index: 100;
+}
 
 .model-trigger {
   display: flex;
@@ -39,6 +42,7 @@
 /* ── Dropdown ───────────────────────────────────── */
 .model-dropdown {
   position: absolute;
+  z-index: 200;
   top: calc(100% + 8px);
   left: 0;
   min-width: 280px;
@@ -75,6 +79,8 @@
 .model-option.active { background: rgba(167,139,250,0.15); color: #c4b5fd; }
 
 .dropdown-overlay {
-  position: fixed; inset: 0; z-index: 99;
+  position: fixed;
+  inset: 0; 
+  z-index: 150;
 }
 .model-loading { color: rgba(255,255,255,0.4); font-size:0.84rem; }

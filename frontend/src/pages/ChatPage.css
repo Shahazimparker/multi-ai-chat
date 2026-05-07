@@ -141,7 +141,57 @@
   font-size: 0.8rem;
   margin-bottom: 10px;
 }
+.memory-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
 
+.memory-mode-btn,
+.memory-advanced-btn {
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.72);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.memory-mode-btn:hover,
+.memory-advanced-btn:hover {
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+}
+
+.memory-mode-btn.active {
+  background: rgba(167,139,250,0.18);
+  border-color: rgba(167,139,250,0.45);
+  color: #c4b5fd;
+}
+
+.memory-limit-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(255,255,255,0.55);
+  font-size: 0.75rem;
+}
+
+.memory-limit-control input {
+  width: 52px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 8px;
+  color: #fff;
+  padding: 5px 7px;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.75rem;
+}
 .input-box {
   display: flex;
   align-items: flex-end;
@@ -197,4 +247,61 @@
   .chat-root { position: relative; }
   .sidebar   { display: none; }
   .msg-bubble{ max-width: 90%; }
+}
+.llm-error-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 520;
+  background: rgba(0,0,0,0.58);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.llm-error-modal {
+  width: min(440px, calc(100vw - 32px));
+  background: #0f1629;
+  border: 1px solid rgba(255,255,255,0.13);
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.65);
+}
+
+.llm-error-modal h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.llm-error-modal p {
+  margin: 0;
+  color: rgba(255,255,255,0.72);
+  font-size: 0.86rem;
+}
+
+.llm-error-note {
+  margin-top: 8px !important;
+  color: rgba(255,255,255,0.45) !important;
+  font-size: 0.78rem !important;
+}
+
+.llm-error-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.llm-error-actions button {
+  border: 1px solid rgba(255,255,255,0.13);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: rgba(255,255,255,0.07);
+  color: #fff;
+  cursor: pointer;
+}
+
+.llm-error-actions button:last-child {
+  background: rgba(167,139,250,0.2);
+  border-color: rgba(167,139,250,0.45);
+  color: #c4b5fd;
 }

@@ -49,6 +49,8 @@ router.get('/models', (req, res) => {
     label:    cfg.label,
     provider: cfg.provider,
     paid:     cfg.paid,
+	unified: !!cfg.unified,
+	models: cfg.models || [],
   }));
   res.json({ models });
 });

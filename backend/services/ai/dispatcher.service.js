@@ -10,6 +10,7 @@ const { callMistral } = require('./mistral.service');
 const { callCohere }  = require('./cohere.service');
 const { callOpenAI }  = require('./openai.service');
 const { callClaude }  = require('./claude.service');
+const { callUnified } = require('./unified.service');
 
 /**
  * dispatchToAI — routes messages to the correct AI provider
@@ -32,6 +33,10 @@ const dispatchToAI = async (modelConfig, messages) => {
     case 'cohere':  return callCohere(model, apiKey, messages);
     case 'openai':  return callOpenAI(model, apiKey, messages);
     case 'claude':  return callClaude(model, apiKey, messages);
+	case 'openrouter': return callUnified('openrouter', model, apiKey, messages);
+	case 'together':   return callUnified('together', model, apiKey, messages);
+	case 'anyapi':     return callUnified('anyapi', model, apiKey, messages);
+
 
     default:
       throw new Error(`Unknown AI provider: ${provider}`);

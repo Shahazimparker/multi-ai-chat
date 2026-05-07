@@ -53,7 +53,7 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
     <aside className="sidebar">
       {/* Header */}
       <div className="sidebar-header">
-        <span className="sidebar-logo">✦ MultiAI</span>
+        <span className="sidebar-logo">✦ Shahazim's AI</span>
         {user?.role === 'admin' && (
           <button className="admin-btn" onClick={() => navigate('/admin')} title="Admin Panel">
             <Settings size={15} />

@@ -13,6 +13,7 @@ import TokenBar      from '../components/layout/TokenBar';
 import { useAuth }   from '../context/AuthContext';
 import api           from '../config/api';
 import './ChatPage.css';
+import UnifiedModelModal from '../components/chat/UnifiedModelModal';
 
 const ChatPage = () => {
   const { refreshTokenStats } = useAuth();
@@ -27,6 +28,14 @@ const ChatPage = () => {
 
   const bottomRef    = useRef(null);
   const textareaRef  = useRef(null);
+  const [memoryMode, setMemoryMode] = useState('summarized');
+  const [historyLimit, setHistoryLimit] = useState(10);
+  const [showAdvancedMemory, setShowAdvancedMemory] = useState(false);
+  const [unifiedProvider, setUnifiedProvider] = useState(null);
+  const [providerModelId, setProviderModelId] = useState(null);
+  const [failedMessage, setFailedMessage] = useState(null);
+  const [llmError, setLlmError] = useState(null);
+
 
   // Auto-scroll to latest message
   useEffect(() => {
@@ -62,6 +71,7 @@ const ChatPage = () => {
   const handleSend = useCallback(async () => {
     if (!input.trim() || loading || !model) return;
     const userMsg = input.trim();
+	setFailedMessage(userMsg);
     setInput('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setError('');
@@ -75,6 +85,9 @@ const ChatPage = () => {
         modelId: model.id,
         message: userMsg,
         topicId: activeTopic?.id || undefined,
+		memoryMode,
+		historyLimit,
+		providerModelId,
       });
 
       const { reply, tokensUsed, topicId, cacheHit, model: modelLabel } = res.data;
@@ -93,12 +106,17 @@ const ChatPage = () => {
 
       await refreshTokenStats(); // refresh token bar
     } catch (err) {
-      const msg = err.response?.data?.error || 'Something went wrong. Try again.';
-      setError(msg);
-      setMessages(prev => [...prev, { role: 'assistant', content: `❌ Error: ${msg}` }]);
-    } finally {
-      setLoading(false);
-    }
+  if (err.response?.data?.retryable) {
+    setLlmError(err.response.data);
+    return;
+  }
+
+  const msg = err.response?.data?.error || 'Something went wrong. Try again.';
+  setError(msg);
+  setMessages(prev => [...prev, { role: 'assistant', content: `❌ Error: ${msg}` }]);
+} finally {
+  setLoading(false);
+}
   }, [input, loading, model, activeTopic, refreshTokenStats]);
 
   // Ctrl+Enter or Enter (without shift) to send
@@ -124,7 +142,15 @@ const ChatPage = () => {
 
         {/* Toolbar */}
         <div className="chat-toolbar">
-          <ModelSelector selectedModel={model} onModelChange={setModel} />
+          <ModelSelector
+  selectedModel={model}
+  onModelChange={(nextModel) => {
+    setModel(nextModel);
+    setProviderModelId(null);
+  }}
+  onUnifiedProviderSelect={setUnifiedProvider}
+/>
+
           {activeTopic && (
             <span className="topic-hint">
               Continuing topic · {messages.length} messages
@@ -165,6 +191,49 @@ const ChatPage = () => {
         {/* Input area */}
         <div className="input-area">
           {error && <div className="chat-error">{error}</div>}
+		  <div className="memory-controls">
+  <button
+    type="button"
+    className={`memory-mode-btn ${memoryMode === 'summarized' ? 'active' : ''}`}
+    title="Token friendly. Summarizes older context and sends only the latest raw messages."
+    onClick={() => setMemoryMode('summarized')}
+  >
+    Summarized+
+  </button>
+
+  <button
+    type="button"
+    className={`memory-mode-btn ${memoryMode === 'accurate' ? 'active' : ''}`}
+    title="Higher token use. Sends more raw chat history for better exact continuity."
+    onClick={() => setMemoryMode('accurate')}
+  >
+    Accurate+
+  </button>
+
+  <button
+    type="button"
+    className="memory-advanced-btn"
+    title="Change how many previous messages can be used for memory."
+    onClick={() => setShowAdvancedMemory(p => !p)}
+  >
+    Advanced
+  </button>
+
+  {showAdvancedMemory && (
+    <label className="memory-limit-control" title="Previous messages include both user messages and AI replies.">
+      Last
+      <input
+        type="number"
+        min="2"
+        max="20"
+        value={historyLimit}
+        onChange={e => setHistoryLimit(e.target.value)}
+        onBlur={() => setHistoryLimit(Math.max(2, Math.min(20, Number(historyLimit) || 10)))}
+      />
+      msgs
+    </label>
+  )}
+</div>
           <div className="input-box">
             <textarea
               ref={textareaRef}
@@ -186,7 +255,43 @@ const ChatPage = () => {
           <p className="input-hint">Enter to send · Shift+Enter for new line</p>
         </div>
       </main>
+	  {llmError && (
+  <div className="llm-error-backdrop">
+    <div className="llm-error-modal">
+      <h3>Selected LLM unavailable</h3>
+      <p>{llmError.error}</p>
+      <p className="llm-error-note">Choose another model from the dropdown, then continue.</p>
+      <div className="llm-error-actions">
+        <button onClick={() => setLlmError(null)}>Cancel</button>
+        <button
+          onClick={() => {
+            if (failedMessage) setInput(failedMessage);
+            setLlmError(null);
+          }}
+        >
+          Continue with new LLM
+        </button>
+      </div>
     </div>
+  </div>
+)}
+    </div>
+
+{unifiedProvider && (
+  <UnifiedModelModal
+    provider={unifiedProvider}
+    onClose={() => setUnifiedProvider(null)}
+    onSelect={(providerModel) => {
+      setModel({
+        ...unifiedProvider,
+        label: `${unifiedProvider.label}: ${providerModel.label}`,
+        paid: providerModel.paid,
+      });
+      setProviderModelId(providerModel.id);
+      setUnifiedProvider(null);
+    }}
+  />
+)}
   );
 };
 
