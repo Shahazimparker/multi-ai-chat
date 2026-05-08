@@ -100,24 +100,24 @@ const sendMessage = async (req, res) => {
       { memoryMode, historyLimit }
     );
 
-    // ── 9. Build final messages array ────────────────────────
-    const messages = [];
+    // ── 9. Build final AI message payload ───────────────────
+    const aiMessages = [];
 
     // System prompt with RAG + file context
     const systemPrompt = `You are a helpful AI assistant. Be concise, accurate, and helpful.${ragContext ? `\n\n${ragContext}` : ''}${fileContext ? `\n\n${fileContext}` : ''}`;
-    messages.push({
+    aiMessages.push({
       role: 'system',
       content: systemPrompt,
     });
 
     // History context (if same topic)
-    messages.push(...historyContext);
+    aiMessages.push(...historyContext);
 
     // Current user message
-    messages.push({ role: 'user', content: finalQuery });
+    aiMessages.push({ role: 'user', content: finalQuery });
 
     // ── 9. Call AI ───────────────────────────────────────────
-    const { text: reply, tokensUsed } = await dispatchToAI(effectiveModelConfig, messages);
+    const { text: reply, tokensUsed } = await dispatchToAI(effectiveModelConfig, aiMessages);
 
     // ── 10. Cache the response for future repeated queries ────
     await setCachedResponse(finalQuery, modelId, reply);
