@@ -348,7 +348,7 @@ case 'myprovider': return callMyProvider(model, apiKey, messages);
 | Summary prompt (what Gemini summarizes) | `backend/services/context.service.js` | Edit the string in `summarizeWithGemini()` |
 | Rate limiting (requests/minute) | `backend/routes/chat.routes.js` | Change `max: 30` in `chatLimiter` |
 | Default token quota for new users | `backend/controllers/admin.controller.js` | Change `total_tokens = 100000` |
-| RAG similarity threshold | `backend/services/rag.service.js` | Change `threshold = 0.7` in `searchRelevantDocs()` |
+| RAG similarity threshold | `backend/services/rag.service.js` | Change `threshold = 0.4` in `searchRelevantDocs()` |
 | Cache skip (short responses) | `backend/services/cache.service.js` | Change `response.length < 20` |
 
 ---

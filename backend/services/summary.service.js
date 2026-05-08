@@ -56,14 +56,24 @@ const summarizeWithCerebras = async ({ model, apiKey, text }) => {
   return data.choices?.[0]?.message?.content?.trim();
 };
 
-const summarizeWithGemini = async ({ model, apiKey, text }) => {
+const summarizeWithGemini = async ({ model, apiKey, text }, signal = null) => {
   const genAI = new GoogleGenerativeAI(apiKey);
   const geminiModel = genAI.getGenerativeModel({ model });
-  const result = await geminiModel.generateContent(summaryPrompt(text));
+
+  const resultPromise = geminiModel.generateContent(summaryPrompt(text));
+
+  const result = await Promise.race([
+    resultPromise,
+    new Promise((_, reject) => {
+      if (signal?.aborted) reject({ name: 'AbortError' });
+      signal?.addEventListener('abort', () => reject({ name: 'AbortError' }), { once: true });
+    })
+  ]);
+
   return result.response.text().trim();
 };
 
-const summarizeWithMistral = async ({ model, apiKey, text }) => {
+const summarizeWithMistral = async ({ model, apiKey, text }, signal = null) => {
   const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -75,6 +85,7 @@ const summarizeWithMistral = async ({ model, apiKey, text }) => {
       messages: [{ role: 'user', content: summaryPrompt(text) }],
       temperature: 0.2,
       max_tokens: 350,
+      signal: signal,
     }),
   });
 
@@ -83,7 +94,7 @@ const summarizeWithMistral = async ({ model, apiKey, text }) => {
   return data.choices?.[0]?.message?.content?.trim();
 };
 
-const fallbackSummary = (text) => {
+const fallbackSummary = (text, signal = null) => {
   return text
     .split('\n')
     .slice(-8)
@@ -91,7 +102,7 @@ const fallbackSummary = (text) => {
     .slice(0, 1200);
 };
 
-const summarizeMemory = async (text) => {
+const summarizeMemory = async (text, signal = null) => {
   for (const cfg of SUMMARY_MODELS) {
     if (!cfg.apiKey) continue;
 
@@ -99,11 +110,11 @@ const summarizeMemory = async (text) => {
       let summary;
 
       if (cfg.provider === 'cerebras') {
-        summary = await summarizeWithCerebras({ ...cfg, text });
+        summary = await summarizeWithCerebras({ ...cfg, text }, signal);
       } else if (cfg.provider === 'gemini') {
-        summary = await summarizeWithGemini({ ...cfg, text });
+        summary = await summarizeWithGemini({ ...cfg, text }, signal);
       } else if (cfg.provider === 'mistral') {
-        summary = await summarizeWithMistral({ ...cfg, text });
+        summary = await summarizeWithMistral({ ...cfg, text }, signal);
       }
 
       if (summary) {
@@ -117,11 +128,12 @@ const summarizeMemory = async (text) => {
       }
     } catch (err) {
       console.error(`[Summary] ${cfg.provider}/${cfg.model} failed:`, err.message);
+      if (err.name === 'AbortError') throw err; // Propagate abort
     }
   }
 
   return {
-    summary: fallbackSummary(text),
+    summary: fallbackSummary(text, signal),
     provider: 'local',
     model: 'truncate',
     fallback: true,

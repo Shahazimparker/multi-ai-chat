@@ -47,7 +47,15 @@ router.post('/file', requireAuth, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file provided' });
     
-    const { topicId } = req.body;
+    const abortController = new AbortController();
+    req.on('close', () => {
+      if (!res.writableEnded) {
+        console.log('[Upload] Request closed. Aborting file processing...');
+        abortController.abort();
+      }
+    });
+
+    const { topicId, modelId } = req.body;
     const fileName = req.file.originalname;
     const filePath = req.file.path;
     
@@ -72,7 +80,9 @@ router.post('/file', requireAuth, upload.single('file'), async (req, res) => {
       fileName,
       fileType,
       req.user.id,
-      topicId
+      topicId,
+      modelId,
+      abortController.signal
     );
     
     res.json({
@@ -80,6 +90,7 @@ router.post('/file', requireAuth, upload.single('file'), async (req, res) => {
       fileId: result.fileId,
       fileName: result.fileName,
       fileType: result.fileType,
+      charCount: result.charCount,
       chunkCount: result.chunkCount,
       message: `File processed: ${result.chunkCount} chunks created`,
     });

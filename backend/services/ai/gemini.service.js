@@ -11,9 +11,10 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
  * @param {string} modelName  Gemini model identifier
  * @param {string} apiKey     Gemini API key
  * @param {Array}  messages   [{role: 'user'|'model', content: string}]
+ * @param {AbortSignal} signal  optional signal for cancellation
  * @returns {Object}          {text, tokensUsed}
  */
-const callGemini = async (modelName, apiKey, messages) => {
+const callGemini = async (modelName, apiKey, messages, signal = null) => {
   const genAI = new GoogleGenerativeAI(apiKey);
 
   const systemMessages = messages.filter(m => m.role === 'system');
@@ -39,7 +40,18 @@ const callGemini = async (modelName, apiKey, messages) => {
 
   const model = genAI.getGenerativeModel(modelParams);
   const chat = model.startChat({ history });
-  const result = await chat.sendMessage(lastMessage.content);
+
+  const resultPromise = chat.sendMessage(lastMessage.content);
+
+  // Google SDK doesn't natively support AbortSignal yet, so we race it
+  const result = await Promise.race([
+    resultPromise,
+    new Promise((_, reject) => {
+      if (signal?.aborted) reject({ name: 'AbortError' });
+      signal?.addEventListener('abort', () => reject({ name: 'AbortError' }), { once: true });
+    })
+  ]);
+
   const text   = result.response.text();
 
   // Gemini's usageMetadata for token counting

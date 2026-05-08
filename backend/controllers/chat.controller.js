@@ -16,7 +16,7 @@ const { MODELS } = require('../config/models');
 const { dispatchToAI } = require('../services/ai/dispatcher.service');
 const { compressPrompt } = require('../services/compress.service');
 const { getCachedResponse, setCachedResponse } = require('../services/cache.service');
-const { buildRAGContext } = require('../services/rag.service');
+const { buildRAGContext, embedText } = require('../services/rag.service');
 const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
 const { searchUserFiles } = require('../services/fileUpload.service');
 
@@ -38,6 +38,16 @@ const sendMessage = async (req, res) => {
     memoryMode = 'summarized',
     historyLimit = 10,
   } = req.body;
+
+  // ── 0. Setup Abort Controller for request cancellation ──
+  const abortController = new AbortController();
+  req.on('close', () => {
+    if (!res.writableEnded) {
+      console.log('[Chat] User stopped the query. Aborting downstream tasks...');
+      abortController.abort();
+    }
+  });
+
   const user = req.user;        // null for anonymous
   const isAnonymous = !user;
 
@@ -80,16 +90,19 @@ const sendMessage = async (req, res) => {
     }
 
     // ── 5. Maybe compress long queries with Gemini Flash ─────
-    const finalQuery = await maybeCompressQuery(compressedQuery);
+    const finalQuery = await maybeCompressQuery(compressedQuery, abortController.signal);
+
+    // ── 5.5 Generate query embedding once to save tokens ──────
+    const queryVector = await embedText(finalQuery, modelConfig.provider, 3, abortController.signal);
 
     // ── 6. Fetch RAG context ─────────────────────────────────
-    const ragContext = await buildRAGContext(finalQuery);
+    const ragContext = await buildRAGContext(finalQuery, modelConfig.provider, abortController.signal, queryVector);
 
     // ── 7. Fetch uploaded file context ──────────────────────────
-    const fileResults = await searchUserFiles(finalQuery, user?.id);
+    const fileResults = await searchUserFiles(finalQuery, user?.id, topicId, modelConfig.provider, abortController.signal, queryVector);
     const fileContext = fileResults.length > 0
       ? `[FILE REFERENCES]\n${fileResults
-        .map(r => `Source: ${r.file_name}\n${r.chunk_text}`)
+        .map(r => `Source: ${r.file_name} (Relevance: ${Math.round(r.similarity * 100)}%)\n${r.chunk_text}`)
         .join('\n\n')}\n[END FILE REFS]\n`
       : '';
 
@@ -97,7 +110,8 @@ const sendMessage = async (req, res) => {
     const { context: historyContext } = await buildContextMessages(
       finalQuery,
       isAnonymous ? null : topicId,
-      { memoryMode, historyLimit }
+      { memoryMode, historyLimit },
+      abortController.signal
     );
 
     // ── 9. Build final AI message payload ───────────────────
@@ -117,31 +131,31 @@ const sendMessage = async (req, res) => {
     aiMessages.push({ role: 'user', content: finalQuery });
 
     // ── 9. Call AI ───────────────────────────────────────────
-    const { text: reply, tokensUsed } = await dispatchToAI(effectiveModelConfig, aiMessages);
+    const { text: reply, tokensUsed } = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
+
+    // Check if user aborted while AI was generating
+    if (abortController.signal.aborted) return;
 
     // ── 10. Cache the response for future repeated queries ────
     await setCachedResponse(finalQuery, modelId, reply);
-
-    // ── 11. Update user token usage ──────────────────────────
-    if (user) {
-      await supabase
-        .from('users')
-        .update({ used_tokens: user.used_tokens + tokensUsed })
-        .eq('id', user.id);
-    }
 
     // ── 12. Save messages to DB (logged-in users only) ────────
     let resolvedTopicId = topicId;
     if (!isAnonymous) {
       // Create new topic if none provided
       if (!resolvedTopicId) {
-        const topicTitle = message.slice(0, 60) + (message.length > 60 ? '...' : '');
-        const { data: newTopic } = await supabase
+        const topicTitle = message.trim().slice(0, 60) + (message.length > 60 ? '...' : '');
+        const { data: newTopic, error: topicError } = await supabase
           .from('topics')
           .insert({ user_id: user.id, title: topicTitle, model: modelId })
           .select('id')
           .single();
-        resolvedTopicId = newTopic?.id;
+
+        if (topicError) {
+          console.error('[Chat] Topic creation failed:', topicError.message);
+        } else {
+          resolvedTopicId = newTopic?.id;
+        }
       }
 
       if (resolvedTopicId) {
@@ -156,6 +170,14 @@ const sendMessage = async (req, res) => {
           .update({ updated_at: new Date().toISOString() })
           .eq('id', resolvedTopicId);
       }
+    }
+
+    // ── 11. Update user token usage (after successful persistence) ──
+    if (user) {
+      await supabase
+        .from('users')
+        .update({ used_tokens: user.used_tokens + tokensUsed })
+        .eq('id', user.id);
     }
 
     // ── 13. Log to analytics ─────────────────────────────────
@@ -180,6 +202,11 @@ const sendMessage = async (req, res) => {
     });
 
   } catch (err) {
+    // Gracefully handle manual aborts
+    if (err.name === 'AbortError' || abortController.signal.aborted) {
+      return; 
+    }
+
     console.error('[Chat] Error:', err.message);
 
     const messageText = err.message || '';

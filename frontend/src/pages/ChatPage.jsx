@@ -27,8 +27,11 @@ const ChatPage = () => {
   const [sidebarRefresh, setSidebarRefresh] = useState(0);
   const [error, setError] = useState('');
 
+  const [pendingFile, setPendingFile] = useState(null);
+
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
+  const abortControllerRef = useRef(null);
   const [memoryMode, setMemoryMode] = useState('summarized');
   const [historyLimit, setHistoryLimit] = useState(10);
   const [showAdvancedMemory, setShowAdvancedMemory] = useState(false);
@@ -70,25 +73,60 @@ const ChatPage = () => {
 
   // Send message
   const handleSend = useCallback(async () => {
-    if (!input.trim() || loading || !model) return;
+    if (loading) {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      return;
+    }
+
+    if ((!input.trim() && !pendingFile) || !model) return;
+    
     const userMsg = input.trim();
+    const fileToUpload = pendingFile;
+    
     setFailedMessage(userMsg);
     setInput('');
+    setPendingFile(null); // Clear pending file immediately for UI responsiveness
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setError('');
 
     // Optimistically add user message to UI
-    setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+    const optimisticMsg = userMsg || (fileToUpload ? `Attached: ${fileToUpload.name}` : '');
+    setMessages(prev => [...prev, { role: 'user', content: optimisticMsg }]);
     setLoading(true);
 
     try {
+      let topicIdToUse = activeTopic?.id;
+
+      // 1. If there's a file, upload it first
+      if (fileToUpload) {
+        const formData = new FormData();
+        formData.append('file', fileToUpload);
+        formData.append('modelId', model.id);
+        if (topicIdToUse) formData.append('topicId', topicIdToUse);
+
+        const uploadRes = await api.post('/upload/file', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          signal: controller.signal,
+        });
+        setUploadedFiles(prev => [...prev, uploadRes.data]);
+      }
+
+      // 2. Send the message
       const res = await api.post('/chat/message', {
         modelId: model.id,
         message: userMsg,
-        topicId: activeTopic?.id || undefined,
+        topicId: topicIdToUse,
         memoryMode,
         historyLimit,
         providerModelId,
+      }, {
+        signal: controller.signal,
       });
 
       const { reply, tokensUsed, topicId, cacheHit, model: modelLabel } = res.data;
@@ -107,6 +145,11 @@ const ChatPage = () => {
 
       await refreshTokenStats(); // refresh token bar
     } catch (err) {
+      if (err.name === 'CanceledError' || err.name === 'AbortError') {
+        setMessages(prev => [...prev.slice(0, -1), { role: 'assistant', content: '_Query stopped by user._' }]); // Remove optimistic user message
+        return;
+      }
+
       if (err.response?.data?.retryable) {
         setLlmError(err.response.data);
         return;
@@ -117,8 +160,9 @@ const ChatPage = () => {
       setMessages(prev => [...prev, { role: 'assistant', content: `❌ Error: ${msg}` }]);
     } finally {
       setLoading(false);
+      abortControllerRef.current = null;
     }
-  }, [input, loading, model, activeTopic, refreshTokenStats]);
+  }, [input, pendingFile, loading, model, activeTopic, refreshTokenStats]);
 
   // Ctrl+Enter or Enter (without shift) to send
   const handleKeyDown = (e) => {
@@ -232,18 +276,24 @@ const ChatPage = () => {
           </div>
 
           <div className="input-box">
-            {/* Moved FileUpload inside the single active input box */}
             <FileUpload
               topicId={activeTopic?.id}
-              onFileUploaded={(file) => {
-                setUploadedFiles(prev => [...prev, file]);
-                setMessages(prev => [...prev, {
-                  role: 'assistant',
-                  content: `📎 File "${file.fileName}" uploaded successfully.`,
-                }]);
-              }}
+              onFileSelect={setPendingFile}
               disabled={loading || !model}
             />
+
+            {pendingFile && (
+              <div className="pending-file-tag">
+                <span className="file-pill">📎 {pendingFile.name}</span>
+                <button 
+                  className="remove-file-btn" 
+                  onClick={() => setPendingFile(null)}
+                  title="Remove attachment"
+                >
+                  &times;
+                </button>
+              </div>
+            )}
 
             <textarea
               ref={textareaRef}
@@ -258,7 +308,7 @@ const ChatPage = () => {
             <button
               className="send-btn"
               onClick={handleSend}
-              disabled={!input.trim() || loading || !model}
+              disabled={(!input.trim() && !pendingFile && !loading) || !model}
             >
               {loading ? <StopCircle size={18} /> : <Send size={18} />}
             </button>

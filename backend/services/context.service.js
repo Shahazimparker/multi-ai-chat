@@ -30,7 +30,7 @@ const formatMessages = (messages) => {
     .join('\n');
 };
 
-const buildContextMessages = async (newQuery, topicId, options = {}) => {
+const buildContextMessages = async (newQuery, topicId, options = {}, signal = null) => {
   if (!topicId) return { context: [], isNewTopic: true };
 
   const memoryMode = options.memoryMode || 'summarized';
@@ -38,7 +38,7 @@ const buildContextMessages = async (newQuery, topicId, options = {}) => {
 
   const rawLimit = memoryMode === 'accurate'
     ? requestedLimit
-    : Math.max(4, Math.min(requestedLimit, 8));
+    : Math.max(requestedLimit, 15); // Fetch more history to summarize
 
   const recent = await getRecentMessages(topicId, rawLimit);
   if (recent.length === 0) return { context: [], isNewTopic: true };
@@ -60,7 +60,7 @@ ${formatMessages(recent)}
 
     if (olderMessages.length > 0) {
       const olderText = formatMessages(olderMessages);
-      const { summary, provider, model } = await summarizeMemory(olderText);
+      const { summary, provider, model } = await summarizeMemory(olderText, signal);
 
       olderSummaryBlock = `[OLDER CONVERSATION SUMMARY]
 ${summary}
@@ -86,11 +86,11 @@ ${formatMessages(latestMessages)}
   };
 };
 
-const maybeCompressQuery = async (query) => {
+const maybeCompressQuery = async (query, signal = null) => {
   const wordCount = query.split(/\s+/).length;
   if (wordCount < 150) return query;
 
-  const { summary } = await summarizeMemory(query);
+  const { summary } = await summarizeMemory(query, signal);
   return summary || query;
 };
 

@@ -100,10 +100,75 @@ CREATE TABLE IF NOT EXISTS rag_documents (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title       TEXT NOT NULL,
   content     TEXT NOT NULL,
-  embedding   vector(512),              -- text-embedding-3-small dimension
+  provider    TEXT DEFAULT 'openai',
+  embedding   vector(1536),             -- text-embedding-3-small dimension
   metadata    JSONB DEFAULT '{}',
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ─────────────────────────────────────────────
+-- TABLE: uploaded_files (Track file metadata)
+-- ─────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS uploaded_files (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       UUID REFERENCES users(id) ON DELETE CASCADE,
+  topic_id      UUID REFERENCES topics(id) ON DELETE SET NULL,
+  file_name     TEXT NOT NULL,
+  file_type     TEXT,
+  file_size     INTEGER,
+  content_text  TEXT,
+  provider      TEXT DEFAULT 'openai',  -- 'openai' or 'gemini'
+  embedding     vector(1536),           -- dimension for text-embedding-3-small
+  metadata      JSONB DEFAULT '{}',
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ─────────────────────────────────────────────
+-- TABLE: rag_chunks (Individual file fragments)
+-- ─────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS rag_chunks (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  file_id       UUID REFERENCES uploaded_files(id) ON DELETE CASCADE,
+  chunk_text    TEXT NOT NULL,
+  provider      TEXT DEFAULT 'openai',
+  embedding     vector(1536),
+  chunk_index   INTEGER,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ─────────────────────────────────────────────
+-- FUNCTION: search_uploaded_files (Vector search)
+-- ─────────────────────────────────────────────
+DROP FUNCTION IF EXISTS search_uploaded_files(vector, UUID, INT);
+DROP FUNCTION IF EXISTS search_uploaded_files(vector, UUID, TEXT, INT);
+CREATE OR REPLACE FUNCTION search_uploaded_files(
+  query_embedding vector(1536),
+  user_id_param   UUID,
+  provider_param  TEXT,
+  match_count     INT DEFAULT 5
+)
+RETURNS TABLE (
+  file_id     UUID,
+  file_name   TEXT,
+  chunk_text  TEXT,
+  chunk_index INT,
+  similarity  FLOAT
+)
+LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    f.id, f.file_name, c.chunk_text, c.chunk_index, 
+    1 - (c.embedding <=> query_embedding) AS similarity
+  FROM rag_chunks c
+  JOIN uploaded_files f ON c.file_id = f.id
+  WHERE f.user_id = user_id_param
+    AND c.provider = provider_param
+    AND 1 - (c.embedding <=> query_embedding) > 0.4
+  ORDER BY similarity DESC
+  LIMIT match_count;
+END;
+$$;
 
 -- ─────────────────────────────────────────────
 -- INDEX: vector similarity search (IVFFLAT)
@@ -115,8 +180,9 @@ CREATE INDEX IF NOT EXISTS rag_embedding_idx
 -- FUNCTION: match_documents (cosine similarity search for RAG)
 -- ─────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION match_documents(
-  query_embedding vector(512),
-  match_threshold FLOAT DEFAULT 0.7,
+  query_embedding vector(1536),
+  provider_param  TEXT,
+  match_threshold FLOAT DEFAULT 0.4,
   match_count     INT DEFAULT 5
 )
 RETURNS TABLE (
@@ -131,7 +197,8 @@ BEGIN
     rag_documents.content,
     1 - (rag_documents.embedding <=> query_embedding) AS similarity
   FROM rag_documents
-  WHERE 1 - (rag_documents.embedding <=> query_embedding) > match_threshold
+  WHERE rag_documents.provider = provider_param
+    AND 1 - (rag_documents.embedding <=> query_embedding) > match_threshold
   ORDER BY similarity DESC
   LIMIT match_count;
 END;
