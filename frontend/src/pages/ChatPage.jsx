@@ -266,8 +266,6 @@ const ChatPage = () => {
     )}
   </div>
 </div>
-</main>
-<main>
           <div className="input-box">
             <textarea
               ref={textareaRef}
@@ -288,7 +286,7 @@ const ChatPage = () => {
           </div>
           <p className="input-hint">Enter to send · Shift+Enter for new line</p>
         </div>
-      </main>
+      )
 	  {llmError && (
   <div className="llm-error-backdrop">
     <div className="llm-error-modal">
@@ -324,8 +322,6 @@ const ChatPage = () => {
     }}
 	  />
 )}
-    </div>
-  );
 };
 
 export default ChatPage;
