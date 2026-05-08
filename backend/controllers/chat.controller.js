@@ -18,7 +18,6 @@ const { compressPrompt }                = require('../services/compress.service'
 const { getCachedResponse, setCachedResponse } = require('../services/cache.service');
 const { buildRAGContext }               = require('../services/rag.service');
 const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
-const { searchUserFiles } = require('../services/fileUpload.service');
 
 // Approx chars per token (rough estimate for all models)
 const CHARS_PER_TOKEN = 4;
@@ -82,25 +81,6 @@ const sendMessage = async (req, res) => {
 
     // ── 6. Fetch RAG context ─────────────────────────────────
     const ragContext = await buildRAGContext(finalQuery);
-
-// ── 6. Fetch uploaded file context ──────────────────────────
-const fileResults = await searchUserFiles(finalQuery, user?.id);
-const fileContext = fileResults.length > 0 
-  ? `[FILE REFERENCES]\n${fileResults
-      .map(r => `Source: ${r.file_name}\n${r.chunk_text}`)
-      .join('\n\n')}\n[END FILE REFS]\n`
-  : '';
-
-// ── 7. Add file context to messages ────────────────────────
-const systemMessage = `You are a helpful assistant. Be concise and accurate.${
-  fileContext ? `\n\n${fileContext}` : ''
-}`;
-
-messages.unshift({
-  role: 'user',
-  content: systemMessage,
-});
-
 
     // ── 7. Fetch conversation history context ────────────────
 	const { context: historyContext } = await buildContextMessages(

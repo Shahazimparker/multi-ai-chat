@@ -14,7 +14,6 @@ import { useAuth }   from '../context/AuthContext';
 import api           from '../config/api';
 import './ChatPage.css';
 import UnifiedModelModal from '../components/chat/UnifiedModelModal';
-import FileUpload from '../components/chat/FileUpload';
 
 const ChatPage = () => {
   const { refreshTokenStats } = useAuth();
@@ -36,7 +35,7 @@ const ChatPage = () => {
   const [providerModelId, setProviderModelId] = useState(null);
   const [failedMessage, setFailedMessage] = useState(null);
   const [llmError, setLlmError] = useState(null);
-  const [uploadedFiles, setUploadedFiles] = useState([]);
+
 
   // Auto-scroll to latest message
   useEffect(() => {
@@ -190,6 +189,7 @@ const ChatPage = () => {
         </div>
 
         {/* Input area */}
+<<<<<<< HEAD
 <div className="input-area">
   <div className="input-box">
     {/* 1. File Upload (Compact Icon) */}
@@ -236,6 +236,9 @@ const ChatPage = () => {
   </button>
 </div>
 		
+=======
+        <div className="input-area">
+>>>>>>> parent of 71fa551 (change:add attachment function)
           {error && <div className="chat-error">{error}</div>}
 		  <div className="memory-controls">
   <button
