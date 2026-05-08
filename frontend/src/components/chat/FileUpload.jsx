@@ -105,5 +105,6 @@ const FileUpload = ({ topicId, onFileUploaded, disabled }) => {
       )}
     </div>
   );
+};
 
 export default FileUpload;
