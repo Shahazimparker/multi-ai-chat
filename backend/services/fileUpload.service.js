@@ -78,12 +78,14 @@ const chunkText = (text, chunkSize = 500, overlap = 50) => {
  */
 const createEmbedding = async (text) => {
   try {
+    // CHANGE: Use 'embedding-001' which is the stable, widely supported model
     const model = genAI.getGenerativeModel({ model: "embedding-001" });
+    
     const result = await model.embedContent(text);
     const embedding = result.embedding;
-    return result.embedding.values;
+    return embedding.values;
   } catch (err) {
-    console.error('Embedding creation failed:', err);
+    console.error('[RAG] Embedding failed:', err);
     throw err;
   }
 };

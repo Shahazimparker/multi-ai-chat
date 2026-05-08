@@ -194,15 +194,11 @@
 }
 .input-box {
   display: flex;
-  align-items: center; /* Vertical centering */
-  gap: 12px;
-  padding: 6px 14px;   /* Tighter vertical padding */
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  align-items: center; /* This vertically centers the pin, text, and send button */
+  min-height: 40px !important;
+  padding: 4px 12px !important;
   border-radius: 24px;
-  min-height: 40px;    /* Shorter height */
-  max-height: 160px;
-  transition: all 0.2s ease;
+  gap: 8px;
 }
 .input-box:focus-within {
   border-color: rgba(167,139,250,0.5);
@@ -210,18 +206,15 @@
 }
 
 .input-box textarea {
-  flex: 1;
-  background: transparent;
-  border: none;
-  outline: none;
-  color: #fff;
-  font-size: 0.95rem;
-  line-height: 20px;   /* Tight line height */
-  height: 20px;        /* Force small height */
-  padding: 2px 0;      /* Remove extra internal space */
-  margin: 0;
+  height: 24px !important;
+  min-height: 24px !important;
+  line-height: 24px !important;
+  padding: 0 !important;
+  margin: 0 !important;
   resize: none;
   overflow-y: hidden;
+  display: flex;
+  align-items: center;
 }
 .input-box textarea::placeholder { color: rgba(255,255,255,0.3); }
 .input-box textarea:disabled      { cursor: not-allowed; }

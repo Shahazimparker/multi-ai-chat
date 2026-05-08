@@ -28,20 +28,12 @@ const CHARS_PER_TOKEN = 4;
  * Body: { modelId, message, topicId? }
  * Auth: Optional (anonymous users allowed but no history saved)
  */
-const sendMessage = async (req, res) => {
-  const startTime = Date.now();
-  const {
-    modelId,
-    providerModelId,
-    message,
-    topicId,
-    memoryMode = 'summarized',
-    historyLimit = 10,
-  } = req.body;
-  const user = req.user;        // null for anonymous
+exports.sendMessage = async (req, res) => {
+  const { modelId, message, topicId, memoryMode, historyLimit, providerModelId } = req.body;
+  const userId = req.user?.id;
   const isAnonymous = !user;
-
   let messages = [];
+  let ragContext = '';
 
   try {
     // ── 1. Validate model ────────────────────────────────────
