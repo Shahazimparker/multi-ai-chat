@@ -91,7 +91,7 @@ const sendMessage = async (req, res) => {
     // ── 3. Compress prompt (remove filler words) ─────────────
     const compressedQuery = compressPrompt(message);
 
-    const isIdentityQuestion = /(^|\b)(what(\s+is)?\s+your\s+model|what\s+model\s+are\s+you|model\s+name|which\s+company\s+llm|who\s+are\s+you)(\b|$)/i.test(compressedQuery);
+    const isIdentityQuestion = /(^|\b)(what(\s+is)?\s+your\s+(llm\s+)?model|what\s+model\s+are\s+you|what\s+is\s+the\s+(llm\s+)?model\s+name|model\s+name|llm\s+name|which\s+company(\s+llm)?\s+you\s+are|which\s+company(\s+llm)?\s+are\s+you|who\s+are\s+you|what\s+are\s+you)(\b|$)/i.test(compressedQuery);
 
     // ── 4. Check query cache ─────────────────────────────────
     if (!isIdentityQuestion) {
