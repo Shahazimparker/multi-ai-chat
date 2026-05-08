@@ -86,7 +86,7 @@ const sendMessage = async (req, res) => {
     // ── 6. Fetch RAG context ─────────────────────────────────
     const ragContext = await buildRAGContext(finalQuery);
 
-    // ── 6. Fetch uploaded file context ──────────────────────────
+    // ── 7. Fetch uploaded file context ──────────────────────────
     const fileResults = await searchUserFiles(finalQuery, user?.id);
     const fileContext = fileResults.length > 0
       ? `[FILE REFERENCES]\n${fileResults
@@ -94,31 +94,21 @@ const sendMessage = async (req, res) => {
         .join('\n\n')}\n[END FILE REFS]\n`
       : '';
 
-    // ── 7. Add file context to messages ────────────────────────
-    const systemMessage = `You are a helpful assistant. Be concise and accurate.${fileContext ? `\n\n${fileContext}` : ''
-      }`;
-
-    messages.unshift({
-      role: 'user',
-      content: systemMessage,
-    });
-
-
-    // ── 7. Fetch conversation history context ────────────────
+    // ── 8. Fetch conversation history context ────────────────
     const { context: historyContext } = await buildContextMessages(
       finalQuery,
       isAnonymous ? null : topicId,
       { memoryMode, historyLimit }
     );
 
-    // ── 8. Build final messages array ────────────────────────
+    // ── 9. Build final messages array ────────────────────────
     const messages = [];
 
-    // System prompt
+    // System prompt with RAG + file context
+    const systemPrompt = `You are a helpful AI assistant. Be concise, accurate, and helpful.${ragContext ? `\n\n${ragContext}` : ''}${fileContext ? `\n\n${fileContext}` : ''}`;
     messages.push({
-      role: 'user',
-      content: `You are a helpful AI assistant. Be concise, accurate, and helpful.${ragContext ? `\n\n${ragContext}` : ''
-        }`,
+      role: 'system',
+      content: systemPrompt,
     });
 
     // History context (if same topic)
