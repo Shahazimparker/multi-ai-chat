@@ -91,21 +91,25 @@ const sendMessage = async (req, res) => {
     // ── 3. Compress prompt (remove filler words) ─────────────
     const compressedQuery = compressPrompt(message);
 
-    // ── 4. Check query cache ─────────────────────────────────
-    const cachedReply = await getCachedResponse(compressedQuery, modelId);
-    if (cachedReply) {
-      // Save to analytics but mark as cache hit
-      await logAnalytics({
-        userId: user?.id, query: message, modelId, tokensUsed: 0,
-        isAnonymous, cacheHit: true, responseTimeMs: Date.now() - startTime
-      });
+    const isIdentityQuestion = /(^|\b)(what(\s+is)?\s+your\s+model|what\s+model\s+are\s+you|model\s+name|which\s+company\s+llm|who\s+are\s+you)(\b|$)/i.test(compressedQuery);
 
-      return res.json({
-        reply: cachedReply,
-        tokensUsed: 0,
-        cacheHit: true,
-        model: modelConfig.label,
-      });
+    // ── 4. Check query cache ─────────────────────────────────
+    if (!isIdentityQuestion) {
+      const cachedReply = await getCachedResponse(compressedQuery, modelId);
+      if (cachedReply) {
+        // Save to analytics but mark as cache hit
+        await logAnalytics({
+          userId: user?.id, query: message, modelId, tokensUsed: 0,
+          isAnonymous, cacheHit: true, responseTimeMs: Date.now() - startTime
+        });
+
+        return res.json({
+          reply: cachedReply,
+          tokensUsed: 0,
+          cacheHit: true,
+          model: modelConfig.label,
+        });
+      }
     }
 
     // ── 5. Maybe compress long queries with Gemini Flash ─────
@@ -167,7 +171,11 @@ const sendMessage = async (req, res) => {
     const aiMessages = [];
 
     // System prompt with RAG + file context
-    const systemPrompt = `You are a helpful AI assistant. Be concise, accurate, and helpful.${ragContext ? `\n\n${ragContext}` : ''}${fileContext ? `\n\n${fileContext}` : ''}`;
+    const runtimeIdentity = `MODEL_IDENTITY: ${modelConfig.label} | provider=${effectiveModelConfig.provider} | model=${effectiveModelConfig.model}`;
+    const identityDirective = isIdentityQuestion
+      ? `\n\nIf the user asks what model/company you are, reply EXACTLY with:\n${runtimeIdentity}`
+      : '';
+    const systemPrompt = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}${ragContext ? `\n\n${ragContext}` : ''}${fileContext ? `\n\n${fileContext}` : ''}`;
     aiMessages.push({
       role: 'system',
       content: systemPrompt,
@@ -194,7 +202,9 @@ const sendMessage = async (req, res) => {
     if (abortController.signal.aborted) return;
 
     // ── 10. Cache the response for future repeated queries ────
-    await setCachedResponse(finalQuery, modelId, reply, queryVector);
+    if (!isIdentityQuestion) {
+      await setCachedResponse(finalQuery, modelId, reply, queryVector);
+    }
 
     // ── 12. Save messages to DB (logged-in users only) ────────
     let resolvedTopicId = topicId;
