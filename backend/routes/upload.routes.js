@@ -27,11 +27,11 @@ const upload = multer({
   storage,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['text/plain', 'image/jpeg', 'image/png', 'application/pdf'];
+    const allowedTypes = ['text/plain', 'image/jpeg', 'image/png', 'application/pdf', 'application/zip', 'application/x-zip-compressed'];
     
     // Allow .docx by checking extension too
     const ext = file.originalname.split('.').pop().toLowerCase();
-    if (ext === 'docx' || allowedTypes.includes(file.mimetype)) {
+    if (['doc', 'docx', 'zip'].includes(ext) || allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
       cb(new Error(`File type not allowed: ${file.mimetype}`));
@@ -69,6 +69,7 @@ router.post('/file', requireAuth, upload.single('file'), async (req, res) => {
       jpg: 'image',
       jpeg: 'image',
       png: 'image',
+      zip: 'zip',
     };
     
     const fileType = fileTypeMap[ext];
@@ -92,7 +93,11 @@ router.post('/file', requireAuth, upload.single('file'), async (req, res) => {
       fileType: result.fileType,
       charCount: result.charCount,
       chunkCount: result.chunkCount,
-      message: `File processed: ${result.chunkCount} chunks created`,
+      extractedFiles: result.extractedFiles,
+      skippedFiles: result.skippedFiles,
+      message: result.fileType === 'zip'
+        ? `ZIP processed: ${result.extractedFiles} files, ${result.chunkCount} chunks created`
+        : `File processed: ${result.chunkCount} chunks created`,
     });
   } catch (err) {
     console.error('[Upload] Error:', err.message);

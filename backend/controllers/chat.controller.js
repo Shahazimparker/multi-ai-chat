@@ -15,13 +15,17 @@ const supabase = require('../config/supabase');
 const { MODELS } = require('../config/models');
 const { dispatchToAI } = require('../services/ai/dispatcher.service');
 const { compressPrompt } = require('../services/compress.service');
-const { getCachedResponse, setCachedResponse } = require('../services/cache.service');
+const { getCachedResponse, getSemanticCachedResponse, setCachedResponse } = require('../services/cache.service');
 const { buildRAGContext, embedText } = require('../services/rag.service');
 const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
 const { searchUserFiles } = require('../services/fileUpload.service');
-
-// Approx chars per token (rough estimate for all models)
-const CHARS_PER_TOKEN = 4;
+const {
+  createPromptBudget,
+  estimateMessagesTokens,
+  estimateTokens,
+  fitMessagesToBudget,
+  trimTextByTokens,
+} = require('../services/tokenBudget.service');
 
 /**
  * POST /api/chat/message
@@ -41,12 +45,14 @@ const sendMessage = async (req, res) => {
 
   // ── 0. Setup Abort Controller for request cancellation ──
   const abortController = new AbortController();
-  req.on('close', () => {
-    if (!res.writableEnded) {
+  const abortDownstreamTasks = () => {
+    if (!abortController.signal.aborted && !res.writableEnded) {
       console.log('[Chat] User stopped the query. Aborting downstream tasks...');
       abortController.abort();
     }
-  });
+  };
+  req.on('aborted', abortDownstreamTasks);
+  res.on('close', abortDownstreamTasks);
 
   const user = req.user;        // null for anonymous
   const isAnonymous = !user;
@@ -62,7 +68,20 @@ const sendMessage = async (req, res) => {
     }
 
     // ── 2. Check per-query token limit ───────────────────────
-    const estimatedInputTokens = Math.ceil(message.length / CHARS_PER_TOKEN);
+    let promptBudget = createPromptBudget(modelConfig);
+    if (user?.per_query_limit && user.per_query_limit < promptBudget.maxPromptTokens) {
+      const scale = Math.max(0.35, user.per_query_limit / promptBudget.maxPromptTokens);
+      promptBudget = {
+        ...promptBudget,
+        maxPromptTokens: user.per_query_limit,
+        systemTokens: Math.floor(promptBudget.systemTokens * scale),
+        historyTokens: Math.floor(promptBudget.historyTokens * scale),
+        ragTokens: Math.floor(promptBudget.ragTokens * scale),
+        fileTokens: Math.floor(promptBudget.fileTokens * scale),
+        queryTokens: Math.floor(promptBudget.queryTokens * scale),
+      };
+    }
+    const estimatedInputTokens = estimateTokens(message);
     if (user && estimatedInputTokens > user.per_query_limit) {
       return res.status(400).json({
         error: `Query too long. Max ${user.per_query_limit} tokens per query. Your query is ~${estimatedInputTokens} tokens.`,
@@ -90,27 +109,57 @@ const sendMessage = async (req, res) => {
     }
 
     // ── 5. Maybe compress long queries with Gemini Flash ─────
+    if (abortController.signal.aborted) throw { name: 'AbortError' };
     const finalQuery = await maybeCompressQuery(compressedQuery, abortController.signal);
 
     // ── 5.5 Generate query embedding once to save tokens ──────
+    if (abortController.signal.aborted) throw { name: 'AbortError' };
     const queryVector = await embedText(finalQuery, modelConfig.provider, 3, abortController.signal);
 
+    const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId);
+    if (semanticCachedReply) {
+      await logAnalytics({
+        userId: user?.id, query: message, modelId, tokensUsed: 0,
+        isAnonymous, cacheHit: true, responseTimeMs: Date.now() - startTime
+      });
+
+      return res.json({
+        reply: semanticCachedReply,
+        tokensUsed: 0,
+        cacheHit: true,
+        model: modelConfig.label,
+      });
+    }
+
     // ── 6. Fetch RAG context ─────────────────────────────────
-    const ragContext = await buildRAGContext(finalQuery, modelConfig.provider, abortController.signal, queryVector);
+    if (abortController.signal.aborted) throw { name: 'AbortError' };
+    const ragContext = await buildRAGContext(
+      finalQuery,
+      modelConfig.provider,
+      abortController.signal,
+      queryVector,
+      { tokenBudget: promptBudget.ragTokens }
+    );
 
     // ── 7. Fetch uploaded file context ──────────────────────────
+    if (abortController.signal.aborted) throw { name: 'AbortError' };
     const fileResults = await searchUserFiles(finalQuery, user?.id, topicId, modelConfig.provider, abortController.signal, queryVector);
     const fileContext = fileResults.length > 0
-      ? `[FILE REFERENCES]\n${fileResults
+      ? trimTextByTokens(`[FILE REFERENCES]\n${fileResults
         .map(r => `Source: ${r.file_name} (Relevance: ${Math.round(r.similarity * 100)}%)\n${r.chunk_text}`)
-        .join('\n\n')}\n[END FILE REFS]\n`
+        .join('\n\n')}\n[END FILE REFS]\n`, promptBudget.fileTokens)
       : '';
 
     // ── 8. Fetch conversation history context ────────────────
     const { context: historyContext } = await buildContextMessages(
       finalQuery,
       isAnonymous ? null : topicId,
-      { memoryMode, historyLimit },
+      {
+        memoryMode,
+        historyLimit,
+        tokenBudget: promptBudget.historyTokens,
+        userId: user?.id,
+      },
       abortController.signal
     );
 
@@ -125,19 +174,27 @@ const sendMessage = async (req, res) => {
     });
 
     // History context (if same topic)
-    aiMessages.push(...historyContext);
+    aiMessages.push(...fitMessagesToBudget(historyContext, promptBudget.historyTokens));
 
     // Current user message
-    aiMessages.push({ role: 'user', content: finalQuery });
+    aiMessages.push({ role: 'user', content: trimTextByTokens(finalQuery, promptBudget.queryTokens) });
+
+    const promptTokens = estimateMessagesTokens(aiMessages);
+    if (user && promptTokens > user.per_query_limit) {
+      return res.status(400).json({
+        error: `Query context too large after RAG/history. Max ${user.per_query_limit} tokens per query. Current prompt is ~${promptTokens} tokens.`,
+      });
+    }
 
     // ── 9. Call AI ───────────────────────────────────────────
     const { text: reply, tokensUsed } = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
+    const billableTokens = Math.max(tokensUsed || 0, promptTokens + estimateTokens(reply));
 
     // Check if user aborted while AI was generating
     if (abortController.signal.aborted) return;
 
     // ── 10. Cache the response for future repeated queries ────
-    await setCachedResponse(finalQuery, modelId, reply);
+    await setCachedResponse(finalQuery, modelId, reply, queryVector);
 
     // ── 12. Save messages to DB (logged-in users only) ────────
     let resolvedTopicId = topicId;
@@ -162,7 +219,7 @@ const sendMessage = async (req, res) => {
         // Save user message + assistant reply
         await supabase.from('messages').insert([
           { topic_id: resolvedTopicId, user_id: user.id, role: 'user', content: message, model: modelId, tokens_used: estimatedInputTokens },
-          { topic_id: resolvedTopicId, user_id: user.id, role: 'assistant', content: reply, model: modelId, tokens_used: tokensUsed },
+          { topic_id: resolvedTopicId, user_id: user.id, role: 'assistant', content: reply, model: modelId, tokens_used: billableTokens },
         ]);
 
         // Update topic timestamp
@@ -176,28 +233,28 @@ const sendMessage = async (req, res) => {
     if (user) {
       await supabase
         .from('users')
-        .update({ used_tokens: user.used_tokens + tokensUsed })
+        .update({ used_tokens: user.used_tokens + billableTokens })
         .eq('id', user.id);
     }
 
     // ── 13. Log to analytics ─────────────────────────────────
     await logAnalytics({
-      userId: user?.id, query: message, modelId, tokensUsed,
+      userId: user?.id, query: message, modelId, tokensUsed: billableTokens,
       isAnonymous, cacheHit: false, responseTimeMs: Date.now() - startTime,
     });
 
     // ── 14. Return response ───────────────────────────────────
     res.json({
       reply,
-      tokensUsed,
+      tokensUsed: billableTokens,
       topicId: resolvedTopicId,
       cacheHit: false,
       model: modelConfig.label,
       // Updated token stats for header display
       tokenStats: user ? {
         total: user.total_tokens,
-        used: user.used_tokens + tokensUsed,
-        remaining: user.total_tokens - user.used_tokens - tokensUsed,
+        used: user.used_tokens + billableTokens,
+        remaining: user.total_tokens - user.used_tokens - billableTokens,
       } : null,
     });
 

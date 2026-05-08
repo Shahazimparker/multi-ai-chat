@@ -5,6 +5,7 @@
 
 const supabase = require('../config/supabase');
 const { summarizeMemory } = require('./summary.service');
+const { trimContextBlock } = require('./tokenBudget.service');
 
 const clamp = (value, min, max) => {
   const number = Number(value);
@@ -17,6 +18,7 @@ const getRecentMessages = async (topicId, limit = 10) => {
     .from('messages')
     .select('role, content, created_at')
     .eq('topic_id', topicId)
+    .eq('is_summary', false)
     .order('created_at', { ascending: false })
     .limit(limit);
 
@@ -30,11 +32,54 @@ const formatMessages = (messages) => {
     .join('\n');
 };
 
+const getLatestSummary = async (topicId) => {
+  const { data, error } = await supabase
+    .from('messages')
+    .select('content, created_at')
+    .eq('topic_id', topicId)
+    .eq('is_summary', true)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) return null;
+  return data || null;
+};
+
+const countMessagesAfter = async (topicId, createdAt) => {
+  let query = supabase
+    .from('messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('topic_id', topicId)
+    .eq('is_summary', false);
+
+  if (createdAt) query = query.gt('created_at', createdAt);
+
+  const { count } = await query;
+  return count || 0;
+};
+
+const saveTopicSummary = async ({ topicId, userId, summary, provider, model }) => {
+  if (!topicId || !summary) return;
+
+  await supabase.from('messages').insert({
+    topic_id: topicId,
+    user_id: userId || null,
+    role: 'assistant',
+    content: summary,
+    model: `summary:${provider}/${model}`,
+    tokens_used: 0,
+    is_summary: true,
+  });
+};
+
 const buildContextMessages = async (newQuery, topicId, options = {}, signal = null) => {
   if (!topicId) return { context: [], isNewTopic: true };
 
   const memoryMode = options.memoryMode || 'summarized';
   const requestedLimit = clamp(options.historyLimit || 10, 2, 20);
+  const tokenBudget = options.tokenBudget || 900;
+  const userId = options.userId || null;
 
   const rawLimit = memoryMode === 'accurate'
     ? requestedLimit
@@ -58,9 +103,18 @@ ${formatMessages(recent)}
 
     let olderSummaryBlock = '';
 
-    if (olderMessages.length > 0) {
+    const latestSummary = await getLatestSummary(topicId);
+    const messagesSinceSummary = await countMessagesAfter(topicId, latestSummary?.created_at);
+
+    if (latestSummary && messagesSinceSummary < 8) {
+      olderSummaryBlock = `[OLDER CONVERSATION SUMMARY]\n${latestSummary.content}\n[END OLDER CONVERSATION SUMMARY]\n\n`;
+    } else if (olderMessages.length >= 6) {
       const olderText = formatMessages(olderMessages);
-      const { summary, provider, model } = await summarizeMemory(olderText, signal);
+      const textToSummarize = latestSummary
+        ? `Existing summary:\n${latestSummary.content}\n\nNewer conversation:\n${olderText}`
+        : olderText;
+      const { summary, provider, model } = await summarizeMemory(textToSummarize, signal);
+      await saveTopicSummary({ topicId, userId, summary, provider, model });
 
       olderSummaryBlock = `[OLDER CONVERSATION SUMMARY]
 ${summary}
@@ -76,6 +130,8 @@ ${olderSummaryBlock}[LATEST RAW CONVERSATION]
 ${formatMessages(latestMessages)}
 [END LATEST RAW CONVERSATION]`;
   }
+
+  memoryText = trimContextBlock(memoryText, tokenBudget);
 
   return {
     context: [{

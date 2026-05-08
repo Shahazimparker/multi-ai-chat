@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS query_cache (
   query_text      TEXT NOT NULL,
   response_text   TEXT NOT NULL,
   model           TEXT NOT NULL,
+  query_embedding vector(1536),           -- optional semantic cache lookup
   hit_count       INTEGER DEFAULT 1,      -- how many times this was served from cache
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   last_hit_at     TIMESTAMPTZ DEFAULT NOW()
@@ -176,6 +177,10 @@ $$;
 CREATE INDEX IF NOT EXISTS rag_embedding_idx
   ON rag_documents USING ivfflat (embedding vector_cosine_ops);
 
+CREATE INDEX IF NOT EXISTS query_cache_embedding_idx
+  ON query_cache USING ivfflat (query_embedding vector_cosine_ops)
+  WHERE query_embedding IS NOT NULL;
+
 -- ─────────────────────────────────────────────
 -- FUNCTION: match_documents (cosine similarity search for RAG)
 -- ─────────────────────────────────────────────
@@ -199,6 +204,36 @@ BEGIN
   FROM rag_documents
   WHERE rag_documents.provider = provider_param
     AND 1 - (rag_documents.embedding <=> query_embedding) > match_threshold
+  ORDER BY similarity DESC
+  LIMIT match_count;
+END;
+$$;
+
+-- ─────────────────────────────────────────────
+-- FUNCTION: match_query_cache (semantic response cache)
+-- ─────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION match_query_cache(
+  query_embedding vector(1536),
+  model_param     TEXT,
+  match_threshold FLOAT DEFAULT 0.92,
+  match_count     INT DEFAULT 1
+)
+RETURNS TABLE (
+  id UUID, query_text TEXT, response_text TEXT, hit_count INTEGER, similarity FLOAT
+)
+LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    query_cache.id,
+    query_cache.query_text,
+    query_cache.response_text,
+    query_cache.hit_count,
+    1 - (query_cache.query_embedding <=> query_embedding) AS similarity
+  FROM query_cache
+  WHERE query_cache.model = model_param
+    AND query_cache.query_embedding IS NOT NULL
+    AND 1 - (query_cache.query_embedding <=> query_embedding) > match_threshold
   ORDER BY similarity DESC
   LIMIT match_count;
 END;

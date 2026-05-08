@@ -8,13 +8,28 @@
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const supabase = require('../config/supabase');
+const { trimTextByTokens } = require('./tokenBudget.service');
+
+const throwIfAborted = (signal) => {
+  if (signal?.aborted) throw { name: 'AbortError' };
+};
 
 const cancelableDelay = (ms, signal) => new Promise((resolve, reject) => {
-  const timer = setTimeout(resolve, ms);
-  signal?.addEventListener('abort', () => {
+  if (signal?.aborted) {
+    reject({ name: 'AbortError' });
+    return;
+  }
+
+  const onAbort = () => {
     clearTimeout(timer);
     reject({ name: 'AbortError' });
-  }, { once: true });
+  };
+  const timer = setTimeout(() => {
+    signal?.removeEventListener('abort', onAbort);
+    resolve();
+  }, ms);
+
+  signal?.addEventListener('abort', onAbort, { once: true });
 });
 
 /**
@@ -26,7 +41,7 @@ const cancelableDelay = (ms, signal) => new Promise((resolve, reject) => {
  */
 const embedText = async (text, provider = 'openai', retries = 3, signal = null) => {
   // Immediate check if already aborted
-  if (signal?.aborted) throw { name: 'AbortError' };
+  throwIfAborted(signal);
 
   if (provider === 'gemini') {
     if (!process.env.GEMINI_API_KEY) {
@@ -55,11 +70,12 @@ const embedText = async (text, provider = 'openai', retries = 3, signal = null) 
       return vector;
     } catch (err) {
       if (err.message?.includes('429') && retries > 0) {
-        if (signal?.aborted) throw { name: 'AbortError' };
+        throwIfAborted(signal);
 
         const delay = (4 - retries) * 2000;
         console.warn(`[RAG] Gemini Rate limited. Retrying in ${delay}ms...`);
         await cancelableDelay(delay, signal);
+        throwIfAborted(signal);
 
         // If we reach here, delay completed without abort, so proceed with retry
         return embedText(text, provider, retries - 1, signal);
@@ -101,11 +117,12 @@ const embedText = async (text, provider = 'openai', retries = 3, signal = null) 
     }
     if (err.response?.status === 429) {
       if (retries > 0) {
-        if (signal?.aborted) throw { name: 'AbortError' };
+        throwIfAborted(signal);
 
         const delay = (4 - retries) * 2000; // 2s, 4s, 6s...
         console.warn(`[RAG] Rate limited (429). Retrying in ${delay}ms... (${retries} attempts left)`);
         await cancelableDelay(delay, signal);
+        throwIfAborted(signal);
 
         // If we reach here, delay completed without abort, so proceed with retry
         return embedText(text, provider, retries - 1, signal);
@@ -161,7 +178,7 @@ const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = '
  * @param {AbortSignal} signal
  * @param {Array} precomputedEmbedding
  */
-const buildRAGContext = async (query, provider = 'openai', signal = null, precomputedEmbedding = null) => {
+const buildRAGContext = async (query, provider = 'openai', signal = null, precomputedEmbedding = null, options = {}) => {
   const embedding = precomputedEmbedding || await embedText(query, provider, 3, signal);
   if (!embedding) return '';
 
@@ -181,8 +198,10 @@ const buildRAGContext = async (query, provider = 'openai', signal = null, precom
 
   if ((error && error.name !== 'AbortError' && error.name !== 'CanceledError') || !docs || docs.length === 0) return ''; // Only log if not an abort
 
+  const totalTokenBudget = options.tokenBudget || 650;
+  const perDocBudget = Math.max(120, Math.floor(totalTokenBudget / docs.length));
   const contextBlock = docs
-    .map((d, i) => `[Document ${i + 1}: ${d.title}]\n${d.content}`)
+    .map((d, i) => `[Document ${i + 1}: ${d.title}]\n${trimTextByTokens(d.content, perDocBudget)}`)
     .join('\n\n');
 
   return `[KNOWLEDGE BASE CONTEXT]\n${contextBlock}\n[END KNOWLEDGE BASE]\n\nUse the above context if relevant to answer the question.`;

@@ -4,28 +4,54 @@
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
+const JSZip = require('jszip');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 const supabase = require('../config/supabase');
 const { embedText } = require('./rag.service');
 const { MODELS } = require('../config/models');
 const { dispatchToAI } = require('./ai/dispatcher.service');
+const { trimTextByTokens } = require('./tokenBudget.service');
+
+const SUPPORTED_FILE_TYPES = {
+  txt: 'txt',
+  pdf: 'pdf',
+  doc: 'doc',
+  docx: 'doc',
+  jpg: 'image',
+  jpeg: 'image',
+  png: 'image',
+};
+
+const getSupportedFileType = (fileName) => {
+  const ext = path.extname(fileName).slice(1).toLowerCase();
+  return SUPPORTED_FILE_TYPES[ext] || null;
+};
+
+const normalizeZipEntryName = (entryName) => entryName.replace(/\\/g, '/');
+
+const isSafeZipEntryName = (entryName) => {
+  const normalized = normalizeZipEntryName(entryName);
+  return Boolean(normalized)
+    && !normalized.startsWith('/')
+    && !normalized.includes('\0')
+    && !normalized.split('/').some(part => part === '..');
+};
 
 /**
  * Extract text from different file types
  */
-const extractTextFromFile = async (filePath, fileType, modelId, signal = null) => {
+const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, fileName = '') => {
   try {
     if (fileType === 'txt') {
       // Plain text — read directly
-      return fs.readFileSync(filePath, 'utf-8');
+      return buffer.toString('utf-8');
     }
 
     if (fileType === 'image') {
       // Image — use Gemini Vision API
-      const imageData = fs.readFileSync(filePath);
-      const base64Image = imageData.toString('base64');
-      const ext = path.extname(filePath).toLowerCase();
+      const base64Image = buffer.toString('base64');
+      const ext = path.extname(fileName).toLowerCase();
       const mimeTypeMap = {
         '.jpg': 'image/jpeg',
         '.jpeg': 'image/jpeg',
@@ -56,15 +82,14 @@ const extractTextFromFile = async (filePath, fileType, modelId, signal = null) =
 
     if (fileType === 'pdf') {
       // PDF — use pdf-parse library
-      const dataBuffer = fs.readFileSync(filePath);
-      const data = await pdfParse(dataBuffer);
+      const data = await pdfParse(buffer);
 
       return data.text; // Full PDF text
     }
 
     if (fileType === 'doc') {
       // DOC/DOCX — use mammoth library
-      const result = await mammoth.extractRawText({ path: filePath });
+      const result = await mammoth.extractRawText({ buffer });
 
       return result.value;
     }
@@ -97,6 +122,120 @@ const chunkText = (text, chunkSize = 500, overlap = 50) => {
   return chunks;
 };
 
+const saveExtractedBuffer = async ({ fileName, fileType, fileSize, extractedText, userId, topicId, provider, signal = null, sourceArchive = null }) => {
+  if (!extractedText || extractedText.length < 10) {
+    throw new Error(`${fileName} is empty or unreadable`);
+  }
+
+  const fileEmbedding = await embedText(extractedText.slice(0, 2000), provider, 3, signal);
+
+  const { data: fileRecord, error: fileError } = await supabase
+    .from('uploaded_files')
+    .insert({
+      user_id: userId,
+      topic_id: topicId,
+      file_name: fileName,
+      file_type: fileType,
+      file_size: fileSize,
+      provider,
+      content_text: extractedText,
+      embedding: fileEmbedding,
+      metadata: {
+        extractedAt: new Date().toISOString(),
+        charCount: extractedText.length,
+        sourceArchive,
+      },
+    })
+    .select('id')
+    .single();
+
+  if (fileError) throw fileError;
+
+  const chunks = chunkText(extractedText);
+  const chunkRecords = [];
+
+  for (let i = 0; i < chunks.length; i++) {
+    if (signal?.aborted) throw { name: 'AbortError' };
+
+    const chunkEmbedding = await embedText(chunks[i], provider, 3, signal);
+    chunkRecords.push({
+      file_id: fileRecord.id,
+      chunk_text: chunks[i],
+      provider,
+      embedding: chunkEmbedding,
+      chunk_index: i,
+    });
+  }
+
+  if (chunkRecords.length > 0) {
+    const { error: chunkError } = await supabase
+      .from('rag_chunks')
+      .insert(chunkRecords);
+
+    if (chunkError) throw chunkError;
+  }
+
+  return {
+    fileId: fileRecord.id,
+    fileName,
+    fileType,
+    chunkCount: chunks.length,
+    charCount: extractedText.length,
+  };
+};
+
+const processZipFile = async (filePath, fileName, userId, topicId, modelId, provider, signal = null) => {
+  const zip = await JSZip.loadAsync(fs.readFileSync(filePath));
+  const results = [];
+  const skipped = [];
+
+  for (const entry of Object.values(zip.files)) {
+    if (signal?.aborted) throw { name: 'AbortError' };
+    if (entry.dir) continue;
+
+    const entryName = normalizeZipEntryName(entry.name);
+    if (!isSafeZipEntryName(entryName)) {
+      skipped.push(entry.name);
+      continue;
+    }
+
+    const innerType = getSupportedFileType(entryName);
+    if (!innerType) {
+      skipped.push(entryName);
+      continue;
+    }
+
+    const buffer = await entry.async('nodebuffer');
+    const extractedText = await extractTextFromBuffer(buffer, innerType, modelId, signal, entryName);
+    const result = await saveExtractedBuffer({
+      fileName: `${fileName}/${entryName}`,
+      fileType: innerType,
+      fileSize: buffer.length,
+      extractedText,
+      userId,
+      topicId,
+      provider,
+      signal,
+      sourceArchive: fileName,
+    });
+    results.push(result);
+  }
+
+  if (results.length === 0) {
+    throw new Error('ZIP did not contain any supported readable files');
+  }
+
+  return {
+    fileId: results[0].fileId,
+    fileName,
+    fileType: 'zip',
+    chunkCount: results.reduce((sum, item) => sum + item.chunkCount, 0),
+    charCount: results.reduce((sum, item) => sum + item.charCount, 0),
+    extractedFiles: results.length,
+    skippedFiles: skipped.length,
+  };
+};
+
 /**
  * Main: Process uploaded file
  */
@@ -106,6 +245,13 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
 
     const modelConfig = MODELS[modelId] || MODELS['gemini-1.5-flash-latest'] || Object.values(MODELS)[0];
     const provider = modelConfig?.provider || 'openai';
+
+    if (fileType === 'zip') {
+      const result = await processZipFile(filePath, fileName, userId, topicId, modelId, provider, signal);
+      fs.unlinkSync(filePath);
+      console.log(`[FileUpload] Success: ${fileName} extracted ${result.extractedFiles} files`);
+      return result;
+    }
 
     // 1. Extract text from file
     const extractedText = await extractTextFromFile(filePath, fileType, modelId, signal);
@@ -211,10 +357,13 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
 /**
  * Search in user's uploaded files
  */
-const searchUserFiles = async (query, userId, topicId = null, provider = 'openai', signal = null) => {
+const searchUserFiles = async (query, userId, topicId = null, provider = 'openai', signal = null, precomputedEmbedding = null) => {
   try {
+    if (!userId) return [];
+
     // Create embedding for query
-    const queryEmbedding = await embedText(query, provider, 3, signal);
+    const queryEmbedding = precomputedEmbedding || await embedText(query, provider, 3, signal);
+    if (!queryEmbedding) return [];
 
     // Search database
     const { data, error } = await Promise.race([
@@ -232,7 +381,10 @@ const searchUserFiles = async (query, userId, topicId = null, provider = 'openai
 
     if (error) throw error;
 
-    return data || [];
+    return (data || []).map(result => ({
+      ...result,
+      chunk_text: trimTextByTokens(result.chunk_text, 260),
+    }));
   } catch (err) {
     console.error('File search failed:', err);
     return [];
@@ -261,4 +413,9 @@ module.exports = {
   searchUserFiles,
   deleteUploadedFile,
   chunkText,
+};
+
+const extractTextFromFile = async (filePath, fileType, modelId, signal = null) => {
+  const buffer = fs.readFileSync(filePath);
+  return extractTextFromBuffer(buffer, fileType, modelId, signal, filePath);
 };

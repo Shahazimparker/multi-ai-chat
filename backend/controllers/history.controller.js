@@ -36,6 +36,7 @@ const getMessages = async (req, res) => {
     .from('messages')
     .select('id, role, content, model, tokens_used, created_at')
     .eq('topic_id', id)
+    .eq('is_summary', false)
     .order('created_at', { ascending: true });
 
   if (error) return res.status(500).json({ error: error.message });
