@@ -10,7 +10,10 @@ const { requireAuth } = require('../middleware/auth');
 const { processUploadedFile, searchUserFiles, deleteUploadedFile } = require('../services/fileUpload.service');
 
 // Ensure upload directory exists and use absolute path
-const uploadDir = path.join(__dirname, '../uploads');
+const uploadDir =
+  process.env.VERCEL || process.env.NODE_ENV === 'production'
+    ? '/tmp/uploads'
+    : path.join(__dirname, '../uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
