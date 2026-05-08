@@ -40,7 +40,6 @@ const sendMessage = async (req, res) => {
   } = req.body;
   const user = req.user;        // null for anonymous
   const isAnonymous = !user;
-  let messages = [];
 
   try {
     // ── 1. Validate model ────────────────────────────────────
