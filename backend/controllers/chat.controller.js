@@ -11,12 +11,12 @@
 //   8. Analytics logging     (all queries tracked)
 // ============================================================
 
-const supabase = require('../config/supabase');
-const { MODELS } = require('../config/models');
-const { dispatchToAI } = require('../services/ai/dispatcher.service');
-const { compressPrompt } = require('../services/compress.service');
+const supabase                          = require('../config/supabase');
+const { MODELS }                        = require('../config/models');
+const { dispatchToAI }                  = require('../services/ai/dispatcher.service');
+const { compressPrompt }                = require('../services/compress.service');
 const { getCachedResponse, setCachedResponse } = require('../services/cache.service');
-const { buildRAGContext } = require('../services/rag.service');
+const { buildRAGContext }               = require('../services/rag.service');
 const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
 const { searchUserFiles } = require('../services/fileUpload.service');
 
@@ -28,19 +28,25 @@ const CHARS_PER_TOKEN = 4;
  * Body: { modelId, message, topicId? }
  * Auth: Optional (anonymous users allowed but no history saved)
  */
-exports.sendMessage = async (req, res) => {
-  const { modelId, message, topicId, memoryMode, historyLimit, providerModelId } = req.body;
-  const userId = req.user?.id;
+const sendMessage = async (req, res) => {
+  const startTime   = Date.now();
+  const {
+  modelId,
+  providerModelId,
+  message,
+  topicId,
+  memoryMode = 'summarized',
+  historyLimit = 10,
+} = req.body;
+  const user        = req.user;        // null for anonymous
   const isAnonymous = !user;
-  let messages = [];
-  let ragContext = '';
 
   try {
     // ── 1. Validate model ────────────────────────────────────
     const modelConfig = MODELS[modelId];
-    const effectiveModelConfig = providerModelId
-      ? { ...modelConfig, model: providerModelId }
-      : modelConfig;
+	const effectiveModelConfig = providerModelId
+  ? { ...modelConfig, model: providerModelId }
+  : modelConfig;
     if (!modelConfig) {
       return res.status(400).json({ error: `Unknown model: ${modelId}` });
     }
@@ -60,16 +66,14 @@ exports.sendMessage = async (req, res) => {
     const cachedReply = await getCachedResponse(compressedQuery, modelId);
     if (cachedReply) {
       // Save to analytics but mark as cache hit
-      await logAnalytics({
-        userId: user?.id, query: message, modelId, tokensUsed: 0,
-        isAnonymous, cacheHit: true, responseTimeMs: Date.now() - startTime
-      });
+      await logAnalytics({ userId: user?.id, query: message, modelId, tokensUsed: 0,
+        isAnonymous, cacheHit: true, responseTimeMs: Date.now() - startTime });
 
       return res.json({
-        reply: cachedReply,
+        reply:      cachedReply,
         tokensUsed: 0,
-        cacheHit: true,
-        model: modelConfig.label,
+        cacheHit:   true,
+        model:      modelConfig.label,
       });
     }
 
@@ -79,39 +83,41 @@ exports.sendMessage = async (req, res) => {
     // ── 6. Fetch RAG context ─────────────────────────────────
     const ragContext = await buildRAGContext(finalQuery);
 
-    // ── 6. Fetch uploaded file context ──────────────────────────
-    const fileResults = await searchUserFiles(finalQuery, user?.id);
-    const fileContext = fileResults.length > 0
-      ? `[FILE REFERENCES]\n${fileResults
-        .map(r => `Source: ${r.file_name}\n${r.chunk_text}`)
-        .join('\n\n')}\n[END FILE REFS]\n`
-      : '';
+// ── 6. Fetch uploaded file context ──────────────────────────
+const fileResults = await searchUserFiles(finalQuery, user?.id);
+const fileContext = fileResults.length > 0 
+  ? `[FILE REFERENCES]\n${fileResults
+      .map(r => `Source: ${r.file_name}\n${r.chunk_text}`)
+      .join('\n\n')}\n[END FILE REFS]\n`
+  : '';
 
-    // ── 7. Add file context to messages ────────────────────────
-    const systemMessage = `You are a helpful assistant. Be concise and accurate.${fileContext ? `\n\n${fileContext}` : ''
-      }`;
+// ── 7. Add file context to messages ────────────────────────
+const systemMessage = `You are a helpful assistant. Be concise and accurate.${
+  fileContext ? `\n\n${fileContext}` : ''
+}`;
 
-    messages.unshift({
-      role: 'user',
-      content: systemMessage,
-    });
+messages.unshift({
+  role: 'user',
+  content: systemMessage,
+});
 
 
     // ── 7. Fetch conversation history context ────────────────
-    const { context: historyContext } = await buildContextMessages(
-      finalQuery,
-      isAnonymous ? null : topicId,
-      { memoryMode, historyLimit }
-    );
+	const { context: historyContext } = await buildContextMessages(
+		finalQuery,
+		isAnonymous ? null : topicId,
+		{ memoryMode, historyLimit }
+	);
 
     // ── 8. Build final messages array ────────────────────────
     const messages = [];
 
     // System prompt
     messages.push({
-      role: 'user',
-      content: `You are a helpful AI assistant. Be concise, accurate, and helpful.${ragContext ? `\n\n${ragContext}` : ''
-        }`,
+      role:    'user',
+      content: `You are a helpful AI assistant. Be concise, accurate, and helpful.${
+        ragContext ? `\n\n${ragContext}` : ''
+      }`,
     });
 
     // History context (if same topic)
@@ -151,8 +157,8 @@ exports.sendMessage = async (req, res) => {
       if (resolvedTopicId) {
         // Save user message + assistant reply
         await supabase.from('messages').insert([
-          { topic_id: resolvedTopicId, user_id: user.id, role: 'user', content: message, model: modelId, tokens_used: estimatedInputTokens },
-          { topic_id: resolvedTopicId, user_id: user.id, role: 'assistant', content: reply, model: modelId, tokens_used: tokensUsed },
+          { topic_id: resolvedTopicId, user_id: user.id, role: 'user',      content: message,  model: modelId, tokens_used: estimatedInputTokens },
+          { topic_id: resolvedTopicId, user_id: user.id, role: 'assistant', content: reply,    model: modelId, tokens_used: tokensUsed },
         ]);
 
         // Update topic timestamp
@@ -172,44 +178,44 @@ exports.sendMessage = async (req, res) => {
     res.json({
       reply,
       tokensUsed,
-      topicId: resolvedTopicId,
-      cacheHit: false,
-      model: modelConfig.label,
+      topicId:   resolvedTopicId,
+      cacheHit:  false,
+      model:     modelConfig.label,
       // Updated token stats for header display
       tokenStats: user ? {
-        total: user.total_tokens,
-        used: user.used_tokens + tokensUsed,
+        total:     user.total_tokens,
+        used:      user.used_tokens + tokensUsed,
         remaining: user.total_tokens - user.used_tokens - tokensUsed,
       } : null,
     });
 
   } catch (err) {
-    console.error('[Chat] Error:', err.message);
+  console.error('[Chat] Error:', err.message);
 
-    const messageText = err.message || '';
-    let errorType = 'unknown';
-    let userMessage = 'The selected LLM is temporarily unavailable.';
+  const messageText = err.message || '';
+  let errorType = 'unknown';
+  let userMessage = 'The selected LLM is temporarily unavailable.';
 
-    if (/quota|insufficient|credit|billing|exceeded/i.test(messageText)) {
-      errorType = 'quota_exhausted';
-      userMessage = 'The selected LLM token quota is exhausted.';
-    } else if (/rate limit|429|too many/i.test(messageText)) {
-      errorType = 'rate_limited';
-      userMessage = 'The selected LLM is rate limited right now.';
-    } else if (/decommissioned|not found|unsupported|model/i.test(messageText)) {
-      errorType = 'model_unavailable';
-      userMessage = 'The selected LLM model is unavailable or no longer supported.';
-    } else if (/api key|authentication|unauthorized|401/i.test(messageText)) {
-      errorType = 'api_key_missing';
-      userMessage = 'The selected LLM is not configured correctly.';
-    }
+  if (/quota|insufficient|credit|billing|exceeded/i.test(messageText)) {
+    errorType = 'quota_exhausted';
+    userMessage = 'The selected LLM token quota is exhausted.';
+  } else if (/rate limit|429|too many/i.test(messageText)) {
+    errorType = 'rate_limited';
+    userMessage = 'The selected LLM is rate limited right now.';
+  } else if (/decommissioned|not found|unsupported|model/i.test(messageText)) {
+    errorType = 'model_unavailable';
+    userMessage = 'The selected LLM model is unavailable or no longer supported.';
+  } else if (/api key|authentication|unauthorized|401/i.test(messageText)) {
+    errorType = 'api_key_missing';
+    userMessage = 'The selected LLM is not configured correctly.';
+  }
 
-    res.status(503).json({
-      error: userMessage,
-      errorType,
-      retryable: true,
-      failedModelId: modelId,
-    });
+  res.status(503).json({
+    error: userMessage,
+    errorType,
+    retryable: true,
+    failedModelId: modelId,
+  });
   }
 };
 
@@ -219,12 +225,12 @@ exports.sendMessage = async (req, res) => {
 const logAnalytics = async ({ userId, query, modelId, tokensUsed, isAnonymous, cacheHit, responseTimeMs }) => {
   try {
     await supabase.from('query_analytics').insert({
-      user_id: userId || null,
-      query_text: query.slice(0, 500),
-      model: modelId,
-      tokens_used: tokensUsed,
-      is_anonymous: isAnonymous,
-      cache_hit: cacheHit,
+      user_id:         userId || null,
+      query_text:      query.slice(0, 500),
+      model:           modelId,
+      tokens_used:     tokensUsed,
+      is_anonymous:    isAnonymous,
+      cache_hit:       cacheHit,
       response_time_ms: responseTimeMs,
     });
   } catch (e) {
@@ -233,7 +239,4 @@ const logAnalytics = async ({ userId, query, modelId, tokensUsed, isAnonymous, c
   }
 };
 
-module.exports = {
-  sendMessage,
-  logAnalytics // and any other helpers you have
-};
+module.exports = { sendMessage };
