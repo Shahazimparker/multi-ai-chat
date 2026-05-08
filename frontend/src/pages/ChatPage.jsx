@@ -191,63 +191,33 @@ const ChatPage = () => {
 
         {/* Input area */}
         <div className="input-area">
-
-
-          {/* File upload component */}
-          <FileUpload
-            topicId={activeTopic?.id}
-            onFileUploaded={(file) => {
-              setUploadedFiles(prev => [...prev, file]);
-              setMessages(prev => [...prev, {
-                role: 'assistant',
-                content: `📎 File "${file.fileName}" uploaded successfully (${file.chunks} chunks). You can now ask questions about it!`,
-              }]);
-            }}
-            disabled={loading || !model}
-          />
-
-          {/* Existing textarea */}
-          <textarea
-          // ... existing props
-          />
-
-          {/* Send button */}
-          <button className="send-btn" onClick={handleSend} disabled={loading || !model || !input.trim()}>
-            {loading ? <StopCircle size={18} /> : <Send size={18} />}
-          </button>
-
-
           {error && <div className="chat-error">{error}</div>}
+
           <div className="memory-controls">
             <button
               type="button"
               className={`memory-mode-btn ${memoryMode === 'summarized' ? 'active' : ''}`}
-              title="Token friendly. Summarizes older context and sends only the latest raw messages."
               onClick={() => setMemoryMode('summarized')}
             >
               Summarized+
             </button>
-
             <button
               type="button"
               className={`memory-mode-btn ${memoryMode === 'accurate' ? 'active' : ''}`}
-              title="Higher token use. Sends more raw chat history for better exact continuity."
               onClick={() => setMemoryMode('accurate')}
             >
               Accurate+
             </button>
-
             <button
               type="button"
               className="memory-advanced-btn"
-              title="Change how many previous messages can be used for memory."
               onClick={() => setShowAdvancedMemory(p => !p)}
             >
               Advanced
             </button>
 
             {showAdvancedMemory && (
-              <label className="memory-limit-control" title="Previous messages include both user messages and AI replies.">
+              <label className="memory-limit-control">
                 Last
                 <input
                   type="number"
@@ -255,13 +225,26 @@ const ChatPage = () => {
                   max="20"
                   value={historyLimit}
                   onChange={e => setHistoryLimit(e.target.value)}
-                  onBlur={() => setHistoryLimit(Math.max(2, Math.min(20, Number(historyLimit) || 10)))}
                 />
                 msgs
               </label>
             )}
           </div>
+
           <div className="input-box">
+            {/* Moved FileUpload inside the single active input box */}
+            <FileUpload
+              topicId={activeTopic?.id}
+              onFileUploaded={(file) => {
+                setUploadedFiles(prev => [...prev, file]);
+                setMessages(prev => [...prev, {
+                  role: 'assistant',
+                  content: `📎 File "${file.fileName}" uploaded successfully.`,
+                }]);
+              }}
+              disabled={loading || !model}
+            />
+
             <textarea
               ref={textareaRef}
               value={input}
@@ -271,6 +254,7 @@ const ChatPage = () => {
               disabled={loading || !model}
               rows={1}
             />
+
             <button
               className="send-btn"
               onClick={handleSend}
@@ -279,6 +263,7 @@ const ChatPage = () => {
               {loading ? <StopCircle size={18} /> : <Send size={18} />}
             </button>
           </div>
+
           <p className="input-hint">Enter to send · Shift+Enter for new line</p>
         </div>
       </main>
