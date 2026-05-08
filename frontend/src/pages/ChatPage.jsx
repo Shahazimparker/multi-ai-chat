@@ -305,7 +305,6 @@ const ChatPage = () => {
           </div>
           <p className="input-hint">Enter to send · Shift+Enter for new line</p>
         </div>
-      )
 	  {llmError && (
   <div className="llm-error-backdrop">
     <div className="llm-error-modal">
