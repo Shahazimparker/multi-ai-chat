@@ -190,6 +190,7 @@ const ChatPage = () => {
 
         {/* Input area */}
 <<<<<<< HEAD
+<<<<<<< HEAD
 <div className="input-area">
   <div className="input-box">
     {/* 1. File Upload (Compact Icon) */}
@@ -236,6 +237,9 @@ const ChatPage = () => {
   </button>
 </div>
 		
+=======
+        <div className="input-area">
+>>>>>>> parent of 71fa551 (change:add attachment function)
 =======
         <div className="input-area">
 >>>>>>> parent of 71fa551 (change:add attachment function)
