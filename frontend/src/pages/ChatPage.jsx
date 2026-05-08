@@ -47,7 +47,7 @@ const ChatPage = () => {
   const handleInputChange = (e) => {
     setInput(e.target.value);
     const ta = textareaRef.current;
-    if (ta) { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'; }
+    if (ta) { ta.style.height = 'auto'; ta.style.height = e.target.value ? Math.min(ta.scrollHeight, 160) + 'px' : '24px'; }
   };
 
   // Load messages when switching topics
