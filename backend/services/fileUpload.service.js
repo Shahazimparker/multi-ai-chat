@@ -5,7 +5,6 @@ const fs = require('fs');
 const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const supabase = require('../config/supabase');
-
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 /**
@@ -17,12 +16,12 @@ const extractTextFromFile = async (filePath, fileType) => {
       // Plain text — read directly
       return fs.readFileSync(filePath, 'utf-8');
     }
-    
+
     if (fileType === 'image') {
       // Image — use Gemini Vision API
       const imageData = fs.readFileSync(filePath);
       const base64Image = imageData.toString('base64');
-      
+
       const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
       const result = await model.generateContent([
         {
@@ -33,27 +32,27 @@ const extractTextFromFile = async (filePath, fileType) => {
         },
         { text: 'Extract all text and describe what you see. Be detailed.' },
       ]);
-      
+
       return result.response.text();
     }
-    
+
     if (fileType === 'pdf') {
       // PDF — use pdf-parse library
       const pdfParse = require('pdf-parse');
       const dataBuffer = fs.readFileSync(filePath);
       const data = await pdfParse(dataBuffer);
-      
+
       return data.text; // Full PDF text
     }
-    
+
     if (fileType === 'doc') {
       // DOC/DOCX — use mammoth library
       const mammoth = require('mammoth');
       const result = await mammoth.extractRawText({ path: filePath });
-      
+
       return result.value;
     }
-    
+
     throw new Error(`Unsupported file type: ${fileType}`);
   } catch (err) {
     console.error(`Text extraction failed for ${fileType}:`, err);
@@ -66,11 +65,11 @@ const extractTextFromFile = async (filePath, fileType) => {
  */
 const chunkText = (text, chunkSize = 500, overlap = 50) => {
   const chunks = [];
-  
+
   for (let i = 0; i < text.length; i += chunkSize - overlap) {
     chunks.push(text.slice(i, i + chunkSize));
   }
-  
+
   return chunks;
 };
 
@@ -79,9 +78,9 @@ const chunkText = (text, chunkSize = 500, overlap = 50) => {
  */
 const createEmbedding = async (text) => {
   try {
-    const model = genAI.getGenerativeModel({ model: 'text-embedding-004' });
+    const model = genAI.getGenerativeModel({ model: "embedding-001" });
     const result = await model.embedContent(text);
-    
+    const embedding = result.embedding;
     return result.embedding.values;
   } catch (err) {
     console.error('Embedding creation failed:', err);
@@ -95,19 +94,19 @@ const createEmbedding = async (text) => {
 const processUploadedFile = async (filePath, fileName, fileType, userId, topicId) => {
   try {
     console.log(`[FileUpload] Processing: ${fileName}`);
-    
+
     // 1. Extract text from file
     const extractedText = await extractTextFromFile(filePath, fileType);
-    
+
     if (!extractedText || extractedText.length < 10) {
       throw new Error('File is empty or unreadable');
     }
-    
+
     // 2. Create embedding for full text
     const fileEmbedding = await createEmbedding(
       extractedText.slice(0, 2000) // Use first 2000 chars for speed
     );
-    
+
     // 3. Save file record to DB
     const { data: fileRecord, error: fileError } = await supabase
       .from('uploaded_files')
@@ -126,17 +125,17 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
       })
       .select('id')
       .single();
-    
+
     if (fileError) throw fileError;
-    
+
     // 4. Split into chunks and create embeddings
     const chunks = chunkText(extractedText);
     const chunkRecords = [];
-    
+
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
       const chunkEmbedding = await createEmbedding(chunk);
-      
+
       chunkRecords.push({
         file_id: fileRecord.id,
         chunk_text: chunk,
@@ -144,21 +143,21 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
         chunk_index: i,
       });
     }
-    
+
     // Batch insert chunks
     if (chunkRecords.length > 0) {
       const { error: chunkError } = await supabase
         .from('rag_chunks')
         .insert(chunkRecords);
-      
+
       if (chunkError) throw chunkError;
     }
-    
+
     // 5. Cleanup — delete temp file
     fs.unlinkSync(filePath);
-    
+
     console.log(`[FileUpload] Success: ${fileName} processed`);
-    
+
     return {
       fileId: fileRecord.id,
       fileName,
@@ -181,16 +180,16 @@ const searchUserFiles = async (query, userId, topicId = null) => {
   try {
     // Create embedding for query
     const queryEmbedding = await createEmbedding(query);
-    
+
     // Search database
     const { data, error } = await supabase.rpc('search_uploaded_files', {
       query_embedding: queryEmbedding,
       user_id_param: userId,
       match_count: 5,
     });
-    
+
     if (error) throw error;
-    
+
     return data || [];
   } catch (err) {
     console.error('File search failed:', err);
@@ -204,14 +203,14 @@ const searchUserFiles = async (query, userId, topicId = null) => {
 const deleteUploadedFile = async (fileId, userId) => {
   // First delete all chunks
   await supabase.from('rag_chunks').delete().eq('file_id', fileId);
-  
+
   // Then delete file record
   const { error } = await supabase
     .from('uploaded_files')
     .delete()
     .eq('id', fileId)
     .eq('user_id', userId); // Ensure user owns file
-  
+
   if (error) throw error;
 };
 

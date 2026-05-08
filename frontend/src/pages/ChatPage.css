@@ -194,15 +194,15 @@
 }
 .input-box {
   display: flex;
-  align-items: center;
+  align-items: center; /* Vertical centering */
   gap: 12px;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.1);
+  padding: 6px 14px;   /* Tighter vertical padding */
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 24px;
-  padding: 8px 16px;
-  transition: border-color 0.2s;
-  min-height: 44px;
-  box-sizing: border-box;
+  min-height: 40px;    /* Shorter height */
+  max-height: 160px;
+  transition: all 0.2s ease;
 }
 .input-box:focus-within {
   border-color: rgba(167,139,250,0.5);
@@ -215,16 +215,13 @@
   border: none;
   outline: none;
   color: #fff;
-  font-family: 'Inter', sans-serif;
   font-size: 0.95rem;
-  line-height: 1.5;
+  line-height: 20px;   /* Tight line height */
+  height: 20px;        /* Force small height */
+  padding: 2px 0;      /* Remove extra internal space */
+  margin: 0;
   resize: none;
-  padding: 4px 0;      /* Minimal padding to keep it centered */
-  height: 24px;        /* Initial single-line height */
-  display: flex;
-  align-items: center;
-  max-height: 160px;
-  overflow-y: auto;
+  overflow-y: hidden;
 }
 .input-box textarea::placeholder { color: rgba(255,255,255,0.3); }
 .input-box textarea:disabled      { cursor: not-allowed; }
@@ -310,4 +307,12 @@
   background: rgba(167,139,250,0.2);
   border-color: rgba(167,139,250,0.45);
   color: #c4b5fd;
+}
+.upload-trigger.icon-pin, .send-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  width: 32px;
+  flex-shrink: 0;
 }
