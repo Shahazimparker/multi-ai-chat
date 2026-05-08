@@ -233,4 +233,7 @@ const logAnalytics = async ({ userId, query, modelId, tokensUsed, isAnonymous, c
   }
 };
 
-module.exports = { sendMessage };
+module.exports = {
+  sendMessage,
+  logAnalytics // and any other helpers you have
+};
