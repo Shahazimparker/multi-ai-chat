@@ -5,6 +5,7 @@ import React, { useState } from 'react';
 import { Upload, X, File, FileText, Image, Check } from 'lucide-react';
 import api from '../../config/api';
 import './FileUpload.css';
+import { Paperclip, X, File, FileText, Image, Check, Loader2 } from 'lucide-react';
 
 const FileUpload = ({ topicId, onFileUploaded, disabled }) => {
   const [files, setFiles] = useState([]);
@@ -65,15 +66,17 @@ const FileUpload = ({ topicId, onFileUploaded, disabled }) => {
     <div className="file-upload">
       {/* Upload Button */}
       <button
-        className="upload-trigger"
+        className="upload-trigger icon-pin"
         onClick={() => setShowUploader(!showUploader)}
         disabled={disabled || uploading}
-        title="Upload PDF, Image, or Document"
+        title="Attach file"
       >
-        <Upload size={16} />
-        {uploading ? 'Uploading...' : 'Attach File'}
+        {uploading ? (
+          <Loader2 size={20} className="spin" />
+        ) : (
+          <Paperclip size={20} />
+        )}
       </button>
-
       {/* Upload Input (Hidden) */}
       {showUploader && (
         <div className="upload-input-wrapper">
