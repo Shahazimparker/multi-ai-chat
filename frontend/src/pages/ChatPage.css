@@ -195,12 +195,13 @@
 .input-box {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.1);
   border-radius: 24px;
-  padding: 10px 16px;
+  padding: 8px 16px;
   transition: border-color 0.2s;
+  min-height: 44px;
   box-sizing: border-box;
 }
 .input-box:focus-within {
