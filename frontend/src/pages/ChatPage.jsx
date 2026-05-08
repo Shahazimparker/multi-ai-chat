@@ -212,7 +212,7 @@ const ChatPage = () => {
   />
   
   {/* Send button */}
-  <button className="send-btn" onClick={handleSend} disabled={...}>
+  <button className="send-btn" onClick={handleSend} disabled={loading || !model || !input.trim()}>
     {loading ? <StopCircle size={18} /> : <Send size={18} />}
   </button>
 </div>
