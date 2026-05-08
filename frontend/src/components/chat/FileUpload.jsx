@@ -61,52 +61,41 @@ const FileUpload = ({ topicId, onFileUploaded, disabled }) => {
     return <FileText size={14} />;
   };
 
-  return (
-    <div className="file-upload">
-      {/* Upload Button */}
-      <button
-        className="upload-trigger"
-        onClick={() => setShowUploader(!showUploader)}
-        disabled={disabled || uploading}
-        title="Upload PDF, Image, or Document"
+    return (
+    <div className="file-upload-compact">
+      {/* 1. Small Icon Trigger - This sits inside your input-box next to the text */}
+      <label 
+        htmlFor="file-input" 
+        className={`upload-icon-trigger ${uploading ? 'uploading' : ''} ${disabled ? 'disabled' : ''}`}
+        title="Attach PDF, Image, or Document"
       >
-        <Upload size={16} />
-        {uploading ? 'Uploading...' : 'Attach File'}
-      </button>
+        {uploading ? (
+          <Loader2 size={20} className="animate-spin" />
+        ) : (
+          <Upload size={20} />
+        )}
+        <input
+          type="file"
+          id="file-input"
+          multiple
+          accept=".pdf,.txt,.doc,.docx,.jpg,.jpeg,.png"
+          onChange={handleFileSelect}
+          disabled={disabled || uploading}
+          style={{ display: 'none' }}
+        />
+      </label>
 
-      {/* Upload Input (Hidden) */}
-      {showUploader && (
-        <div className="upload-input-wrapper">
-          <input
-            type="file"
-            multiple
-            accept=".pdf,.txt,.doc,.docx,.jpg,.jpeg,.png"
-            onChange={handleFileSelect}
-            disabled={uploading}
-            id="file-input"
-            style={{ display: 'none' }}
-          />
-          <label htmlFor="file-input" className="file-label">
-            📁 Click to select files or drag & drop
-          </label>
-        </div>
-      )}
-
-      {/* Uploaded Files List */}
+      {/* 2. Floating File List - Sits ABOVE the input bar */}
       {files.length > 0 && (
-        <div className="files-list">
-          <span className="files-count">{files.length} file(s) attached</span>
+        <div className="floating-files-preview">
           {files.map(file => (
-            <div key={file.id} className="file-item">
+            <div key={file.id} className="mini-file-chip">
               {getFileIcon(file.type)}
-              <div className="file-info">
-                <span className="file-name">{file.name}</span>
-                <span className="file-chunks">{file.chunks} chunks</span>
-              </div>
-              <Check size={14} className="check-icon" />
+              <span className="mini-file-name" title={file.name}>{file.name}</span>
               <button
-                className="delete-file"
+                className="mini-delete-btn"
                 onClick={() => handleDelete(file.id)}
+                type="button"
               >
                 <X size={12} />
               </button>
@@ -116,6 +105,5 @@ const FileUpload = ({ topicId, onFileUploaded, disabled }) => {
       )}
     </div>
   );
-};
 
 export default FileUpload;
