@@ -1,0 +1,112 @@
+/* FILE: frontend/src/components/chat/FileUpload.css */
+
+.file-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.upload-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: rgba(167,139,250,0.15);
+  border: 1px dashed rgba(167,139,250,0.4);
+  border-radius: 10px;
+  color: #c4b5fd;
+  font-size: 0.82rem;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.upload-trigger:hover {
+  background: rgba(167,139,250,0.25);
+  border-color: rgba(167,139,250,0.6);
+}
+
+.upload-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.upload-input-wrapper {
+  position: relative;
+  padding: 12px;
+  background: rgba(167,139,250,0.08);
+  border: 2px dashed rgba(167,139,250,0.3);
+  border-radius: 10px;
+  text-align: center;
+}
+
+.file-label {
+  display: block;
+  color: rgba(255,255,255,0.6);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 8px;
+}
+
+.files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.files-count {
+  font-size: 0.75rem;
+  color: rgba(255,255,255,0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(16,185,129,0.1);
+  border: 1px solid rgba(16,185,129,0.25);
+  border-radius: 8px;
+  color: #34d399;
+  font-size: 0.8rem;
+}
+
+.file-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.file-name {
+  font-weight: 500;
+  color: #10b981;
+}
+
+.file-chunks {
+  font-size: 0.7rem;
+  color: rgba(16,185,129,0.6);
+}
+
+.check-icon {
+  color: #34d399;
+  flex-shrink: 0;
+}
+
+.delete-file {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.3);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.delete-file:hover {
+  background: rgba(239,68,68,0.1);
+  color: #fca5a5;
+}

@@ -14,6 +14,9 @@
     "react-syntax-highlighter": "^15.5.0",
     "recharts": "^2.12.3",
     "remark-gfm": "^4.0.0"
+	"multer": "^1.4.5-lts.1",
+    "pdf-parse": "^1.1.1",
+    "mammoth": "^1.6.0"
   },
   "scripts": {
     "start": "react-scripts start",

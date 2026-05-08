@@ -14,6 +14,7 @@ import { useAuth }   from '../context/AuthContext';
 import api           from '../config/api';
 import './ChatPage.css';
 import UnifiedModelModal from '../components/chat/UnifiedModelModal';
+import FileUpload from '../components/chat/FileUpload';
 
 const ChatPage = () => {
   const { refreshTokenStats } = useAuth();
@@ -35,7 +36,7 @@ const ChatPage = () => {
   const [providerModelId, setProviderModelId] = useState(null);
   const [failedMessage, setFailedMessage] = useState(null);
   const [llmError, setLlmError] = useState(null);
-
+  const [uploadedFiles, setUploadedFiles] = useState([]);
 
   // Auto-scroll to latest message
   useEffect(() => {
@@ -190,6 +191,32 @@ const ChatPage = () => {
 
         {/* Input area */}
         <div className="input-area">
+		
+		<div className="input-box">
+  {/* File upload component */}
+  <FileUpload
+    topicId={activeTopic?.id}
+    onFileUploaded={(file) => {
+      setUploadedFiles(prev => [...prev, file]);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `📎 File "${file.fileName}" uploaded successfully (${file.chunks} chunks). You can now ask questions about it!`,
+      }]);
+    }}
+    disabled={loading || !model}
+  />
+
+  {/* Existing textarea */}
+  <textarea
+    // ... existing props
+  />
+  
+  {/* Send button */}
+  <button className="send-btn" onClick={handleSend} disabled={...}>
+    {loading ? <StopCircle size={18} /> : <Send size={18} />}
+  </button>
+</div>
+		
           {error && <div className="chat-error">{error}</div>}
 		  <div className="memory-controls">
   <button
