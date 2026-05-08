@@ -227,7 +227,26 @@ const ChatPage = () => {
     </button>
   </div>
   
+<<<<<<< HEAD
   {error && <div className="chat-error">{error}</div>}
+=======
+  {/* Send button */}
+  <button className="send-btn" onClick={handleSend} disabled={...}>
+    {loading ? <StopCircle size={18} /> : <Send size={18} />}
+  </button>
+</div>
+		
+          {error && <div className="chat-error">{error}</div>}
+		  <div className="memory-controls">
+  <button
+    type="button"
+    className={`memory-mode-btn ${memoryMode === 'summarized' ? 'active' : ''}`}
+    title="Token friendly. Summarizes older context and sends only the latest raw messages."
+    onClick={() => setMemoryMode('summarized')}
+  >
+    Summarized+
+  </button>
+>>>>>>> parent of 3d75602 (change:add attachment function fix2.1)
 
   <div className="memory-controls">
     <button
