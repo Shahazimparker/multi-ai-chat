@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS uploaded_files (
   file_type       TEXT NOT NULL,          -- 'image', 'pdf', 'doc', 'txt'
   file_size       INTEGER,                 -- bytes
   content_text    TEXT,                   -- extracted text content
-  embedding       vector(768),            -- full-file embedding for RAG
+  embedding       vector(512),            -- text-embedding-3-small dimension
   metadata        JSONB DEFAULT '{}',     -- {extractedAt, charCount, mimeType, etc}
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   updated_at      TIMESTAMPTZ DEFAULT NOW()
@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS rag_chunks (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   file_id         UUID REFERENCES uploaded_files(id) ON DELETE CASCADE NOT NULL,
   chunk_text      TEXT NOT NULL,         -- text excerpt
-  embedding       vector(768),           -- vector for similarity search
+  embedding       vector(512),           -- text-embedding-3-small dimension
   chunk_index     INTEGER,               -- position in file (0, 1, 2...)
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
@@ -130,22 +130,22 @@ CREATE TABLE IF NOT EXISTS rag_documents (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title       TEXT NOT NULL,
   content     TEXT NOT NULL,
-  embedding   vector(768),              -- text-embedding-004 dimension
+  embedding   vector(512),              -- text-embedding-3-small dimension
   metadata    JSONB DEFAULT '{}',
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ─────────────────────────────────────────────
--- INDEX: Vector similarity search (HNSW)
+-- INDEX: Vector similarity search (IVFFLAT)
 -- ─────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS uploaded_files_embedding_idx
-  ON uploaded_files USING hnsw (embedding vector_cosine_ops);
+  ON uploaded_files USING ivfflat (embedding vector_cosine_ops);
 
 CREATE INDEX IF NOT EXISTS rag_chunks_embedding_idx
-  ON rag_chunks USING hnsw (embedding vector_cosine_ops);
+  ON rag_chunks USING ivfflat (embedding vector_cosine_ops);
 
 CREATE INDEX IF NOT EXISTS rag_documents_embedding_idx
-  ON rag_documents USING hnsw (embedding vector_cosine_ops);
+  ON rag_documents USING ivfflat (embedding vector_cosine_ops);
 
 -- ─────────────────────────────────────────────
 -- INDEX: Fast lookups
@@ -166,7 +166,7 @@ CREATE INDEX IF NOT EXISTS query_cache_hash_idx
 -- FUNCTION: match_documents (RAG search)
 -- ─────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION match_documents(
-  query_embedding vector(768),
+  query_embedding vector(512),
   match_threshold FLOAT DEFAULT 0.7,
   match_count     INT DEFAULT 5
 )
@@ -193,7 +193,7 @@ $$;
 -- Search in user's uploaded files by content
 -- ─────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION search_uploaded_files(
-  query_embedding vector(768),
+  query_embedding vector(512),
   user_id_param UUID,
   match_count INT DEFAULT 5
 )

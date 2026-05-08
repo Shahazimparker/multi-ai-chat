@@ -4,12 +4,20 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const { requireAuth } = require('../middleware/auth');
 const { processUploadedFile, searchUserFiles, deleteUploadedFile } = require('../services/fileUpload.service');
 
+// Ensure upload directory exists and use absolute path
+const uploadDir = path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
-  destination: './uploads',
+  destination: uploadDir,
   filename: (req, file, cb) => {
     cb(null, `${Date.now()}-${file.originalname}`);
   },

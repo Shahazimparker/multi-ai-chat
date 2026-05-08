@@ -15,6 +15,7 @@ const authRoutes    = require('./routes/auth.routes');
 const chatRoutes    = require('./routes/chat.routes');
 const adminRoutes   = require('./routes/admin.routes');
 const historyRoutes = require('./routes/history.routes');
+const uploadRoutes  = require('./routes/upload.routes');
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
@@ -41,6 +42,7 @@ app.use('/api/auth',    authRoutes);     // login, logout, verify
 app.use('/api/chat',    chatRoutes);     // send message, stream
 app.use('/api/admin',   adminRoutes);    // user management, analytics
 app.use('/api/history', historyRoutes);  // chat history, topics
+app.use('/api/upload',  uploadRoutes);   // file upload, search, delete
 
 // ── 404 handler ─────────────────────────────────────────────
 app.use((req, res) => {

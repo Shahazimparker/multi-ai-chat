@@ -15,18 +15,30 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
  */
 const callGemini = async (modelName, apiKey, messages) => {
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: modelName });
 
-  // Convert messages to Gemini's {role, parts} format
-  // Gemini uses 'model' instead of 'assistant'
-  const history = messages.slice(0, -1).map(m => ({
-    role:  m.role === 'assistant' ? 'model' : m.role,
+  const systemMessages = messages.filter(m => m.role === 'system');
+  const systemInstruction = systemMessages.length > 0
+    ? systemMessages.map(m => m.content).join('\n')
+    : undefined;
+
+  const chatMessages = messages.filter(m => m.role !== 'system');
+  const lastMessage = chatMessages[chatMessages.length - 1];
+
+  const history = chatMessages.slice(0, -1).map(m => ({
+    role: m.role === 'assistant' ? 'model' : m.role,
     parts: [{ text: m.content }],
   }));
 
-  const lastMessage = messages[messages.length - 1];
+  const modelParams = { model: modelName };
+  if (systemInstruction) {
+    modelParams.systemInstruction = {
+      role: 'system',
+      parts: [{ text: systemInstruction }],
+    };
+  }
 
-  const chat   = model.startChat({ history });
+  const model = genAI.getGenerativeModel(modelParams);
+  const chat = model.startChat({ history });
   const result = await chat.sendMessage(lastMessage.content);
   const text   = result.response.text();
 

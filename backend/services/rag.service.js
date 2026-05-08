@@ -1,23 +1,32 @@
 // ============================================================
 // FILE: backend/services/rag.service.js
 // PURPOSE: Retrieval-Augmented Generation using pgvector
-//          Embeds queries with Gemini, searches similar docs,
+//          Embeds queries with OpenAI, searches similar docs,
 //          injects relevant context into AI prompt
 // ============================================================
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const supabase                = require('../config/supabase');
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const axios = require('axios');
+const supabase = require('../config/supabase');
 
 /**
- * embedText — creates 768-dim vector embedding using Gemini
+ * embedText — creates 512-dim vector embedding using OpenAI text-embedding-3-small
  */
 const embedText = async (text) => {
   try {
-    const model  = genAI.getGenerativeModel({ model: 'text-embedding-004' });
-    const result = await model.embedContent(text);
-    return result.embedding.values;
+    const response = await axios.post(
+      'https://api.openai.com/v1/embeddings',
+      {
+        input: text,
+        model: 'text-embedding-3-small',
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        },
+      }
+    );
+    return response.data.data[0].embedding;
   } catch (err) {
     console.error('[RAG] Embedding failed:', err.message);
     return null;

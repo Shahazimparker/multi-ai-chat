@@ -3,8 +3,10 @@
 
 const fs = require('fs');
 const path = require('path');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const axios = require('axios');
 const supabase = require('../config/supabase');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 /**
@@ -21,13 +23,20 @@ const extractTextFromFile = async (filePath, fileType) => {
       // Image — use Gemini Vision API
       const imageData = fs.readFileSync(filePath);
       const base64Image = imageData.toString('base64');
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeTypeMap = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+      };
+      const mimeType = mimeTypeMap[ext] || 'image/jpeg';
 
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
       const result = await model.generateContent([
         {
           inlineData: {
             data: base64Image,
-            mimeType: 'image/jpeg', // Adjust as needed
+            mimeType,
           },
         },
         { text: 'Extract all text and describe what you see. Be detailed.' },
@@ -74,16 +83,30 @@ const chunkText = (text, chunkSize = 500, overlap = 50) => {
 };
 
 /**
- * Create embeddings for text chunks
+ * Create embeddings for text chunks using OpenAI text-embedding-3-small
  */
 const createEmbedding = async (text) => {
   try {
-    // CHANGE: Use 'embedding-001' which is the stable, widely supported model
-    const model = genAI.getGenerativeModel({ model: "embedding-001" });
-    
-    const result = await model.embedContent(text);
-    const embedding = result.embedding;
-    return embedding.values;
+    const response = await axios.post(
+      'https://api.openai.com/v1/embeddings',
+      {
+        input: text,
+        model: 'text-embedding-3-small',
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        },
+      }
+    );
+    return response.data.data[0].embedding;
+  } catch (err) {
+    console.error('[Embedding] Failed:', err.message);
+    throw err;
+  }
+};
+
   } catch (err) {
     console.error('[RAG] Embedding failed:', err);
     throw err;

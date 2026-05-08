@@ -8,23 +8,24 @@
 }
 
 .upload-trigger {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  background: rgba(167, 139, 250, 0.15);
-  border: 1px dashed rgba(167, 139, 250, 0.4);
-  border-radius: 10px;
-  color: #c4b5fd;
-  font-size: 0.82rem;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 16px;
+  color: #e0d7ff;
+  font-size: 0.85rem;
   font-family: 'Inter', sans-serif;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background 0.2s, transform 0.15s, border-color 0.2s;
 }
 
 .upload-trigger:hover {
-  background: rgba(167, 139, 250, 0.25);
-  border-color: rgba(167, 139, 250, 0.6);
+  background: rgba(255,255,255,0.12);
+  border-color: rgba(124,58,237,0.44);
+  transform: translateY(-1px);
 }
 
 .upload-trigger:disabled {
@@ -35,18 +36,18 @@
 .upload-input-wrapper {
   position: relative;
   padding: 12px;
-  background: rgba(167, 139, 250, 0.08);
-  border: 2px dashed rgba(167, 139, 250, 0.3);
-  border-radius: 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px dashed rgba(255,255,255,0.14);
+  border-radius: 16px;
   text-align: center;
 }
 
 .file-label {
   display: block;
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 0.86rem;
   cursor: pointer;
-  padding: 8px;
+  padding: 10px;
 }
 
 .files-list {

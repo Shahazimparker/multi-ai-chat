@@ -100,22 +100,22 @@ CREATE TABLE IF NOT EXISTS rag_documents (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title       TEXT NOT NULL,
   content     TEXT NOT NULL,
-  embedding   vector(768),              -- text-embedding-004 dimension
+  embedding   vector(512),              -- text-embedding-3-small dimension
   metadata    JSONB DEFAULT '{}',
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ─────────────────────────────────────────────
--- INDEX: vector similarity search (HNSW)
+-- INDEX: vector similarity search (IVFFLAT)
 -- ─────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS rag_embedding_idx
-  ON rag_documents USING hnsw (embedding vector_cosine_ops);
+  ON rag_documents USING ivfflat (embedding vector_cosine_ops);
 
 -- ─────────────────────────────────────────────
 -- FUNCTION: match_documents (cosine similarity search for RAG)
 -- ─────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION match_documents(
-  query_embedding vector(768),
+  query_embedding vector(512),
   match_threshold FLOAT DEFAULT 0.7,
   match_count     INT DEFAULT 5
 )

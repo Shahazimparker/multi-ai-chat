@@ -4,7 +4,8 @@
 //          Shows free/paid badge, provider color coding
 // ============================================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown, Zap, DollarSign } from 'lucide-react';
 import api from '../../config/api';
 import './ModelSelector.css';
@@ -23,7 +24,35 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
   const [models,  setModels]  = useState([]);
   const [open,    setOpen]    = useState(false);
   const [loading, setLoading] = useState(true);
-  
+  const [dropdownStyle, setDropdownStyle] = useState({});
+  const wrapperRef = useRef(null);
+
+  const updateDropdownPosition = () => {
+    if (!wrapperRef.current) return;
+    const rect = wrapperRef.current.getBoundingClientRect();
+    const top = rect.bottom + 8;
+    const left = rect.left;
+    const maxHeight = Math.min(420, window.innerHeight - rect.bottom - 24);
+
+    setDropdownStyle({
+      position: 'fixed',
+      top: `${top}px`,
+      left: `${left}px`,
+      minWidth: `${rect.width}px`,
+      maxHeight: `${maxHeight}px`,
+    });
+  };
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updateDropdownPosition();
+    window.addEventListener('resize', updateDropdownPosition);
+    window.addEventListener('scroll', updateDropdownPosition, true);
+    return () => {
+      window.removeEventListener('resize', updateDropdownPosition);
+      window.removeEventListener('scroll', updateDropdownPosition, true);
+    };
+  }, [open]);
 
   // Fetch models from backend on mount
   useEffect(() => {
@@ -51,7 +80,7 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
     : null;
 
   return (
-    <div className="model-selector">
+    <div className="model-selector" ref={wrapperRef}>
       <button
         className="model-trigger"
         onClick={() => setOpen(p => !p)}
@@ -73,43 +102,44 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
         )}
       </button>
 
-      {open && (
-        <div className="model-dropdown">
-          {Object.entries(grouped).map(([provider, providerModels]) => {
-            const meta = PROVIDER_META[provider] || { label: provider, emoji: '🤖' };
-            return (
-              <div key={provider} className="model-group">
-                <div className="model-group-header" style={{ color: meta.color }}>
-                  <span>{meta.emoji}</span>
-                  <span>{meta.label}</span>
+      {open && createPortal(
+        <>
+          <div className="model-dropdown" style={dropdownStyle}>
+            {Object.entries(grouped).map(([provider, providerModels]) => {
+              const meta = PROVIDER_META[provider] || { label: provider, emoji: '🤖' };
+              return (
+                <div key={provider} className="model-group">
+                  <div className="model-group-header" style={{ color: meta.color }}>
+                    <span>{meta.emoji}</span>
+                    <span>{meta.label}</span>
+                  </div>
+                  {providerModels.map(model => (
+                    <button
+                      key={model.id}
+                      className={`model-option ${selectedModel?.id === model.id ? 'active' : ''}`}
+                      onClick={() => {
+                        if (model.unified) {
+                          onUnifiedProviderSelect?.(model);
+                        } else {
+                          onModelChange(model);
+                        }
+                        setOpen(false);
+                      }}
+                    >
+                      <span className="option-label">{model.label}</span>
+                      <span className={`model-badge sm ${model.paid ? 'paid' : 'free'}`}>
+                        {model.paid ? 'Paid' : 'Free'}
+                      </span>
+                    </button>
+                  ))}
                 </div>
-                {providerModels.map(model => (
-                  <button
-                    key={model.id}
-                    className={`model-option ${selectedModel?.id === model.id ? 'active' : ''}`}
-                    onClick={() => {
-  if (model.unified) {
-    onUnifiedProviderSelect?.(model);
-  } else {
-    onModelChange(model);
-  }
-  setOpen(false);
-}}
-                  >
-                    <span className="option-label">{model.label}</span>
-                    <span className={`model-badge sm ${model.paid ? 'paid' : 'free'}`}>
-                      {model.paid ? 'Paid' : 'Free'}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+          <div className="dropdown-overlay" onClick={() => setOpen(false)} />
+        </>,
+        document.body
       )}
-
-      {/* Overlay to close dropdown */}
-      {open && <div className="dropdown-overlay" onClick={() => setOpen(false)} />}
     </div>
   );
 };
