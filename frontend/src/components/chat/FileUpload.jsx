@@ -2,10 +2,9 @@
 // PURPOSE: Upload button + file management
 
 import React, { useState } from 'react';
-import { Upload, X, File, FileText, Image, Check } from 'lucide-react';
+import { Paperclip, Upload, X, File, FileText, Image, Check, Loader2 } from 'lucide-react';
 import api from '../../config/api';
 import './FileUpload.css';
-import { Paperclip, X, File, FileText, Image, Check, Loader2 } from 'lucide-react';
 
 const FileUpload = ({ topicId, onFileUploaded, disabled }) => {
   const [files, setFiles] = useState([]);
