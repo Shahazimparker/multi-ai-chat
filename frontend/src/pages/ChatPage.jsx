@@ -267,6 +267,7 @@ const ChatPage = () => {
   </div>
 </div>
 </main>
+<main>
           <div className="input-box">
             <textarea
               ref={textareaRef}
