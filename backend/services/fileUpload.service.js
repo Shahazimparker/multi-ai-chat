@@ -16,6 +16,18 @@ const supabase = require('../config/supabase');
 const { MODELS } = require('../config/models');
 const { dispatchToAI } = require('./ai/dispatcher.service');
 const { trimTextByTokens } = require('./tokenBudget.service');
+const crypto = require('crypto');
+
+const getFileHash = (fileName, fileContent) => {
+  // Hash = filename + content checksum
+  // Same name but different content = different hash
+  const contentHash = crypto.createHash('md5')
+    .update(fileContent)
+    .digest('hex')
+    .slice(0, 8);
+
+  return `${fileName}:${contentHash}`;
+};
 
 const SUPPORTED_FILE_TYPES = {
   txt: 'txt',
@@ -137,35 +149,16 @@ const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, f
  */
 const analyzFileWithLLM = async (extractedText, fileName, fileType, modelId, signal = null) => {
   try {
-    const modelConfig = MODELS[modelId] || Object.values(MODELS)[0];
-
-    // Create analysis prompt
-    const analysisPrompt = `You are analyzing an uploaded file: "${fileName}" (type: ${fileType})
-
-FILE CONTENT:
-${extractedText}
-
-Please provide:
-1. Summary of content
-2. Key points/findings
-3. Suggested use cases for this file
-4. Any important data or numbers mentioned
-
-Be concise but comprehensive.`;
-
-    const messages = [
-      { role: 'user', content: analysisPrompt }
-    ];
-
-    const { text: llmAnalysis, tokensUsed } = await dispatchToAI(modelConfig, messages, signal);
+    // SKIP LLM analysis - store file content only
+    // AI will analyze during query (when needed)
 
     return {
       fileContent: extractedText,
-      llmAnalysis,
-      tokensUsed,
+      llmAnalysis: `File: ${fileName} (${fileType})\n\nContent length: ${extractedText.length} characters\n\nUpload timestamp: ${new Date().toISOString()}\n\nFile ready for queries.`,
+      tokensUsed: 0,
     };
   } catch (err) {
-    console.error('[FileUpload] LLM analysis failed:', err);
+    console.error('[FileUpload] File analysis skipped:', err);
     throw err;
   }
 };
@@ -176,24 +169,25 @@ Be concise but comprehensive.`;
  */
 const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userId, topicId, signal = null) => {
   try {
-    // Store in new table: uploaded_files_rag
+    const fileHash = getFileHash(fileName, fileContent);  // ← Use hash
+
     const { data: ragRecord, error: ragError } = await supabase
       .from('uploaded_files_rag')
       .insert({
         user_id: userId,
         topic_id: topicId,
         file_name: fileName,
+        file_hash: fileHash,  // ← Store hash
         file_type: fileType,
-        original_content: fileContent.slice(0, 8000), // Store first 8k chars
-        llm_analysis: llmAnalysis, // Store LLM's analysis
+        original_content: fileContent.slice(0, 8000),
+        llm_analysis: llmAnalysis,
         created_at: new Date().toISOString(),
       })
       .select('id')
       .single();
 
     if (ragError) throw ragError;
-
-    console.log(`[FileUpload] Stored in RAG: ${fileName}`);
+    console.log(`[FileUpload] Stored in RAG: ${fileName} (hash: ${fileHash})`);
     return ragRecord.id;
   } catch (err) {
     console.error('[FileUpload] RAG storage failed:', err);
@@ -342,14 +336,12 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null) => {
   try {
     if (!userId || !topicId) return [];
 
-    // Query uploaded_files_rag table directly for this topic
-    // Use full-text search on LLM analysis + file names
     const { data, error } = await supabase
       .from('uploaded_files_rag')
-      .select('id, file_name, llm_analysis, created_at')
+      .select('id, file_name, file_hash, llm_analysis, created_at')
       .eq('user_id', userId)
       .eq('topic_id', topicId)
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: false })  // Latest first
       .limit(10);
 
     if (error) {
@@ -357,7 +349,7 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null) => {
       return [];
     }
 
-    // Simple text matching on query
+    // Simple text matching
     const results = (data || []).filter(doc => {
       const combined = `${doc.file_name} ${doc.llm_analysis}`.toLowerCase();
       return query.toLowerCase().split(' ').some(word => combined.includes(word));
@@ -366,14 +358,16 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null) => {
     return results.map(r => ({
       file_id: r.id,
       file_name: r.file_name,
+      file_hash: r.file_hash,
       chunk_text: trimTextByTokens(r.llm_analysis, 300),
-      similarity: 0.85, // Default relevance
+      similarity: 0.85,
     }));
   } catch (err) {
     console.error('[FileSearch] Failed:', err);
     return [];
   }
 };
+
 
 /**
  * Delete uploaded file and its RAG records
@@ -395,4 +389,5 @@ module.exports = {
   getTempDir,
   ensureUploadDir,
   getSupportedFileType,
+  getFileHash,
 };

@@ -4,16 +4,24 @@
 //          based on model config. Add new providers here.
 // ============================================================
 
-const { callGemini }  = require('./gemini.service');
-const { callGroq }    = require('./groq.service');
+const { callGemini } = require('./gemini.service');
+const { callGroq } = require('./groq.service');
 const { callMistral } = require('./mistral.service');
-const { callCohere }  = require('./cohere.service');
-const { callOpenAI }  = require('./openai.service');
-const { callClaude }  = require('./claude.service');
+const { callCohere } = require('./cohere.service');
+const { callOpenAI } = require('./openai.service');
+const { callClaude } = require('./claude.service');
 const { callOpenRouter } = require('./openrouter.service');
-const { callTogether }   = require('./together.service');
-const { callAnyAPI }     = require('./anyapi.service');
+const { callTogether } = require('./together.service');
+const { callAnyAPI } = require('./anyapi.service');
 
+const supportsCache = (modelConfig) => {
+  if (modelConfig.supportsCache === false) return false;
+  if (modelConfig.provider === 'claude') return true;
+  if (modelConfig.provider === 'openrouter') {
+    return modelConfig.model.includes('claude');
+  }
+  return false;
+};
 
 /**
  * dispatchToAI — routes messages to the correct AI provider
@@ -31,15 +39,15 @@ const dispatchToAI = async (modelConfig, messages, signal = null) => {
   }
 
   switch (provider) {
-    case 'gemini':  return callGemini(model, apiKey, messages, signal);
-    case 'groq':    return callGroq(model, apiKey, messages, signal);
+    case 'gemini': return callGemini(model, apiKey, messages, signal);
+    case 'groq': return callGroq(model, apiKey, messages, signal);
     case 'mistral': return callMistral(model, apiKey, messages, signal);
-    case 'cohere':  return callCohere(model, apiKey, messages, signal);
-    case 'openai':  return callOpenAI(model, apiKey, messages, signal);
-    case 'claude':  return callClaude(model, apiKey, messages, signal);
-	case 'openrouter': return callOpenRouter(model, apiKey, messages, signal);
-	case 'together':   return callTogether(model, apiKey, messages, signal);
-	case 'anyapi':     return callAnyAPI(model, apiKey, messages, signal);
+    case 'cohere': return callCohere(model, apiKey, messages, signal);
+    case 'openai': return callOpenAI(model, apiKey, messages, signal);
+    case 'claude': return callClaude(model, apiKey, messages, signal);
+    case 'openrouter': return callOpenRouter(model, apiKey, messages, signal);
+    case 'together': return callTogether(model, apiKey, messages, signal);
+    case 'anyapi': return callAnyAPI(model, apiKey, messages, signal);
 
     default:
       throw new Error(`Unknown AI provider: ${provider}`);

@@ -5,23 +5,32 @@
 
 const OpenAI = require('openai');
 
-const callOpenAICompatible = async ({ baseURL, apiKey, modelName, messages }) => {
+const callOpenAICompatible = async ({ baseURL, apiKey, modelName, messages, system }) => {
   const client = new OpenAI({
     apiKey,
     baseURL,
+    defaultHeaders: { 'HTTP-Referer': 'https://openrouter.ai' }
   });
 
-  const response = await client.chat.completions.create({
+  const requestBody = {
     model: modelName,
-    messages: messages.map(m => ({ role: m.role, content: m.content })),
     max_tokens: 4096,
-    temperature: 0.7,
-  });
+    messages,
+  };
 
-  const text = response.choices?.[0]?.message?.content || '';
-  const tokensUsed = response.usage?.total_tokens || 0;
+  // Add system if provided (for cache control)
+  if (system) {
+    requestBody.system = system;
+  }
 
-  return { text, tokensUsed };
+  const response = await client.chat.completions.create(requestBody);
+
+  return {
+    text: response.choices[0].message.content,
+    tokensUsed: response.usage.prompt_tokens + response.usage.completion_tokens,
+    cacheCreationTokens: response.usage.cache_creation_input_tokens || 0,
+    cacheReadTokens: response.usage.cache_read_input_tokens || 0,
+  };
 };
 
 module.exports = { callOpenAICompatible };

@@ -6,17 +6,21 @@
 const OpenAI = require('openai');
 
 const callOpenAI = async (modelName, apiKey, messages) => {
-  const client   = new OpenAI({ apiKey });
+  const client = new OpenAI({ apiKey });
+
   const response = await client.chat.completions.create({
-    model:       modelName,
-    messages:    messages.map(m => ({ role: m.role, content: m.content })),
-    max_tokens:  4096,
-    temperature: 0.7,
+    model: modelName,
+    max_tokens: 4096,
+    messages,
+    // Prompt caching (if model supports - GPT-4 Turbo+)
   });
 
-  const text       = response.choices[0]?.message?.content || '';
-  const tokensUsed = response.usage?.total_tokens || 0;
-  return { text, tokensUsed };
+  return {
+    text: response.choices[0].message.content,
+    tokensUsed: response.usage.prompt_tokens + response.usage.completion_tokens,
+    cacheCreationTokens: response.usage.cache_creation_input_tokens || 0,  // ← Add
+    cacheReadTokens: response.usage.cache_read_input_tokens || 0,          // ← Add
+  };
 };
 
 module.exports = { callOpenAI };

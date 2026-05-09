@@ -94,6 +94,7 @@ const sendMessage = async (req, res) => {
     const isIdentityQuestion = /(^|\b)(what(\s+is)?\s+your\s+(llm\s+)?model|what\s+model\s+are\s+you|what\s+is\s+the\s+(llm\s+)?model\s+name|model\s+name|llm\s+name|which\s+company(\s+llm)?\s+you\s+are|which\s+company(\s+llm)?\s+are\s+you|who\s+are\s+you|what\s+are\s+you)(\b|$)/i.test(compressedQuery);
 
     // ── 4. Check query cache ─────────────────────────────────
+    /***
     if (!isIdentityQuestion) {
       const cachedReply = await getCachedResponse(compressedQuery, modelId);
       if (cachedReply) {
@@ -112,6 +113,7 @@ const sendMessage = async (req, res) => {
       }
     }
 
+    */
     // ── 5. Maybe compress long queries with Gemini Flash ─────
     if (abortController.signal.aborted) throw { name: 'AbortError' };
     const finalQuery = await maybeCompressQuery(compressedQuery, abortController.signal);
@@ -128,10 +130,13 @@ const sendMessage = async (req, res) => {
       });
 
       return res.json({
-        reply: semanticCachedReply,
-        tokensUsed: 0,
-        cacheHit: true,
-        model: modelConfig.label,
+        reply,
+        tokensUsed,
+        billableTokens,
+        cacheCreationTokens,
+        cacheReadTokens,
+        cacheHit: cacheReadTokens > 0,
+        model: effectiveModelConfig.label,
       });
     }
 
@@ -202,7 +207,7 @@ const sendMessage = async (req, res) => {
     }
 
     // ── 9. Call AI ───────────────────────────────────────────
-    const { text: reply, tokensUsed } = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
+    const { text: reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0 } = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
     const billableTokens = Math.max(tokensUsed || 0, promptTokens + estimateTokens(reply));
 
     // Check if user aborted while AI was generating

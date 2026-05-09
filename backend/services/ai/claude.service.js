@@ -8,24 +8,24 @@ const Anthropic = require('@anthropic-ai/sdk');
 const callClaude = async (modelName, apiKey, messages) => {
   const client = new Anthropic({ apiKey });
 
-  // Anthropic requires alternating user/assistant roles
-  // Extract system message if any, separate from conversation
-  const systemMsg = messages.find(m => m.role === 'system')?.content || '';
-  const chatMsgs  = messages
-    .filter(m => m.role !== 'system')
-    .map(m => ({ role: m.role, content: m.content }));
-
   const response = await client.messages.create({
-    model:      modelName,
+    model: modelName,
     max_tokens: 4096,
-    system:     systemMsg || undefined,
-    messages:   chatMsgs,
+    messages,
+    // Enable prompt caching for cost savings
+    system: [{
+      type: "text",
+      text: "You are a helpful AI assistant.",
+      cache_control: { type: "ephemeral" }  // ← Cache enabled
+    }],
   });
 
-  const text       = response.content[0]?.text || '';
-  const tokensUsed = (response.usage?.input_tokens || 0) +
-                     (response.usage?.output_tokens || 0);
-  return { text, tokensUsed };
+  return {
+    text: response.content[0].type === 'text' ? response.content[0].text : '',
+    tokensUsed: response.usage.input_tokens + response.usage.output_tokens,
+    cacheCreationTokens: response.usage.cache_creation_input_tokens || 0,
+    cacheReadTokens: response.usage.cache_read_input_tokens || 0,
+  };
 };
 
 module.exports = { callClaude };
