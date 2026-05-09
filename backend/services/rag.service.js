@@ -31,7 +31,27 @@ const cancelableDelay = (ms, signal) => new Promise((resolve, reject) => {
 
   signal?.addEventListener('abort', onAbort, { once: true });
 });
+// ========== EMBEDDING CACHE ==========
+const embeddingCache = new Map();
+const CACHE_TTL = 60 * 60 * 1000; // 1 hour TTL
 
+const getCacheKey = (text, provider) => {
+  return `${provider}:${text.slice(0, 100)}`;
+};
+
+const getCachedEmbedding = (key) => {
+  const cached = embeddingCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.timestamp > CACHE_TTL) {
+    embeddingCache.delete(key);
+    return null;
+  }
+  return cached.vector;
+};
+
+const setCachedEmbedding = (key, vector) => {
+  embeddingCache.set(key, { vector, timestamp: Date.now() });
+};
 /**
  * embedText — creates vector embedding using the selected provider
  * @param {string} text
@@ -43,6 +63,14 @@ const embedText = async (text, provider = 'openai', retries = 3, signal = null) 
   // Immediate check if already aborted
   throwIfAborted(signal);
 
+  // Check cache first
+  const cacheKey = getCacheKey(text, provider);
+  const cachedVector = getCachedEmbedding(cacheKey);
+  if (cachedVector) {
+    console.log('[RAG] Using cached embedding');
+    return cachedVector;
+  }
+
   if (provider === 'gemini') {
     if (!process.env.GEMINI_API_KEY) {
       console.error('[RAG] Error: GEMINI_API_KEY is not defined.');
@@ -51,8 +79,7 @@ const embedText = async (text, provider = 'openai', retries = 3, signal = null) 
     try {
       const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
       // Use text-embedding-004 which is the current state-of-the-art for Gemini embeddings
-      const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
-      
+      const model = genAI.getGenerativeModel({ model: "embedding-001" });
       // Race the Gemini embedding call against the abort signal
       const result = await Promise.race([
         model.embedContent(text),
@@ -61,12 +88,14 @@ const embedText = async (text, provider = 'openai', retries = 3, signal = null) 
           signal?.addEventListener('abort', () => reject({ name: 'AbortError' }), { once: true });
         })
       ]);
-      
+
       let vector = result.embedding.values;
       // Pad with zeros to match Supabase 1536-dimension columns if necessary
       if (vector.length < 1536) {
         vector = [...vector, ...new Array(1536 - vector.length).fill(0)];
       }
+      // Cache the embedding
+      setCachedEmbedding(cacheKey, vector);
       return vector;
     } catch (err) {
       if (err.message?.includes('429') && retries > 0) {
@@ -152,9 +181,9 @@ const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = '
   const { data, error } = await Promise.race([
     supabase.rpc('match_documents', {
       query_embedding: embedding,
-      provider_param:  provider,
+      provider_param: provider,
       match_threshold: threshold,
-      match_count:     topK,
+      match_count: topK,
     }),
     new Promise((_, reject) => {
       if (signal?.aborted) reject({ name: 'AbortError' });
@@ -186,9 +215,9 @@ const buildRAGContext = async (query, provider = 'openai', signal = null, precom
   const { data: docs, error } = await Promise.race([
     supabase.rpc('match_documents', {
       query_embedding: embedding,
-      provider_param:  provider,
+      provider_param: provider,
       match_threshold: 0.4,
-      match_count:     3,
+      match_count: 3,
     }),
     new Promise((_, reject) => {
       if (signal?.aborted) reject({ name: 'AbortError' });

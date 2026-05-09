@@ -1,14 +1,18 @@
 // FILE: backend/services/fileUpload.service.js
-// PURPOSE: Handle file uploads, extraction, embedding
+// PURPOSE: Handle file uploads, extract text, send directly to LLM, store responses in RAG
+// CHANGES: 
+//   1. NO embedding - direct LLM processing
+//   2. /tmp storage for Vercel (read-only handling)
+//   3. Store query+response pairs in RAG globally
+//   4. Next query - retrieve past file responses for THIS topic
 
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
+const os = require('os');
 const JSZip = require('jszip');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 const supabase = require('../config/supabase');
-const { embedText } = require('./rag.service');
 const { MODELS } = require('../config/models');
 const { dispatchToAI } = require('./ai/dispatcher.service');
 const { trimTextByTokens } = require('./tokenBudget.service');
@@ -22,6 +26,36 @@ const SUPPORTED_FILE_TYPES = {
   jpeg: 'image',
   png: 'image',
 };
+
+// ==================== STORAGE CONFIG ====================
+// For Vercel: use /tmp (ephemeral, auto-cleaned)
+// For local: use system temp dir
+const getTempDir = () => {
+  // Check if running on Vercel
+  if (process.env.VERCEL === '1') {
+    return '/tmp';
+  }
+  // Fallback to OS temp dir
+  return os.tmpdir();
+};
+
+const UPLOAD_DIR = getTempDir();
+const UPLOAD_FILE_DIR = path.join(UPLOAD_DIR, 'uploads');
+
+// Ensure upload directory exists (with permission handling)
+const ensureUploadDir = () => {
+  try {
+    if (!fs.existsSync(UPLOAD_FILE_DIR)) {
+      fs.mkdirSync(UPLOAD_FILE_DIR, { recursive: true, mode: 0o755 });
+    }
+  } catch (err) {
+    if (err.code !== 'EEXIST') {
+      console.error('[FileUpload] Warning: Could not create upload dir:', err.message);
+    }
+  }
+};
+
+ensureUploadDir();
 
 const getSupportedFileType = (fileName) => {
   const ext = path.extname(fileName).slice(1).toLowerCase();
@@ -44,12 +78,10 @@ const isSafeZipEntryName = (entryName) => {
 const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, fileName = '') => {
   try {
     if (fileType === 'txt') {
-      // Plain text — read directly
       return buffer.toString('utf-8');
     }
 
     if (fileType === 'image') {
-      // Image — use Gemini Vision API
       const base64Image = buffer.toString('base64');
       const ext = path.extname(fileName).toLowerCase();
       const mimeTypeMap = {
@@ -59,38 +91,36 @@ const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, f
       };
       const mimeType = mimeTypeMap[ext] || 'image/jpeg';
 
-      // Use selected model for extraction if possible, fallback to gemini-1.5-flash-latest
-      const extractionModelId = modelId || 'gemini-1.5-flash-latest';
-      const modelConfig = MODELS[extractionModelId] || MODELS['gemini-1.5-flash-latest'] || Object.values(MODELS)[0];
+      try {
+        const { GoogleGenerativeAI } = require('@google/generative-ai');
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
-      const visionMessages = [{
-        role: 'user',
-        content: [
-          { type: 'text', text: 'Extract all text from this image. If it contains data or tables, represent them clearly. Be detailed.' },
+        const result = await model.generateContent([
+          'Extract all text and important information from this image. Be detailed.',
           {
-            type: 'image_url',
-            image_url: { 
-              url: `data:${mimeType};base64,${base64Image}`
+            inlineData: {
+              data: base64Image,
+              mimeType: mimeType
             }
           }
-        ]
-      }];
+        ]);
 
-      const { text } = await dispatchToAI(modelConfig, visionMessages, signal);
-      return text;
+        const text = result.response.text();
+        return text;
+      } catch (err) {
+        console.error('[Image] Vision API failed:', err.message);
+        return `[Image: ${fileName}] - Could not extract text. File uploaded for reference.`;
+      }
     }
 
     if (fileType === 'pdf') {
-      // PDF — use pdf-parse library
       const data = await pdfParse(buffer);
-
-      return data.text; // Full PDF text
+      return data.text;
     }
 
     if (fileType === 'doc') {
-      // DOC/DOCX — use mammoth library
       const result = await mammoth.extractRawText({ buffer });
-
       return result.value;
     }
 
@@ -102,89 +132,79 @@ const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, f
 };
 
 /**
- * Split text into chunks (for better RAG)
+ * NEW: Send file content directly to LLM and store response
+ * Returns: { fileContent, llmAnalysis, tokensUsed }
  */
-const chunkText = (text, chunkSize = 500, overlap = 50) => {
-  // Split by double newlines first to try and preserve paragraphs
-  const paragraphs = text.split(/\n\s*\n/);
-  let chunks = [];
-  let currentChunk = "";
+const analyzFileWithLLM = async (extractedText, fileName, fileType, modelId, signal = null) => {
+  try {
+    const modelConfig = MODELS[modelId] || Object.values(MODELS)[0];
 
-  for (const para of paragraphs) {
-    if ((currentChunk.length + para.length) < chunkSize) {
-      currentChunk += (currentChunk ? "\n\n" : "") + para;
-    } else {
-      if (currentChunk) chunks.push(currentChunk);
-      currentChunk = para.slice(0, chunkSize);
-    }
+    // Create analysis prompt
+    const analysisPrompt = `You are analyzing an uploaded file: "${fileName}" (type: ${fileType})
+
+FILE CONTENT:
+${extractedText}
+
+Please provide:
+1. Summary of content
+2. Key points/findings
+3. Suggested use cases for this file
+4. Any important data or numbers mentioned
+
+Be concise but comprehensive.`;
+
+    const messages = [
+      { role: 'user', content: analysisPrompt }
+    ];
+
+    const { text: llmAnalysis, tokensUsed } = await dispatchToAI(modelConfig, messages, signal);
+
+    return {
+      fileContent: extractedText,
+      llmAnalysis,
+      tokensUsed,
+    };
+  } catch (err) {
+    console.error('[FileUpload] LLM analysis failed:', err);
+    throw err;
   }
-  if (currentChunk) chunks.push(currentChunk);
-  return chunks;
 };
 
-const saveExtractedBuffer = async ({ fileName, fileType, fileSize, extractedText, userId, topicId, provider, signal = null, sourceArchive = null }) => {
-  if (!extractedText || extractedText.length < 10) {
-    throw new Error(`${fileName} is empty or unreadable`);
+/**
+ * Store file + LLM response in RAG (globally, not per-topic)
+ * This allows RAG to retrieve past file analyses for any query
+ */
+const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userId, topicId, signal = null) => {
+  try {
+    // Store in new table: uploaded_files_rag
+    const { data: ragRecord, error: ragError } = await supabase
+      .from('uploaded_files_rag')
+      .insert({
+        user_id: userId,
+        topic_id: topicId,
+        file_name: fileName,
+        file_type: fileType,
+        original_content: fileContent.slice(0, 8000), // Store first 8k chars
+        llm_analysis: llmAnalysis, // Store LLM's analysis
+        created_at: new Date().toISOString(),
+      })
+      .select('id')
+      .single();
+
+    if (ragError) throw ragError;
+
+    console.log(`[FileUpload] Stored in RAG: ${fileName}`);
+    return ragRecord.id;
+  } catch (err) {
+    console.error('[FileUpload] RAG storage failed:', err);
+    throw err;
   }
-
-  const fileEmbedding = await embedText(extractedText.slice(0, 2000), provider, 3, signal);
-
-  const { data: fileRecord, error: fileError } = await supabase
-    .from('uploaded_files')
-    .insert({
-      user_id: userId,
-      topic_id: topicId,
-      file_name: fileName,
-      file_type: fileType,
-      file_size: fileSize,
-      provider,
-      content_text: extractedText,
-      embedding: fileEmbedding,
-      metadata: {
-        extractedAt: new Date().toISOString(),
-        charCount: extractedText.length,
-        sourceArchive,
-      },
-    })
-    .select('id')
-    .single();
-
-  if (fileError) throw fileError;
-
-  const chunks = chunkText(extractedText);
-  const chunkRecords = [];
-
-  for (let i = 0; i < chunks.length; i++) {
-    if (signal?.aborted) throw { name: 'AbortError' };
-
-    const chunkEmbedding = await embedText(chunks[i], provider, 3, signal);
-    chunkRecords.push({
-      file_id: fileRecord.id,
-      chunk_text: chunks[i],
-      provider,
-      embedding: chunkEmbedding,
-      chunk_index: i,
-    });
-  }
-
-  if (chunkRecords.length > 0) {
-    const { error: chunkError } = await supabase
-      .from('rag_chunks')
-      .insert(chunkRecords);
-
-    if (chunkError) throw chunkError;
-  }
-
-  return {
-    fileId: fileRecord.id,
-    fileName,
-    fileType,
-    chunkCount: chunks.length,
-    charCount: extractedText.length,
-  };
 };
 
-const processZipFile = async (filePath, fileName, userId, topicId, modelId, provider, signal = null) => {
+/**
+ * Process ZIP file - extract all supported files and analyze each
+ */
+const processZipFile = async (filePath, fileName, userId, topicId, modelId, signal = null) => {
   const zip = await JSZip.loadAsync(fs.readFileSync(filePath));
   const results = [];
   const skipped = [];
@@ -205,34 +225,51 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, prov
       continue;
     }
 
-    const buffer = await entry.async('nodebuffer');
-    const extractedText = await extractTextFromBuffer(buffer, innerType, modelId, signal, entryName);
-    const result = await saveExtractedBuffer({
-      fileName: `${fileName}/${entryName}`,
-      fileType: innerType,
-      fileSize: buffer.length,
-      extractedText,
-      userId,
-      topicId,
-      provider,
-      signal,
-      sourceArchive: fileName,
-    });
-    results.push(result);
+    try {
+      const buffer = await entry.async('nodebuffer');
+      const extractedText = await extractTextFromBuffer(buffer, innerType, modelId, signal, entryName);
+
+      if (!extractedText || extractedText.length < 10) {
+        skipped.push(entryName);
+        continue;
+      }
+
+      // Send to LLM
+      const { llmAnalysis, tokensUsed } = await analyzFileWithLLM(extractedText, entryName, innerType, modelId, signal);
+
+      // Store in RAG
+      const ragId = await saveFileToRAG(
+        `${fileName}/${entryName}`,
+        innerType,
+        extractedText,
+        llmAnalysis,
+        userId,
+        topicId,
+        signal
+      );
+
+      results.push({
+        fileName: entryName,
+        fileType: innerType,
+        ragId,
+        tokensUsed,
+      });
+    } catch (err) {
+      console.error(`[FileUpload] Error processing ${entryName}:`, err.message);
+      skipped.push(entryName);
+    }
   }
 
   if (results.length === 0) {
-    throw new Error('ZIP did not contain any supported readable files');
+    throw new Error('ZIP did not contain any processable files');
   }
 
   return {
-    fileId: results[0].fileId,
     fileName,
     fileType: 'zip',
-    chunkCount: results.reduce((sum, item) => sum + item.chunkCount, 0),
-    charCount: results.reduce((sum, item) => sum + item.charCount, 0),
-    extractedFiles: results.length,
+    processedFiles: results.length,
     skippedFiles: skipped.length,
+    totalTokensUsed: results.reduce((sum, r) => sum + r.tokensUsed, 0),
   };
 };
 
@@ -243,179 +280,119 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
   try {
     console.log(`[FileUpload] Processing: ${fileName}`);
 
-    const modelConfig = MODELS[modelId] || MODELS['gemini-1.5-flash-latest'] || Object.values(MODELS)[0];
-    const provider = modelConfig?.provider || 'openai';
-
     if (fileType === 'zip') {
-      const result = await processZipFile(filePath, fileName, userId, topicId, modelId, provider, signal);
-      fs.unlinkSync(filePath);
-      console.log(`[FileUpload] Success: ${fileName} extracted ${result.extractedFiles} files`);
+      const result = await processZipFile(filePath, fileName, userId, topicId, modelId, signal);
+      cleanupTempFile(filePath);
       return result;
     }
 
     // 1. Extract text from file
-    const extractedText = await extractTextFromFile(filePath, fileType, modelId, signal);
+    const buffer = fs.readFileSync(filePath);
+    const extractedText = await extractTextFromBuffer(buffer, fileType, modelId, signal, fileName);
 
     if (!extractedText || extractedText.length < 10) {
       throw new Error('File is empty or unreadable');
     }
 
-    // 2. Create embedding for full text
-    const fileEmbedding = await embedText(
-      extractedText.slice(0, 2000), // Use first 2000 chars for speed
-      provider,
-      3,
-      signal
-    );
+    // 2. Send directly to LLM (no embedding!)
+    const { llmAnalysis, tokensUsed } = await analyzFileWithLLM(extractedText, fileName, fileType, modelId, signal);
 
-    // 3. Save file record to DB
-    const { data: fileRecord, error: fileError } = await supabase
-      .from('uploaded_files')
-      .insert({
-        user_id: userId,
-        topic_id: topicId,
-        file_name: fileName,
-        file_type: fileType,
-        file_size: fs.statSync(filePath).size,
-        provider: provider,
-        content_text: extractedText,
-        embedding: fileEmbedding,
-        metadata: {
-          extractedAt: new Date().toISOString(),
-          charCount: extractedText.length,
-        },
-      })
-      .select('id')
-      .single();
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
-    if (fileError) throw fileError;
+    // 3. Store in RAG globally
+    const ragId = await saveFileToRAG(fileName, fileType, extractedText, llmAnalysis, userId, topicId, signal);
 
-    // 4. Split into chunks and create embeddings
-    const chunks = chunkText(extractedText);
-    const chunkRecords = [];
+    // 4. Cleanup temp file
+    cleanupTempFile(filePath);
 
-    for (let i = 0; i < chunks.length; i++) {
-      if (signal?.aborted) throw { name: 'AbortError' };
-
-      const chunk = chunks[i];
-      const chunkEmbedding = await embedText(chunk, provider, 3, signal);
-
-      // Small delay to prevent hitting API rate limits (429) during heavy file processing
-      if (chunks.length > 5) {
-        try {
-          await new Promise((resolve, reject) => {
-          const t = setTimeout(resolve, 200);
-          signal?.addEventListener('abort', () => {
-            clearTimeout(t);
-            reject({ name: 'AbortError' });
-          }, { once: true });
-        });
-        } catch (err) { // Catch AbortError from cancelableDelay
-          if (err.name === 'AbortError' || err.name === 'CanceledError') throw err; // Re-throw to break loop
-          throw err; // Re-throw other errors
-        }
-      }
-
-      chunkRecords.push({
-        file_id: fileRecord.id,
-        chunk_text: chunk,
-        provider: provider,
-        embedding: chunkEmbedding,
-        chunk_index: i,
-      });
-    }
-
-    // Batch insert chunks
-    if (chunkRecords.length > 0) {
-      const { error: chunkError } = await supabase
-        .from('rag_chunks')
-        .insert(chunkRecords);
-
-      if (chunkError) throw chunkError;
-    }
-
-    // 5. Cleanup — delete temp file
-    fs.unlinkSync(filePath);
-
-    console.log(`[FileUpload] Success: ${fileName} processed`);
+    console.log(`[FileUpload] Success: ${fileName} analyzed and stored (tokens: ${tokensUsed})`);
 
     return {
-      fileId: fileRecord.id,
       fileName,
       fileType,
-      chunkCount: chunks.length,
-      charCount: extractedText.length,
+      ragId,
+      contentLength: extractedText.length,
+      tokensUsed,
     };
   } catch (err) {
     console.error('[FileUpload] Failed:', err);
-    // Cleanup on error
-    try { fs.unlinkSync(filePath); } catch { }
+    cleanupTempFile(filePath);
     throw err;
   }
 };
 
 /**
- * Search in user's uploaded files
+ * Safe cleanup of temp files
  */
-const searchUserFiles = async (query, userId, topicId = null, provider = 'openai', signal = null, precomputedEmbedding = null) => {
+const cleanupTempFile = (filePath) => {
   try {
-    if (!userId) return [];
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (err) {
+    console.warn(`[FileUpload] Could not delete temp file ${filePath}:`, err.message);
+  }
+};
 
-    // Create embedding for query
-    const queryEmbedding = precomputedEmbedding || await embedText(query, provider, 3, signal);
-    if (!queryEmbedding) return [];
+/**
+ * MODIFIED: Search uploaded files RAG for THIS TOPIC
+ * Returns relevant file analyses from past uploads in this topic
+ */
+const searchUserFilesRAG = async (query, userId, topicId, signal = null) => {
+  try {
+    if (!userId || !topicId) return [];
 
-    // Search database
-    const { data, error } = await Promise.race([
-      supabase.rpc('search_uploaded_files', {
-        query_embedding: queryEmbedding,
-        user_id_param: userId,
-        provider_param: provider,
-        match_count: 5,
-      }),
-      new Promise((_, reject) => {
-        if (signal?.aborted) reject({ name: 'AbortError' });
-        signal?.addEventListener('abort', () => reject({ name: 'AbortError' }), { once: true });
-      })
-    ]);
+    // Query uploaded_files_rag table directly for this topic
+    // Use full-text search on LLM analysis + file names
+    const { data, error } = await supabase
+      .from('uploaded_files_rag')
+      .select('id, file_name, llm_analysis, created_at')
+      .eq('user_id', userId)
+      .eq('topic_id', topicId)
+      .order('created_at', { ascending: false })
+      .limit(10);
 
-    if (error) throw error;
+    if (error) {
+      console.error('[FileSearch] Error:', error);
+      return [];
+    }
 
-    return (data || []).map(result => ({
-      ...result,
-      chunk_text: trimTextByTokens(result.chunk_text, 260),
+    // Simple text matching on query
+    const results = (data || []).filter(doc => {
+      const combined = `${doc.file_name} ${doc.llm_analysis}`.toLowerCase();
+      return query.toLowerCase().split(' ').some(word => combined.includes(word));
+    });
+
+    return results.map(r => ({
+      file_id: r.id,
+      file_name: r.file_name,
+      chunk_text: trimTextByTokens(r.llm_analysis, 300),
+      similarity: 0.85, // Default relevance
     }));
   } catch (err) {
-    console.error('File search failed:', err);
+    console.error('[FileSearch] Failed:', err);
     return [];
   }
 };
 
 /**
- * Delete uploaded file
+ * Delete uploaded file and its RAG records
  */
 const deleteUploadedFile = async (fileId, userId) => {
-  // First delete all chunks
-  await supabase.from('rag_chunks').delete().eq('file_id', fileId);
-
-  // Then delete file record
   const { error } = await supabase
-    .from('uploaded_files')
+    .from('uploaded_files_rag')
     .delete()
     .eq('id', fileId)
-    .eq('user_id', userId); // Ensure user owns file
+    .eq('user_id', userId);
 
   if (error) throw error;
 };
 
 module.exports = {
   processUploadedFile,
-  searchUserFiles,
+  searchUserFilesRAG,
   deleteUploadedFile,
-  chunkText,
-};
-
-const extractTextFromFile = async (filePath, fileType, modelId, signal = null) => {
-  const buffer = fs.readFileSync(filePath);
-  return extractTextFromBuffer(buffer, fileType, modelId, signal, filePath);
+  getTempDir,
+  ensureUploadDir,
+  getSupportedFileType,
 };

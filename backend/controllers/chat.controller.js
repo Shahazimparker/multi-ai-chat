@@ -18,7 +18,7 @@ const { compressPrompt } = require('../services/compress.service');
 const { getCachedResponse, getSemanticCachedResponse, setCachedResponse } = require('../services/cache.service');
 const { buildRAGContext, embedText } = require('../services/rag.service');
 const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
-const { searchUserFiles } = require('../services/fileUpload.service');
+const { searchUserFilesRAG } = require('../services/fileUpload.service');
 const {
   createPromptBudget,
   estimateMessagesTokens,
@@ -39,8 +39,8 @@ const sendMessage = async (req, res) => {
     providerModelId,
     message,
     topicId,
-    memoryMode = 'summarized',
-    historyLimit = 10,
+    memoryMode = 'accurate',
+    historyLimit = 6,
   } = req.body;
 
   // ── 0. Setup Abort Controller for request cancellation ──
@@ -137,21 +137,28 @@ const sendMessage = async (req, res) => {
 
     // ── 6. Fetch RAG context ─────────────────────────────────
     if (abortController.signal.aborted) throw { name: 'AbortError' };
-    const ragContext = await buildRAGContext(
-      finalQuery,
-      modelConfig.provider,
-      abortController.signal,
-      queryVector,
-      { tokenBudget: promptBudget.ragTokens }
-    );
-
-    // ── 7. Fetch uploaded file context ──────────────────────────
-    if (abortController.signal.aborted) throw { name: 'AbortError' };
-    const fileResults = await searchUserFiles(finalQuery, user?.id, topicId, modelConfig.provider, abortController.signal, queryVector);
+    const [ragContext, fileResults] = await Promise.all([
+      buildRAGContext(
+        finalQuery,
+        modelConfig.provider,
+        abortController.signal,
+        queryVector,
+        { tokenBudget: promptBudget.ragTokens }
+      ),
+      searchUserFilesRAG(
+        finalQuery,
+        user?.id,
+        topicId,
+        abortController.signal
+      )
+    ]);
     const fileContext = fileResults.length > 0
-      ? trimTextByTokens(`[FILE REFERENCES]\n${fileResults
-        .map(r => `Source: ${r.file_name} (Relevance: ${Math.round(r.similarity * 100)}%)\n${r.chunk_text}`)
-        .join('\n\n')}\n[END FILE REFS]\n`, promptBudget.fileTokens)
+      ? trimTextByTokens(
+        `[UPLOADED FILE ANALYSES]\n${fileResults
+          .map(r => `File: ${r.file_name}\n${r.chunk_text}`)
+          .join('\n\n---\n')}\n[END ANALYSES]\n`,
+        promptBudget.fileTokens
+      )
       : '';
 
     // ── 8. Fetch conversation history context ────────────────
@@ -271,7 +278,7 @@ const sendMessage = async (req, res) => {
   } catch (err) {
     // Gracefully handle manual aborts
     if (err.name === 'AbortError' || abortController.signal.aborted) {
-      return; 
+      return;
     }
 
     console.error('[Chat] Error:', err.message);

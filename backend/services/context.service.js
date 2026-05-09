@@ -108,7 +108,7 @@ ${formatMessages(recent)}
 
     if (latestSummary && messagesSinceSummary < 8) {
       olderSummaryBlock = `[OLDER CONVERSATION SUMMARY]\n${latestSummary.content}\n[END OLDER CONVERSATION SUMMARY]\n\n`;
-    } else if (olderMessages.length >= 6) {
+    } else if (olderMessages.length >= 12) {
       const olderText = formatMessages(olderMessages);
       const textToSummarize = latestSummary
         ? `Existing summary:\n${latestSummary.content}\n\nNewer conversation:\n${olderText}`
@@ -144,7 +144,7 @@ ${formatMessages(latestMessages)}
 
 const maybeCompressQuery = async (query, signal = null) => {
   const wordCount = query.split(/\s+/).length;
-  if (wordCount < 150) return query;
+  if (wordCount < 300) return query;
 
   const { summary } = await summarizeMemory(query, signal);
   return summary || query;
