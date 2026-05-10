@@ -1,20 +1,18 @@
 /* ============================================================
    FILE: frontend/src/components/chat/MobileNav.css
    PURPOSE: Styles for mobile hamburger menu and drawer
-   NOTE: Create this NEW file
    ============================================================ */
 
-/* Hidden on desktop, visible on mobile */
 .mobile-menu-toggle {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 42px;
+  height: 42px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 12px;
-  color: rgba(255, 255, 255, 0.88);
+  color: rgba(255, 255, 255, 0.9);
   cursor: pointer;
   z-index: 1002;
   flex-shrink: 0;
@@ -32,13 +30,6 @@
   border-color: rgba(255, 255, 255, 0.24);
 }
 
-
-.mobile-menu-toggle:active {
-  background: rgba(255, 255, 255, 0.16);
-  color: #fff;
-}
-
-/* Drawer overlay */
 .mobile-drawer-overlay {
   position: fixed;
   inset: 0;
@@ -46,7 +37,6 @@
   background: rgba(0, 0, 0, 0.5);
 }
 
-/* Drawer panel */
 .mobile-drawer {
   position: fixed;
   left: -100%;
@@ -67,7 +57,6 @@
   left: 0;
 }
 
-/* Drawer header */
 .mobile-drawer-header {
   display: flex;
   align-items: center;
@@ -102,7 +91,6 @@
   background: rgba(255, 255, 255, 0.08);
 }
 
-/* New chat button in drawer */
 .mobile-new-chat-btn {
   margin: 12px;
   padding: 11px 14px;
@@ -127,7 +115,6 @@
   color: #fff;
 }
 
-/* Topics list */
 .mobile-topics-list {
   flex: 1;
   overflow-y: auto;
@@ -161,7 +148,6 @@
   margin-top: 24px;
 }
 
-/* Topic item */
 .mobile-topic-item {
   display: flex;
   align-items: center;
@@ -263,7 +249,6 @@
   color: #fff;
 }
 
-/* Drawer footer */
 .mobile-drawer-footer {
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   padding: 12px;
@@ -336,20 +321,11 @@
   flex-shrink: 0;
 }
 
-@media (max-width: 600px) {
-  .mobile-menu-toggle {
-    width: 36px;
-    height: 36px;
-    padding: 0;
-  }
-}
-
 .mobile-admin-btn:active {
   color: #fff;
   background: rgba(255, 255, 255, 0.08);
 }
 
-/* Logout button */
 .mobile-logout-btn {
   width: 100%;
   padding: 10px 12px;
@@ -374,9 +350,14 @@
   color: #fca5a5;
 }
 
-/* Desktop: hide mobile nav completely */
-@media (min-width: 769px) {
+@media (max-width: 600px) {
+  .mobile-menu-toggle {
+    width: 38px;
+    height: 38px;
+  }
+}
 
+@media (min-width: 769px) {
   .mobile-menu-toggle,
   .mobile-drawer-overlay,
   .mobile-drawer {

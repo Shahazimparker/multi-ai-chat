@@ -1,10 +1,6 @@
 /* ============================================================
    FILE: frontend/src/pages/ChatPage.css
    PURPOSE: Main chat UI styles
-   CHANGES: 
-     1. Make toolbar mobile-responsive (space for hamburger)
-     2. Fix model dropdown positioning for mobile
-     3. Add padding for safe areas on mobile
    ============================================================ */
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=Inter:wght@300;400;500&display=swap');
 
@@ -18,19 +14,18 @@
   overflow: visible;
 }
 
-/* ── Main content ───────────────────────────── */
 .chat-main {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: visible;
   min-width: 0;
-  background: radial-gradient(circle at top left, rgba(124, 58, 237, 0.14), transparent 24%),
+  background:
+    radial-gradient(circle at top left, rgba(124, 58, 237, 0.14), transparent 24%),
     radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.08), transparent 20%),
     #090b15;
 }
 
-/* ── Toolbar ────────────────────────────────── */
 .chat-toolbar {
   display: flex;
   align-items: center;
@@ -44,29 +39,33 @@
   overflow: visible;
   position: relative;
   z-index: 10;
-  min-height: 48px;
+  min-height: 56px;
   width: 100%;
 }
 
-.chat-toolbar>* {
+.chat-toolbar > * {
   flex-shrink: 0;
+}
+
+.chat-toolbar .model-selector {
+  flex: 1;
+  min-width: 0;
+}
+
+.topic-hint {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.45);
+  margin-left: auto;
 }
 
 @media (max-width: 768px) {
   .chat-toolbar {
     padding: 10px 12px;
     gap: 10px;
-    min-height: 56px;
+    min-height: 58px;
     justify-content: flex-start;
     align-items: center;
     flex-wrap: nowrap;
-  }
-}
-
-@media (max-width: 600px) {
-  .chat-toolbar {
-    padding: 10px 12px;
-    gap: 10px;
   }
 
   .topic-hint {
@@ -81,19 +80,6 @@
   }
 }
 
-.topic-hint {
-  font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.45);
-  margin-left: auto;
-}
-
-@media (max-width: 768px) {
-  .topic-hint {
-    display: none;
-  }
-}
-
-/* ── Messages ───────────────────────────────── */
 .messages-area {
   flex: 1;
   overflow-y: auto;
@@ -122,8 +108,6 @@
   }
 }
 
-
-/* ── Empty state ────────────────────────────── */
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -145,9 +129,7 @@
 }
 
 @keyframes pulse {
-
-  0%,
-  100% {
+  0%, 100% {
     transform: scale(1);
     opacity: 0.7;
   }
@@ -197,7 +179,6 @@
   color: #c4b5fd;
 }
 
-/* ── Typing indicator ───────────────────────── */
 .typing-indicator {
   display: flex !important;
   align-items: center;
@@ -222,10 +203,7 @@
 }
 
 @keyframes bounce {
-
-  0%,
-  60%,
-  100% {
+  0%, 60%, 100% {
     transform: translateY(0);
   }
 
@@ -244,7 +222,6 @@
   }
 }
 
-/* ── Input area ─────────────────────────────── */
 .input-area {
   padding: 16px 22px 20px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
@@ -402,8 +379,6 @@
   margin: 8px 0 0;
 }
 
-/* ── Responsive ─────────────────────────────── */
-/* Adjust token bar for mobile safe area */
 @media (max-width: 768px) {
   .token-bar {
     padding-left: 12px;
@@ -418,18 +393,6 @@
     min-height: 44px !important;
   }
 
-  .topic-hint {
-    font-size: 0.7rem;
-    margin-left: auto;
-    white-space: nowrap;
-  }
-
-  @media (max-width: 768px) {
-    .topic-hint {
-      display: none;
-    }
-  }
-
   .memory-controls {
     gap: 6px;
   }
@@ -441,8 +404,6 @@
   }
 }
 
-
-/* Error modal */
 .llm-error-backdrop {
   position: fixed;
   inset: 0;
