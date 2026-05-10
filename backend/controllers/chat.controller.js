@@ -19,6 +19,8 @@ const { getCachedResponse, getSemanticCachedResponse, setCachedResponse } = requ
 const { buildRAGContext, embedText } = require('../services/rag.service');
 const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
 const { searchUserFilesRAG } = require('../services/fileUpload.service');
+const { logAnalytics } = require('../services/analytics.service');
+
 const {
   createPromptBudget,
   estimateMessagesTokens,
@@ -125,20 +127,29 @@ const sendMessage = async (req, res) => {
     const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId);
     if (semanticCachedReply) {
       await logAnalytics({
-        userId: user?.id, query: message, modelId, tokensUsed: 0,
-        isAnonymous, cacheHit: true, responseTimeMs: Date.now() - startTime
+        userId: user?.id,
+        query: message,
+        modelId,
+        tokensUsed: 0,
+        isAnonymous,
+        cacheHit: true,
+        responseTimeMs: Date.now() - startTime,
       });
 
       return res.json({
-        reply,
-        tokensUsed,
-        billableTokens,
-        cacheCreationTokens,
-        cacheReadTokens,
-        cacheHit: cacheReadTokens > 0,
+        reply: semanticCachedReply,
+        tokensUsed: 0,
+        topicId: topicId || null,
+        cacheHit: true,
         model: effectiveModelConfig.label,
+        tokenStats: user ? {
+          total: user.total_tokens,
+          used: user.used_tokens,
+          remaining: user.total_tokens - user.used_tokens,
+        } : null,
       });
     }
+
 
     // ── 6. Fetch RAG context ─────────────────────────────────
     if (abortController.signal.aborted) throw { name: 'AbortError' };
@@ -312,26 +323,6 @@ const sendMessage = async (req, res) => {
       retryable: true,
       failedModelId: modelId,
     });
-  }
-};
-
-/**
- * Helper: log query to analytics table
- */
-const logAnalytics = async ({ userId, query, modelId, tokensUsed, isAnonymous, cacheHit, responseTimeMs }) => {
-  try {
-    await supabase.from('query_analytics').insert({
-      user_id: userId || null,
-      query_text: query.slice(0, 500),
-      model: modelId,
-      tokens_used: tokensUsed,
-      is_anonymous: isAnonymous,
-      cache_hit: cacheHit,
-      response_time_ms: responseTimeMs,
-    });
-  } catch (e) {
-    // Analytics failure should never break chat
-    console.error('[Analytics] Log failed:', e.message);
   }
 };
 

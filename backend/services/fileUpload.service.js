@@ -154,7 +154,16 @@ const analyzFileWithLLM = async (extractedText, fileName, fileType, modelId, sig
 
     return {
       fileContent: extractedText,
-      llmAnalysis: `File: ${fileName} (${fileType})\n\nContent length: ${extractedText.length} characters\n\nUpload timestamp: ${new Date().toISOString()}\n\nFile ready for queries.`,
+      llmAnalysis: `File: ${fileName} (${fileType})
+
+Content length: ${extractedText.length} characters
+
+Preview:
+${extractedText.slice(0, 1000)}
+
+Upload timestamp: ${new Date().toISOString()}
+
+File ready for queries.`,
       tokensUsed: 0,
     };
   } catch (err) {
@@ -338,7 +347,7 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null) => {
 
     const { data, error } = await supabase
       .from('uploaded_files_rag')
-      .select('id, file_name, file_hash, llm_analysis, created_at')
+      .select('id, file_name, file_hash, llm_analysis, original_content, created_at')
       .eq('user_id', userId)
       .eq('topic_id', topicId)
       .order('created_at', { ascending: false })  // Latest first
@@ -350,18 +359,28 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null) => {
     }
 
     // Simple text matching
+    const queryWords = query
+      .toLowerCase()
+      .split(/\s+/)
+      .map(word => word.trim())
+      .filter(word => word.length > 1);
+
     const results = (data || []).filter(doc => {
-      const combined = `${doc.file_name} ${doc.llm_analysis}`.toLowerCase();
-      return query.toLowerCase().split(' ').some(word => combined.includes(word));
+      const combined = `${doc.file_name} ${doc.llm_analysis} ${doc.original_content || ''}`.toLowerCase();
+      return queryWords.some(word => combined.includes(word));
     });
 
-    return results.map(r => ({
-      file_id: r.id,
-      file_name: r.file_name,
-      file_hash: r.file_hash,
-      chunk_text: trimTextByTokens(r.llm_analysis, 300),
-      similarity: 0.85,
-    }));
+    return results.map(r => {
+      const relevantText = r.original_content || r.llm_analysis;
+
+      return {
+        file_id: r.id,
+        file_name: r.file_name,
+        file_hash: r.file_hash,
+        chunk_text: trimTextByTokens(relevantText, 300),
+        similarity: 0.85,
+      };
+    });
   } catch (err) {
     console.error('[FileSearch] Failed:', err);
     return [];

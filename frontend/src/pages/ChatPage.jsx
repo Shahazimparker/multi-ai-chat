@@ -123,18 +123,32 @@ const ChatPage = () => {
         ? 'https://multi-ai-chat-backend.vercel.app/api/chat/stream'
         : 'http://localhost:5000/api/chat/stream';
 
+      const authToken =
+        localStorage.getItem('auth_token') ||
+        sessionStorage.getItem('auth_token');
+
+      const headers = {
+        'Content-Type': 'application/json',
+      };
+
+      if (authToken) {
+        headers.Authorization = `Bearer ${authToken}`;
+      }
+
       const response = await fetch(apiUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           message: userMsg,
           topicId: topicIdToUse,
           modelId: model.id,
+          providerModelId,
           memoryMode,
-          historyLimit,
+          historyLimit: Number(historyLimit),
         }),
         signal: controller.signal,
       });
+
 
       if (!response.ok) throw new Error('Stream failed');
 
@@ -232,7 +246,7 @@ const ChatPage = () => {
       setLoading(false);
       abortControllerRef.current = null;
     }
-  }, [input, pendingFile, loading, model, activeTopic, memoryMode, historyLimit, refreshTokenStats]);
+  }, [input, pendingFile, loading, model, activeTopic, memoryMode, historyLimit, providerModelId, refreshTokenStats]);
 
   // Ctrl+Enter or Enter (without shift) to send
   const handleKeyDown = (e) => {
