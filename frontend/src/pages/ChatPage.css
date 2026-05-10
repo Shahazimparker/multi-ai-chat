@@ -10,7 +10,8 @@
 
 .chat-root {
   display: flex;
-  height: 100vh;
+  height: 100%;
+  min-height: 100vh;
   background: #080b14;
   color: #fff;
   font-family: 'Inter', sans-serif;
