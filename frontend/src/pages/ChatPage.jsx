@@ -253,7 +253,7 @@ const ChatPage = () => {
 
       <main className="chat-main">
         {/* Token bar at top */}
-        <TokenBar />
+
 
         {/* Toolbar */}
         <div className="chat-toolbar">
@@ -280,7 +280,7 @@ const ChatPage = () => {
             </span>
           )}
         </div>
-
+        <TokenBar />
         {/* Messages area */}
         <div className="messages-area">
           {messages.length === 0 ? (

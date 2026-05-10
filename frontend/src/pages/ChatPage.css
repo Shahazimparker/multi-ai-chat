@@ -296,56 +296,31 @@
 
 /* ── Responsive ─────────────────────────────── */
   /* Adjust token bar for mobile safe area */
+  @media (max-width: 768px) {
   .token-bar {
-    padding-left: max(12px, env(safe-area-inset-left));
-    padding-right: max(12px, env(safe-area-inset-right));
+    padding-left: 12px;
+    padding-right: 12px;
   }
-
-  /* Input area mobile padding */
-  .input-area {
-    padding: 12px 12px 20px;
-    padding-left: max(12px, env(safe-area-inset-left));
-    padding-right: max(12px, env(safe-area-inset-right));
-  }
-
-  /* Messages area mobile padding */
-  .messages-area {
-    padding: 16px 12px 12px;
-    padding-left: max(12px, env(safe-area-inset-left));
-    padding-right: max(12px, env(safe-area-inset-right));
-  }
-
-  /* Empty state mobile */
-  .empty-state {
-    padding: 40px 16px;
-  }
-
   .msg-bubble {
     max-width: 90%;
   }
-
-  /* Reduce input box on mobile */
   .input-box {
     min-height: 44px !important;
   }
-
-  /* Topic hint on mobile */
   .topic-hint {
     font-size: 0.7rem;
     margin-left: auto;
     white-space: nowrap;
   }
-
-  /* Memory controls stack on mobile */
   .memory-controls {
     gap: 6px;
   }
-
   .memory-mode-btn,
   .memory-advanced-btn {
     padding: 6px 10px;
     font-size: 0.75rem;
   }
+}
 
 
 /* Error modal */
