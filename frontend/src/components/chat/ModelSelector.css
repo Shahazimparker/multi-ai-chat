@@ -4,7 +4,7 @@
 
 .model-selector {
 	position: relative; 
-	z-index: 9999;
+	z-index: 9990;
 	overflow: visible;
 }
 
@@ -64,7 +64,7 @@
 /* ── Dropdown ───────────────────────────────────── */
 .model-dropdown {
   position: fixed;
-  z-index: 10001;
+  z-index: 9990;
   min-width: 300px;
   background: rgba(15,23,42,0.96);
   border: 1px solid rgba(255,255,255,0.12);
@@ -102,6 +102,6 @@
 .dropdown-overlay {
   position: fixed;
   inset: 0; 
-  z-index: 10000;
+  z-index: 9990;
 }
 .model-loading { color: rgba(255,255,255,0.4); font-size:0.84rem; }
