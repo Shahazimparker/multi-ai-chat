@@ -275,6 +275,12 @@
 .send-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 16px 36px rgba(56,189,248,0.24); }
 .send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
+@media (max-width: 768px) {
+  .sidebar {
+    display: none !important;
+  }
+}
+
 .input-hint {
   text-align: center;
   font-size: 0.72rem;

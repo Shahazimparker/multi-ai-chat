@@ -251,14 +251,6 @@ const ChatPage = () => {
         refreshTrigger={sidebarRefresh}
       />
 
-      {/* Mobile navigation drawer - NEW */}
-      <MobileNav
-        activeTopic={activeTopic}
-        onTopicSelect={handleTopicSelect}
-        onNewChat={handleNewChat}
-        refreshTrigger={sidebarRefresh}
-      />
-
       <main className="chat-main">
         {/* Token bar at top */}
         <TokenBar />
@@ -271,7 +263,7 @@ const ChatPage = () => {
             onNewChat={handleNewChat}
             refreshTrigger={sidebarRefresh}
           />
-          
+
 
           <ModelSelector
             selectedModel={model}
