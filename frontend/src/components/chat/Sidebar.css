@@ -155,3 +155,11 @@
   transition: color 0.2s, background 0.2s;
 }
 .logout-btn:hover { color:#ef4444; background:rgba(239,68,68,0.1); }
+
+@media (max-width: 768px) {
+  .sidebar {
+    display: none !important;      /* remove it from the layout */
+    position: absolute;             /* take it out of the flow */
+    left: -9999px;                  /* be absolutely sure it can’t intercept touches */
+  }
+}

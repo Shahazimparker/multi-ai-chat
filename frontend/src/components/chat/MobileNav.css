@@ -9,22 +9,39 @@
   display: none;
 }
 
+/* -------------------------------------------------
+   ALWAYS show the hamburger on screens ≤768 px
+   (must be the *last* rule that touches this class)
+   ------------------------------------------------- */
 @media (max-width: 768px) {
   .mobile-menu-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: flex !important;
+    /* overrides any earlier `display:none` */
+    position: fixed;
+    /* sits on top of everything */
+    top: env(safe-area-inset-top, 12px);
+    /* respect iPhone notch / Android cutout */
+    left: env(safe-area-inset-left, 12px);
+    z-index: 1100;
+    /* higher than the sidebar (usually 1000) */
     width: 44px;
     height: 44px;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.09);
     border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 12px;
-    color: rgba(255, 255, 255, 0.8);
+    color: rgba(255, 255, 255, 0.85);
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
-    z-index: 1000;
-    flex-shrink: 0;
     transition: background 0.2s, color 0.2s;
   }
+
+  .mobile-menu-toggle:hover,
+  .mobile-menu-toggle:active {
+    background: rgba(255, 255, 255, 0.16);
+    color: #fff;
+  }
+
 
   .mobile-menu-toggle:active {
     background: rgba(255, 255, 255, 0.16);
@@ -362,9 +379,11 @@
 
 /* Desktop: hide mobile nav completely */
 @media (min-width: 769px) {
+
   .mobile-menu-toggle,
   .mobile-drawer-overlay,
   .mobile-drawer {
     display: none !important;
   }
 }
+
