@@ -98,7 +98,7 @@ router.post('/stream', optionalAuth, async (req, res) => {
   const user = req.user;
   const isAnonymous = !user;
   const abortController = new AbortController();
-
+  let resolvedTopicId = topicId;  // ✅ MOVE HERE - outside try block
 
   try {
     // Set SSE headers
@@ -175,11 +175,11 @@ router.post('/stream', optionalAuth, async (req, res) => {
 
     const { context: historyContext, _debug } = await buildContextMessages(
       message,
-      user?.id,
       topicId,
-      { memoryMode, historyLimit },
+      { memoryMode, historyLimit, tokenBudget: promptBudget.historyTokens, userId: user?.id },
       abortController.signal
     );
+    
 
     // Log dynamic budget info
     if (_debug) {
@@ -200,10 +200,13 @@ router.post('/stream', optionalAuth, async (req, res) => {
     const systemPrompt = `You are a helpful AI assistant.${ragContext ? '\n\n[CONTEXT FROM DOCUMENTS]\n' + ragContext : ''}${fileContext ? '\n\n' + fileContext : ''}`;
     const aiMessages = [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: `${historyContext}\n\nUser: ${message}` }
     ];
+    // Add history context if it exists
+    if (historyContext && historyContext.length > 0) {
+      aiMessages.push(...historyContext);
+    }
+    aiMessages.push({ role: 'user', content: message });
     const promptTokens = estimateMessagesTokens(aiMessages);
-
 
     // Get streaming response
     const { text: reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0 } = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
@@ -228,8 +231,23 @@ router.post('/stream', optionalAuth, async (req, res) => {
       // Small delay for realistic streaming effect
       await new Promise(resolve => setTimeout(resolve, 10));
     }
+    // ✅ CREATE NEW TOPIC IF NEEDED (BEFORE res.end())
+    if (!isAnonymous && !resolvedTopicId) {
+      const topicTitle = message.trim().slice(0, 60) + (message.length > 60 ? '...' : '');
+      const { data: newTopic, error: topicError } = await supabase
+        .from('topics')
+        .insert({ user_id: user.id, title: topicTitle, model: modelId })
+        .select('id')
+        .single();
 
-    // ✅ SEND COMPLETION RESPONSE FIRST
+      if (topicError) {
+        console.error('[Stream] Topic creation failed:', topicError.message);
+      } else {
+        resolvedTopicId = newTopic?.id;
+        console.log('[Stream] New topic created:', resolvedTopicId);
+      }
+    }
+    // ✅ SEND COMPLETION RESPONSE FIRST (with topicId)
     res.write(`data: ${JSON.stringify({
       type: 'done',
       tokensUsed: billableTokens,
@@ -244,7 +262,6 @@ router.post('/stream', optionalAuth, async (req, res) => {
     if (!res.writableEnded && !res.destroyed) {
       try { res.end(); } catch { }
     }
-
     // ✅ THEN SAVE MESSAGES ASYNCHRONOUSLY (fire and forget)
     if (!isAnonymous && resolvedTopicId) {
       supabase.from('messages').insert([
@@ -264,13 +281,20 @@ router.post('/stream', optionalAuth, async (req, res) => {
           model: modelId,
           tokens_used: billableTokens,
         }
-      ]).catch(err => console.error('[Stream] Message insert error:', err));
+      ])
+        .then(({ error }) => {
+          if (error) console.error('[Stream] Message insert error:', error);
+        })
+        .catch(err => console.error('[Stream] Message insert error:', err));
 
       // Update topic timestamp
       supabase
         .from('topics')
         .update({ updated_at: new Date().toISOString() })
         .eq('id', resolvedTopicId)
+        .then(({ error }) => {
+          if (error) console.error('[Stream] Topic update error:', error);
+        })
         .catch(err => console.error('[Stream] Topic update error:', err));
     }
 
@@ -280,6 +304,9 @@ router.post('/stream', optionalAuth, async (req, res) => {
         .from('users')
         .update({ used_tokens: user.used_tokens + billableTokens })
         .eq('id', user.id)
+        .then(({ error }) => {
+          if (error) console.error('[Stream] User update error:', error);
+        })
         .catch(err => console.error('[Stream] User update error:', err));
     }
 

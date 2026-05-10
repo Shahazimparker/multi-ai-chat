@@ -216,7 +216,9 @@ const sendMessage = async (req, res) => {
     });
 
     // History context (if same topic)
-    aiMessages.push(...fitMessagesToBudget(historyContext, promptBudget.historyTokens));
+    if (historyContext && historyContext.length > 0) {
+      aiMessages.push(...historyContext);
+    }
 
     // Current user message
     aiMessages.push({ role: 'user', content: trimTextByTokens(finalQuery, promptBudget.queryTokens) });

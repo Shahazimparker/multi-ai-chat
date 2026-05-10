@@ -85,7 +85,7 @@ const ChatPage = () => {
 
     if ((!input.trim() && !pendingFile) || !model) return;
 
-    const userMsg = input.trim();
+    const userMsg = String(input).trim();
     const fileToUpload = pendingFile;
 
     setFailedMessage(userMsg);
@@ -103,7 +103,7 @@ const ChatPage = () => {
     setLoading(true);
 
     try {
-      let topicIdToUse = activeTopic?.id;
+      let topicIdToUse = activeTopic?.id || null;
 
       // Upload file if present
       if (fileToUpload) {
@@ -229,8 +229,12 @@ const ChatPage = () => {
 
       // Update topic if new
       if (metadata.topicId && !activeTopic) {
+        console.log('[DEBUG] Setting topic after response:', metadata.topicId);
         setActiveTopic({ id: metadata.topicId });
         setSidebarRefresh(p => p + 1);
+      } else if (metadata.topicId && activeTopic?.id !== metadata.topicId) {
+        console.log('[DEBUG] Updating topic:', metadata.topicId);
+        setActiveTopic({ id: metadata.topicId });
       }
 
       await refreshTokenStats();

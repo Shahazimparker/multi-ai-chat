@@ -75,7 +75,9 @@ const saveTopicSummary = async ({ topicId, userId, summary, provider, model }) =
 };
 
 const buildContextMessages = async (newQuery, topicId, options = {}, signal = null) => {
-  if (!topicId) return { context: [], isNewTopic: true };
+  if (!topicId) {
+    return { context: [], isNewTopic: true };
+  }
 
   const memoryMode = options.memoryMode || 'summarized';
   const requestedLimit = clamp(options.historyLimit || 10, 2, 20);
@@ -168,7 +170,7 @@ ${formatMessages(latestMessages)}
   return {
     context: [{
       role: 'user',
-      content: memoryText,
+      content: String(memoryText),
     }],
     isNewTopic: false,
     _debug: {
