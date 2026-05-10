@@ -104,4 +104,15 @@
   inset: 0; 
   z-index: 10000;
 }
+
+@media (max-width: 480px) {
+  .model-name {
+    display: none;
+  }
+
+  .model-trigger {
+    padding: 6px 8px;
+    font-size: 0.7rem;
+  }
+}
 .model-loading { color: rgba(255,255,255,0.4); font-size:0.84rem; }

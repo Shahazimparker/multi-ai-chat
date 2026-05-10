@@ -59,7 +59,7 @@
     padding: 8px 10px;
     gap: 6px;
     min-height: 44px;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
   }
 }
 
