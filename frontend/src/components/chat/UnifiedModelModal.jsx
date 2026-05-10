@@ -10,22 +10,24 @@ const UnifiedModelModal = ({ provider, onClose, onSelect }) => {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
 
+  const providerSlug = provider?.provider || provider?.id;
+
   const loadModels = async (refresh = false) => {
-    if (!provider?.id) return;
+    if (!providerSlug) return;
 
     setError('');
     if (refresh) setRefreshing(true);
     else setLoading(true);
 
     try {
-      const res = await api.get(`/chat/provider-models/${provider.id}`, {
+      const res = await api.get(`/chat/provider-models/${providerSlug}`, {
         params: refresh ? { refresh: true } : undefined,
       });
 
       setModels(res.data.models || []);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load models');
-      setModels(provider.models || []);
+      setError(err.response?.data?.error || 'Failed to load models from provider');
+      setModels(provider?.models || []);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -34,13 +36,13 @@ const UnifiedModelModal = ({ provider, onClose, onSelect }) => {
 
   useEffect(() => {
     loadModels(false);
-  }, [provider?.id]);
+  }, [providerSlug]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return models;
 
-    return models.filter(m =>
+    return models.filter((m) =>
       m.label?.toLowerCase().includes(q) ||
       m.id?.toLowerCase().includes(q) ||
       m.description?.toLowerCase().includes(q)
@@ -59,10 +61,10 @@ const UnifiedModelModal = ({ provider, onClose, onSelect }) => {
           </div>
 
           <div className="unified-header-actions">
-            <button onClick={() => loadModels(true)} disabled={refreshing} title="Refresh models">
+            <button type="button" onClick={() => loadModels(true)} disabled={refreshing} title="Refresh models">
               <RefreshCw size={15} className={refreshing ? 'spin' : ''} />
             </button>
-            <button onClick={onClose} title="Close">
+            <button type="button" onClick={onClose} title="Close">
               <X size={16} />
             </button>
           </div>
@@ -72,7 +74,7 @@ const UnifiedModelModal = ({ provider, onClose, onSelect }) => {
           <Search size={15} />
           <input
             value={query}
-            onChange={e => setQuery(e.target.value)}
+            onChange={(e) => setQuery(e.target.value)}
             placeholder="Search models..."
           />
         </div>
@@ -85,8 +87,9 @@ const UnifiedModelModal = ({ provider, onClose, onSelect }) => {
           ) : filtered.length === 0 ? (
             <div className="unified-empty">No models found</div>
           ) : (
-            filtered.map(model => (
+            filtered.map((model) => (
               <button
+                type="button"
                 key={model.id}
                 className="unified-model-option"
                 onClick={() => onSelect(model)}
