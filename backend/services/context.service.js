@@ -5,7 +5,8 @@
 
 const supabase = require('../config/supabase');
 const { summarizeMemory } = require('./summary.service');
-const { trimContextBlock } = require('./tokenBudget.service');
+const { smartTrimContextBlock } = require('./tokenBudget.service');
+
 
 const clamp = (value, min, max) => {
   const number = Number(value);
@@ -78,12 +79,42 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
 
   const memoryMode = options.memoryMode || 'summarized';
   const requestedLimit = clamp(options.historyLimit || 10, 2, 20);
-  const tokenBudget = options.tokenBudget || 900;
+
+  // ✅ CHANGE: Import dynamic budget functions
+  const {
+    createDynamicPromptBudget,
+    calculateComplexityScore,
+    getTopicTurnCount,
+    smartTrimContextBlock,
+  } = require('./tokenBudget.service');
+
+  // ✅ NEW: Calculate complexity score
+  let totalHistoryText = '';
+  const recentForAnalysis = await getRecentMessages(topicId, 10);
+  if (recentForAnalysis.length > 0) {
+    totalHistoryText = formatMessages(recentForAnalysis);
+  }
+  const complexityScore = calculateComplexityScore(newQuery, totalHistoryText);
+
+  // ✅ NEW: Get turn count
+  const turnCount = await getTopicTurnCount(topicId);
+
+  // ✅ NEW: Create dynamic budget instead of static 900
+  const dynamicBudget = createDynamicPromptBudget(
+    turnCount,
+    complexityScore,
+    { maxTokens: 8000 }
+  );
+  const tokenBudget = options.tokenBudget || dynamicBudget.historyTokens;
+
+  // ✅ Log for debugging
+  console.log(`[Context] Complexity: ${complexityScore.toFixed(2)}, Turns: ${turnCount}, Budget: ${tokenBudget} tokens`);
+
   const userId = options.userId || null;
 
   const rawLimit = memoryMode === 'accurate'
     ? requestedLimit
-    : Math.max(requestedLimit, 15); // Fetch more history to summarize
+    : Math.max(requestedLimit, 15);
 
   const recent = await getRecentMessages(topicId, rawLimit);
   if (recent.length === 0) return { context: [], isNewTopic: true };
@@ -131,9 +162,8 @@ ${formatMessages(latestMessages)}
 [END LATEST RAW CONVERSATION]`;
   }
 
-
-
-  memoryText = trimContextBlock(memoryText, tokenBudget);
+  // ✅ CHANGE: Use smartTrimContextBlock instead of trimContextBlock
+  memoryText = smartTrimContextBlock(memoryText, tokenBudget);
 
   return {
     context: [{
@@ -141,6 +171,11 @@ ${formatMessages(latestMessages)}
       content: memoryText,
     }],
     isNewTopic: false,
+    _debug: {
+      complexity: complexityScore,
+      turnCount,
+      allocatedBudget: tokenBudget,
+    },
   };
 };
 

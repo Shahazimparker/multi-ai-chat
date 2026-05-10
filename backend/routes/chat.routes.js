@@ -173,13 +173,18 @@ router.post('/stream', optionalAuth, async (req, res) => {
       );
     }
 
-    const { context: historyContext } = await buildContextMessages(
+    const { context: historyContext, _debug } = await buildContextMessages(
       message,
       user?.id,
       topicId,
       { memoryMode, historyLimit },
       abortController.signal
     );
+
+    // Log dynamic budget info
+    if (_debug) {
+      console.log(`[Dynamic Budget] Complexity: ${_debug.complexity.toFixed(2)}, Turns: ${_debug.turnCount}, Allocated: ${_debug.allocatedBudget} tokens`);
+    }
 
     const fileContext = fileResults.length > 0
       ? trimTextByTokens(
