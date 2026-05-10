@@ -283,8 +283,8 @@ const ChatPage = () => {
           {messages.length === 0 ? (
             <div className="empty-state">
               <div className="empty-orb" />
-              <h2>What can I help you with?</h2>
-              <p>Select a model above and start chatting</p>
+              <h2>Welcome to Azim's ChatBot</h2>
+              <p>Select a model and start chatting with your AI assistant</p>
               <div className="suggestion-chips">
                 {['Explain quantum computing', 'Write a Python script', 'Translate to French', 'Debug my code'].map(s => (
                   <button key={s} className="chip" onClick={() => setInput(s)}>{s}</button>
