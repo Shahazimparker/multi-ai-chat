@@ -229,61 +229,7 @@ router.post('/stream', optionalAuth, async (req, res) => {
       await new Promise(resolve => setTimeout(resolve, 10));
     }
 
-    // Send completion with metadata
-    let resolvedTopicId = topicId;
-
-    if (!isAnonymous) {
-      if (!resolvedTopicId) {
-        const topicTitle = message.trim().slice(0, 60) + (message.length > 60 ? '...' : '');
-        const { data: newTopic, error: topicError } = await supabase
-          .from('topics')
-          .insert({ user_id: user.id, title: topicTitle, model: modelId })
-          .select('id')
-          .single();
-
-        if (!topicError) {
-          resolvedTopicId = newTopic?.id;
-        } else {
-          console.error('[Stream] Topic creation failed:', topicError.message);
-        }
-      }
-
-      if (resolvedTopicId) {
-        await supabase.from('messages').insert([
-          {
-            topic_id: resolvedTopicId,
-            user_id: user.id,
-            role: 'user',
-            content: message,
-            model: modelId,
-            tokens_used: 0,
-          },
-          {
-            topic_id: resolvedTopicId,
-            user_id: user.id,
-            role: 'assistant',
-            content: reply,
-            model: modelId,
-            tokens_used: billableTokens,
-          }
-
-        ]);
-
-        await supabase
-          .from('topics')
-          .update({ updated_at: new Date().toISOString() })
-          .eq('id', resolvedTopicId);
-      }
-    }
-    if (user) {
-      await supabase
-        .from('users')
-        .update({ used_tokens: user.used_tokens + billableTokens })
-        .eq('id', user.id);
-    }
-
-
-    // Send completion with metadata
+    // ✅ SEND COMPLETION RESPONSE FIRST
     res.write(`data: ${JSON.stringify({
       type: 'done',
       tokensUsed: billableTokens,
@@ -295,9 +241,46 @@ router.post('/stream', optionalAuth, async (req, res) => {
       responseTime: Date.now() - startTime
     })}\n\n`);
 
-
     if (!res.writableEnded && !res.destroyed) {
       try { res.end(); } catch { }
+    }
+
+    // ✅ THEN SAVE MESSAGES ASYNCHRONOUSLY (fire and forget)
+    if (!isAnonymous && resolvedTopicId) {
+      supabase.from('messages').insert([
+        {
+          topic_id: resolvedTopicId,
+          user_id: user.id,
+          role: 'user',
+          content: message,
+          model: modelId,
+          tokens_used: 0,
+        },
+        {
+          topic_id: resolvedTopicId,
+          user_id: user.id,
+          role: 'assistant',
+          content: reply,
+          model: modelId,
+          tokens_used: billableTokens,
+        }
+      ]).catch(err => console.error('[Stream] Message insert error:', err));
+
+      // Update topic timestamp
+      supabase
+        .from('topics')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', resolvedTopicId)
+        .catch(err => console.error('[Stream] Topic update error:', err));
+    }
+
+    // ✅ UPDATE USER TOKEN COUNT ASYNCHRONOUSLY
+    if (user) {
+      supabase
+        .from('users')
+        .update({ used_tokens: user.used_tokens + billableTokens })
+        .eq('id', user.id)
+        .catch(err => console.error('[Stream] User update error:', err));
     }
 
     // Log analytics asynchronously
