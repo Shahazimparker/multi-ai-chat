@@ -5,17 +5,17 @@
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth }     from '../context/AuthContext';
+import { useAuth } from '../context/AuthContext';
 import { Sparkles, Lock, User, Eye, EyeOff, Ghost } from 'lucide-react';
 import './LoginPage.css';
 
 const LoginPage = () => {
-  const { login }   = useAuth();
-  const navigate    = useNavigate();
-  const [form,    setForm]    = useState({ username: '', password: '' });
+  const { login } = useAuth();
+  const navigate = useNavigate();
+  const [form, setForm] = useState({ username: '', password: '' });
   const [showPwd, setShowPwd] = useState(false);
   const [remember, setRemember] = useState(false);
-  const [error,   setError]   = useState('');
+  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
@@ -41,13 +41,13 @@ const LoginPage = () => {
         {/* Logo */}
         <div className="login-logo">
           <Sparkles size={32} className="logo-icon" />
-          <span className="logo-text">Shahazim's AI Chat Bot<span className="logo-accent">Chat</span></span>
+          <span className="logo-text">Azim's AI <span className="logo-accent">Chatbot</span></span>
         </div>
         <p className="login-sub">Unified AI models in one place</p>
 
         {/* AI model pills */}
         <div className="model-pills">
-          {['Gemini','Groq','Mistral','Cohere','GPT-4o','Claude'].map(m => (
+          {['Gemini', 'Groq', 'Mistral', 'Cohere', 'GPT-4o', 'Claude'].map(m => (
             <span key={m} className="pill">{m}</span>
           ))}
         </div>
