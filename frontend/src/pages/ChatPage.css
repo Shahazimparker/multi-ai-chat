@@ -54,17 +54,19 @@
 
 @media (max-width: 768px) {
   .chat-toolbar {
-    padding: 8px 10px;
-    gap: 4px;
-    min-height: auto;
-    justify-content: space-between;
-    align-content: center;
+    padding: 10px 12px;
+    gap: 10px;
+    min-height: 56px;
+    justify-content: flex-start;
+    align-items: center;
+    flex-wrap: nowrap;
   }
 }
+
 @media (max-width: 600px) {
   .chat-toolbar {
-    padding: 6px 6px;
-    gap: 3px;
+    padding: 10px 12px;
+    gap: 10px;
   }
 
   .topic-hint {
@@ -74,15 +76,8 @@
 
 @media (max-width: 480px) {
   .chat-toolbar {
-    padding: 4px 4px;
-    gap: 2px;
-  }
-}
-
-@media (max-width: 480px) {
-  .chat-toolbar {
-    gap: 6px;
-    padding: 8px 8px;
+    padding: 10px 12px;
+    gap: 10px;
   }
 }
 

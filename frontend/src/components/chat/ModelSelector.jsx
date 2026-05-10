@@ -29,37 +29,35 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
 
   const updateDropdownPosition = () => {
     if (!wrapperRef.current) return;
+
     const rect = wrapperRef.current.getBoundingClientRect();
-    const top = rect.bottom + 8;
     const isMobile = window.innerWidth <= 768;
 
-    let left = rect.left;
-    let minWidth = '300px';
-
     if (isMobile) {
-      // Dropdown should fit within viewport
-      const dropdownWidth = 250; // fallback width
-      const availableSpace = window.innerWidth - 16; // 8px padding each side
-
-      // If too far right, shift left
-      if (rect.right + dropdownWidth > window.innerWidth) {
-        left = Math.max(8, window.innerWidth - dropdownWidth - 8);
-      } else {
-        left = Math.max(8, rect.left);
-      }
-      minWidth = `${Math.min(dropdownWidth, availableSpace)}px`;
+      setDropdownStyle({
+        position: 'fixed',
+        top: '72px',
+        left: '12px',
+        right: '12px',
+        width: 'auto',
+        minWidth: '0',
+        maxHeight: 'calc(100vh - 96px)',
+      });
+      return;
     }
 
+    const top = rect.bottom + 8;
     const maxHeight = Math.min(420, window.innerHeight - rect.bottom - 24);
 
     setDropdownStyle({
       position: 'fixed',
       top: `${top}px`,
-      left: `${left}px`,
-      minWidth: minWidth,
+      left: `${rect.left}px`,
+      minWidth: '300px',
       maxHeight: `${maxHeight}px`,
     });
   };
+
 
   useLayoutEffect(() => {
     if (!open) return;
