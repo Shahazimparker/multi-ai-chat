@@ -6,12 +6,11 @@
 // ============================================================
 
 import axios from 'axios';
+const API_BASE_URL = 'https://multi-ai-chat-backend.vercel.app/api';
 
 const api = axios.create({
-  baseURL: process.env.NODE_ENV === 'production'
-    ? 'https://multi-ai-chat-backend.vercel.app/api'
-    : 'http://localhost:5000/api',
-  timeout: 120000,  // 2 min timeout for long AI responses
+  baseURL: API_BASE_URL,
+  timeout: 120000,
   headers: { 'Content-Type': 'application/json' },
 });
 
