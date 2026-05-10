@@ -264,7 +264,6 @@ const ChatPage = () => {
             refreshTrigger={sidebarRefresh}
           />
 
-
           <ModelSelector
             selectedModel={model}
             onModelChange={(nextModel) => {
@@ -280,9 +279,13 @@ const ChatPage = () => {
             </span>
           )}
         </div>
+
+        {/* Token bar */}
         <TokenBar />
+
         {/* Messages area */}
         <div className="messages-area">
+
           {messages.length === 0 ? (
             <div className="empty-state">
               <div className="empty-orb" />
