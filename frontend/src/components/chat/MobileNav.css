@@ -387,3 +387,142 @@
   }
 }
 
+/* ==============================================================
+   1️⃣  Respect safe‑area insets on every side of the drawer
+   ============================================================== */
+@media (max-width: 768px) {
+
+  /* -----------------------------------------------------------------
+     Drawer container – give it padding that matches the device’s
+     safe‑area insets (top, right, left, bottom). The env() function
+     falls back to 0 when the browser does not support it.
+     ----------------------------------------------------------------- */
+  .mobile-drawer {
+    padding-top: env(safe-area-inset-top, 12px);
+    padding-right: env(safe-area-inset-right, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 12px);
+    /* make the drawer a flex column that stretches to fill height */
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    /* header at top, footer at bottom */
+    height: 100vh;
+    /* keep full‑height even after padding */
+    box-sizing: border-box;
+    /* include padding in height calc */
+  }
+
+  /* -----------------------------------------------------------------
+     Header – the part that contains the “New Chat” button and the
+     model‑select dropdown. Add a little extra top margin so the dropdown
+     list is not clipped by the address bar when it expands.
+     ----------------------------------------------------------------- */
+  .mobile-drawer-header {
+    margin-top: env(safe-area-inset-top, 12px);
+    /* give the header a tiny bottom margin so the dropdown’s list
+       has a bit of breathing room */
+    margin-bottom: 4px;
+  }
+
+  /* -----------------------------------------------------------------
+     Model‑select dropdown – raise its z‑index and add a small bottom
+     margin so the native <option> list (or a custom <ul> you may
+     render) appears **above** the address bar.
+     ----------------------------------------------------------------- */
+  .mobile-drawer-header select {
+    position: relative;
+    /* creates a stacking context */
+    z-index: 2000;
+    /* higher than the overlay (999) */
+    margin-bottom: 8px;
+    /* space for the native dropdown arrow */
+  }
+
+  /* -----------------------------------------------------------------
+     Footer – the container that holds the Logout button.
+     We make it a flex row that sticks to the bottom of the drawer
+     (thanks to the drawer’s `justify-content: space-between` above)
+     and we also give it the bottom safe‑area padding.
+     ----------------------------------------------------------------- */
+  .mobile-drawer-footer {
+    display: flex;
+    justify-content: center;
+    padding-top: 8px;
+    /* a little breathing room */
+    padding-bottom: env(safe-area-inset-bottom, 12px);
+    background: #070b18;
+    /* keep same background as drawer */
+  }
+
+  /* -----------------------------------------------------------------
+     Logout button – make it a full‑width, tall, easy‑to‑tap button.
+     The extra bottom padding from the footer guarantees it never
+     sits under the OS navigation bar.
+     ----------------------------------------------------------------- */
+  .mobile-logout-btn {
+    width: 100%;
+    max-width: 280px;
+    /* keep a nice max width on tablets */
+    padding: 12px 0;
+    font-size: 0.95rem;
+    background: #2a2f46;
+    border: 1px solid #444b6c;
+    border-radius: 8px;
+    color: #ff6b6b;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+  }
+
+  .mobile-logout-btn:hover,
+  .mobile-logout-btn:active {
+    background: #3d425e;
+    color: #ff8b8b;
+  }
+
+  /* -----------------------------------------------------------------
+     If you ever add a custom dropdown component (e.g. <ul> that
+     appears under the <select>), make sure it also respects the top
+     safe‑area. The rule below gives any element with the class
+     `.mobile-custom-dropdown` the same safe‑area padding.
+     ----------------------------------------------------------------- */
+  .mobile-custom-dropdown {
+    position: absolute;
+    top: calc(100% + env(safe-area-inset-top, 12px));
+    left: 0;
+    right: 0;
+    z-index: 2100;
+    background: #070b18;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 8px;
+    max-height: 40vh;
+    overflow-y: auto;
+  }
+
+  /* -----------------------------------------------------------------
+     Make the overlay (the dark translucent background) ignore safe‑area
+     insets – we want it to cover the *entire* screen, not just the
+     safe‑area region.
+     ----------------------------------------------------------------- */
+  .mobile-drawer-overlay {
+    inset: 0;
+    /* top/right/bottom/left = 0 */
+    background: rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* -------------------------------------------------------------
+   Desktop – keep everything hidden (unchanged, just for clarity)
+   ------------------------------------------------------------- */
+@media (min-width: 769px) {
+
+  .mobile-menu-toggle,
+  .mobile-drawer,
+  .mobile-drawer-overlay {
+    display: none !important;
+  }
+}
+
+.mobile-drawer-footer {
+  padding-bottom: calc(env(safe-area-inset-bottom, 12px) + 4px);
+}
