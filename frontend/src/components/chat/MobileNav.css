@@ -334,6 +334,14 @@
     flex-shrink: 0;
   }
 
+  @media (max-width: 600px) {
+    .mobile-menu-toggle {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+    }
+  }
+
   .mobile-admin-btn:active {
     color: #fff;
     background: rgba(255, 255, 255, 0.08);
@@ -367,6 +375,7 @@
 
 /* Desktop: hide mobile nav completely */
 @media (min-width: 769px) {
+
   .mobile-menu-toggle,
   .mobile-drawer-overlay,
   .mobile-drawer {

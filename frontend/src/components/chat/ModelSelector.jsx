@@ -12,17 +12,17 @@ import './ModelSelector.css';
 
 // Provider display config — color + icon emoji
 const PROVIDER_META = {
-  gemini:  { label: 'Google Gemini',  color: '#4285f4', emoji: '✦' },
-  groq:    { label: 'Groq',           color: '#f97316', emoji: '⚡' },
-  mistral: { label: 'Mistral AI',     color: '#7c3aed', emoji: '🌀' },
-  cohere:  { label: 'Cohere',         color: '#0ea5e9', emoji: '🔷' },
-  openai:  { label: 'OpenAI GPT',     color: '#10b981', emoji: '🤖' },
-  claude:  { label: 'Anthropic Claude', color: '#f59e0b', emoji: '🧠' },
+  gemini: { label: 'Google Gemini', color: '#4285f4', emoji: '✦' },
+  groq: { label: 'Groq', color: '#f97316', emoji: '⚡' },
+  mistral: { label: 'Mistral AI', color: '#7c3aed', emoji: '🌀' },
+  cohere: { label: 'Cohere', color: '#0ea5e9', emoji: '🔷' },
+  openai: { label: 'OpenAI GPT', color: '#10b981', emoji: '🤖' },
+  claude: { label: 'Anthropic Claude', color: '#f59e0b', emoji: '🧠' },
 };
 
 const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }) => {
-  const [models,  setModels]  = useState([]);
-  const [open,    setOpen]    = useState(false);
+  const [models, setModels] = useState([]);
+  const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [dropdownStyle, setDropdownStyle] = useState({});
   const wrapperRef = useRef(null);
@@ -31,14 +31,25 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
     if (!wrapperRef.current) return;
     const rect = wrapperRef.current.getBoundingClientRect();
     const top = rect.bottom + 8;
-    const left = rect.left;
+
+    // Mobile: center dropdown, Desktop: position from trigger
+    const isMobile = window.innerWidth <= 768;
+    let left = rect.left;
+    let minWidth = `${rect.width}px`;
+
+    if (isMobile) {
+      // Center on mobile
+      left = Math.max(8, window.innerWidth / 2 - 125); // 250px dropdown / 2
+      minWidth = '250px';
+    }
+
     const maxHeight = Math.min(420, window.innerHeight - rect.bottom - 24);
 
     setDropdownStyle({
       position: 'fixed',
       top: `${top}px`,
       left: `${left}px`,
-      minWidth: `${rect.width}px`,
+      minWidth: minWidth,
       maxHeight: `${maxHeight}px`,
     });
   };
@@ -64,7 +75,7 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
           onModelChange(res.data.models[0]);
         }
       })
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setLoading(false));
   }, []);
 
@@ -93,7 +104,7 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
             <span className="model-emoji">{selectedMeta?.emoji}</span>
             <span className="model-name">{selectedModel.label}</span>
             <span className={`model-badge ${selectedModel.paid ? 'paid' : 'free'}`}>
-              {selectedModel.paid ? <><DollarSign size={10}/> Paid</> : <><Zap size={10}/> Free</>}
+              {selectedModel.paid ? <><DollarSign size={10} /> Paid</> : <><Zap size={10} /> Free</>}
             </span>
             <ChevronDown size={14} className={`chevron ${open ? 'open' : ''}`} />
           </>

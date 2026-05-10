@@ -61,6 +61,23 @@
     align-content: center;
   }
 }
+@media (max-width: 600px) {
+  .chat-toolbar {
+    padding: 6px 6px;
+    gap: 3px;
+  }
+
+  .topic-hint {
+    display: none !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .chat-toolbar {
+    padding: 4px 4px;
+    gap: 2px;
+  }
+}
 
 @media (max-width: 480px) {
   .chat-toolbar {
