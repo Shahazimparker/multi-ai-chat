@@ -2,11 +2,13 @@
 // FILE: frontend/src/pages/ChatPage.jsx
 // PURPOSE: Main chat UI — message list, input box, model selector
 //          Token bar on top, sidebar for history
+// CHANGES: Added MobileNav component (lines 19, 261-268)
 // ============================================================
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, StopCircle, Loader2 } from 'lucide-react';
 import Sidebar from '../components/chat/Sidebar';
+import MobileNav from '../components/chat/MobileNav';
 import ModelSelector from '../components/chat/ModelSelector';
 import MessageBubble from '../components/chat/MessageBubble';
 import TokenBar from '../components/layout/TokenBar';
@@ -161,13 +163,6 @@ const ChatPage = () => {
               setError(data.error);
               break;
             }
-            /**
-            setMessages(prev => [...prev, {
-              role: 'assistant',
-              content: `❌ Error: ${data.error}`
-            }]);
-            break;
-          }*/
             if (data.type === 'chunk') {
               streamingText += data.text;
               // Update last message with streamed content
@@ -250,6 +245,14 @@ const ChatPage = () => {
   return (
     <div className="chat-root">
       <Sidebar
+        activeTopic={activeTopic}
+        onTopicSelect={handleTopicSelect}
+        onNewChat={handleNewChat}
+        refreshTrigger={sidebarRefresh}
+      />
+
+      {/* Mobile navigation drawer - NEW */}
+      <MobileNav
         activeTopic={activeTopic}
         onTopicSelect={handleTopicSelect}
         onNewChat={handleNewChat}

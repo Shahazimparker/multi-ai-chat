@@ -1,5 +1,10 @@
 /* ============================================================
    FILE: frontend/src/pages/ChatPage.css
+   PURPOSE: Main chat UI styles
+   CHANGES: 
+     1. Make toolbar mobile-responsive (space for hamburger)
+     2. Fix model dropdown positioning for mobile
+     3. Add padding for safe areas on mobile
    ============================================================ */
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=Inter:wght@300;400;500&display=swap');
 
@@ -37,6 +42,7 @@
   flex-shrink: 0;
   overflow: visible;
 }
+
 .topic-hint {
   font-size: 0.75rem;
   color: rgba(255,255,255,0.45);
@@ -256,10 +262,70 @@
 
 /* ── Responsive ─────────────────────────────── */
 @media (max-width: 768px) {
-  .chat-root { position: relative; }
+  /* Hide desktop sidebar */
   .sidebar   { display: none; }
-  .msg-bubble{ max-width: 90%; }
+  
+  /* Mobile toolbar - make room for hamburger */
+  .chat-toolbar {
+    gap: 10px;
+    padding: 12px 12px;
+    flex-wrap: wrap;
+  }
+
+  /* Adjust token bar for mobile safe area */
+  .token-bar {
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+
+  /* Input area mobile padding */
+  .input-area {
+    padding: 12px 12px 20px;
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+
+  /* Messages area mobile padding */
+  .messages-area {
+    padding: 16px 12px 12px;
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+
+  /* Empty state mobile */
+  .empty-state {
+    padding: 40px 16px;
+  }
+
+  .msg-bubble {
+    max-width: 90%;
+  }
+
+  /* Reduce input box on mobile */
+  .input-box {
+    min-height: 44px !important;
+  }
+
+  /* Topic hint on mobile */
+  .topic-hint {
+    font-size: 0.7rem;
+    margin-left: auto;
+    white-space: nowrap;
+  }
+
+  /* Memory controls stack on mobile */
+  .memory-controls {
+    gap: 6px;
+  }
+
+  .memory-mode-btn,
+  .memory-advanced-btn {
+    padding: 6px 10px;
+    font-size: 0.75rem;
+  }
 }
+
+/* Error modal */
 .llm-error-backdrop {
   position: fixed;
   inset: 0;
@@ -268,6 +334,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 16px;
 }
 
 .llm-error-modal {
@@ -317,6 +384,7 @@
   border-color: rgba(167,139,250,0.45);
   color: #c4b5fd;
 }
+
 .upload-trigger.icon-pin, .send-btn {
   display: flex;
   align-items: center;
