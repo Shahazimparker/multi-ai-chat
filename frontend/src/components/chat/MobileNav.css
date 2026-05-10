@@ -373,7 +373,6 @@
   border-color: rgba(239, 68, 68, 0.4);
   color: #fca5a5;
 }
-}
 
 /* Desktop: hide mobile nav completely */
 @media (min-width: 769px) {
