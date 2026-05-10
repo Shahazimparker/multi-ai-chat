@@ -67,9 +67,11 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
         <>
             {/* Hamburger button - always visible on mobile */}
             <button
+                type="button"
                 className="mobile-menu-toggle"
                 onClick={() => setIsOpen(!isOpen)}
                 title={isOpen ? 'Close menu' : 'Open menu'}
+                aria-label={isOpen ? 'Close menu' : 'Open menu'}
             >
                 {isOpen ? <X size={22} /> : <Menu size={22} />}
             </button>
@@ -88,16 +90,18 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
                 <div className="mobile-drawer-header">
                     <span className="drawer-title">✦ Azim's AI</span>
                     <button
+                        type="button"
                         className="drawer-close-btn"
                         onClick={() => setIsOpen(false)}
                         title="Close"
+                        aria-label="Close menu"
                     >
                         <X size={20} />
                     </button>
                 </div>
 
                 {/* New chat button */}
-                <button className="mobile-new-chat-btn" onClick={handleNewChat}>
+                <button type="button" className="mobile-new-chat-btn" onClick={handleNewChat}>
                     <PlusCircle size={16} />
                     New Chat
                 </button>

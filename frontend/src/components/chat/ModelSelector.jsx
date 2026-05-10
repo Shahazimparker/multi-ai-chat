@@ -65,9 +65,11 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
   useEffect(() => {
     api.get('/chat/models')
       .then((res) => {
-        setModels(res.data.models || []);
-        if (!selectedModel && res.data.models?.length > 0) {
-          onModelChange(res.data.models[0]);
+        const nextModels = res.data.models || [];
+        setModels(nextModels);
+
+        if (!selectedModel && nextModels.length > 0) {
+          onModelChange(nextModels[0]);
         }
       })
       .catch(() => {})
@@ -75,15 +77,13 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
   }, [selectedModel, onModelChange]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !isMobile) return;
 
-    const originalOverflow = document.body.style.overflow;
-    if (isMobile) {
-      document.body.style.overflow = 'hidden';
-    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
 
     return () => {
-      document.body.style.overflow = originalOverflow;
+      document.body.style.overflow = previousOverflow;
     };
   }, [open, isMobile]);
 
@@ -104,33 +104,42 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
     setOpen(false);
   };
 
+  const renderGroups = () =>
+    Object.entries(grouped).map(([provider, providerModels]) => {
+      const meta = PROVIDER_META[provider] || {
+        label: provider,
+        emoji: 'AI',
+        color: '#ffffff',
+      };
+
+      return (
+        <div key={provider} className="model-group">
+          <div className="model-group-header" style={{ color: meta.color }}>
+            <span>{meta.emoji}</span>
+            <span>{meta.label}</span>
+          </div>
+
+          {providerModels.map((model) => (
+            <button
+              key={model.id}
+              type="button"
+              className={`model-option ${selectedModel?.id === model.id ? 'active' : ''}`}
+              onClick={() => handleSelect(model)}
+            >
+              <span className="option-label">{model.label}</span>
+              <span className={`model-badge sm ${model.paid ? 'paid' : 'free'}`}>
+                {model.paid ? 'Paid' : 'Free'}
+              </span>
+            </button>
+          ))}
+        </div>
+      );
+    });
+
   const desktopDropdown = (
     <>
       <div className="model-dropdown" style={dropdownStyle}>
-        {Object.entries(grouped).map(([provider, providerModels]) => {
-          const meta = PROVIDER_META[provider] || { label: provider, emoji: 'AI', color: '#fff' };
-          return (
-            <div key={provider} className="model-group">
-              <div className="model-group-header" style={{ color: meta.color }}>
-                <span>{meta.emoji}</span>
-                <span>{meta.label}</span>
-              </div>
-
-              {providerModels.map((model) => (
-                <button
-                  key={model.id}
-                  className={`model-option ${selectedModel?.id === model.id ? 'active' : ''}`}
-                  onClick={() => handleSelect(model)}
-                >
-                  <span className="option-label">{model.label}</span>
-                  <span className={`model-badge sm ${model.paid ? 'paid' : 'free'}`}>
-                    {model.paid ? 'Paid' : 'Free'}
-                  </span>
-                </button>
-              ))}
-            </div>
-          );
-        })}
+        {renderGroups()}
       </div>
       <div className="dropdown-overlay" onClick={() => setOpen(false)} />
     </>
@@ -147,39 +156,18 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
             <p>Choose the model you want to chat with</p>
           </div>
           <button
+            type="button"
             className="model-sheet-close"
             onClick={() => setOpen(false)}
             title="Close"
+            aria-label="Close model selector"
           >
             <X size={18} />
           </button>
         </div>
 
         <div className="model-sheet-body">
-          {Object.entries(grouped).map(([provider, providerModels]) => {
-            const meta = PROVIDER_META[provider] || { label: provider, emoji: 'AI', color: '#fff' };
-            return (
-              <div key={provider} className="model-group">
-                <div className="model-group-header" style={{ color: meta.color }}>
-                  <span>{meta.emoji}</span>
-                  <span>{meta.label}</span>
-                </div>
-
-                {providerModels.map((model) => (
-                  <button
-                    key={model.id}
-                    className={`model-option ${selectedModel?.id === model.id ? 'active' : ''}`}
-                    onClick={() => handleSelect(model)}
-                  >
-                    <span className="option-label">{model.label}</span>
-                    <span className={`model-badge sm ${model.paid ? 'paid' : 'free'}`}>
-                      {model.paid ? 'Paid' : 'Free'}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            );
-          })}
+          {renderGroups()}
         </div>
       </div>
     </>
@@ -188,10 +176,10 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
   return (
     <div className="model-selector" ref={wrapperRef}>
       <button
+        type="button"
         className="model-trigger"
         onClick={() => setOpen((prev) => !prev)}
         disabled={loading}
-        type="button"
       >
         {loading ? (
           <span className="model-loading">Loading models...</span>
@@ -200,7 +188,17 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
             <span className="model-emoji">{selectedMeta?.emoji}</span>
             <span className="model-name">{selectedModel.label}</span>
             <span className={`model-badge ${selectedModel.paid ? 'paid' : 'free'}`}>
-              {selectedModel.paid ? <><DollarSign size={10} /> Paid</> : <><Zap size={10} /> Free</>}
+              {selectedModel.paid ? (
+                <>
+                  <DollarSign size={10} />
+                  Paid
+                </>
+              ) : (
+                <>
+                  <Zap size={10} />
+                  Free
+                </>
+              )}
             </span>
             <ChevronDown size={14} className={`chevron ${open ? 'open' : ''}`} />
           </>
@@ -209,10 +207,7 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
         )}
       </button>
 
-      {open && createPortal(
-        isMobile ? mobileSheet : desktopDropdown,
-        document.body
-      )}
+      {open && createPortal(isMobile ? mobileSheet : desktopDropdown, document.body)}
     </div>
   );
 };
