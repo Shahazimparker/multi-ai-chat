@@ -265,6 +265,13 @@ const ChatPage = () => {
 
         {/* Toolbar */}
         <div className="chat-toolbar">
+          <MobileNav
+            activeTopic={activeTopic}
+            onTopicSelect={handleTopicSelect}
+            onNewChat={handleNewChat}
+            refreshTrigger={sidebarRefresh}
+          />
+
           <ModelSelector
             selectedModel={model}
             onModelChange={(nextModel) => {
