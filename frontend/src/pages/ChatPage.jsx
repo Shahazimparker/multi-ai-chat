@@ -271,6 +271,7 @@ const ChatPage = () => {
             onNewChat={handleNewChat}
             refreshTrigger={sidebarRefresh}
           />
+          
 
           <ModelSelector
             selectedModel={model}
