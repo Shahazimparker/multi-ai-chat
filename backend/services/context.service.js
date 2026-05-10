@@ -90,46 +90,48 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
 
   let memoryText = '';
 
-  if (memoryMode === 'accurate') {
-    memoryText = `You are continuing the same chat topic. Use the raw previous conversation below to answer the user's next message. If the user's message is short or vague, infer it from this context.
+  const latestRawCount = requestedLimit;
+  const olderMessages = recent.slice(0, Math.max(0, recent.length - latestRawCount));
+  const latestMessages = recent.slice(-latestRawCount);
 
-[RECENT RAW CONVERSATION]
-${formatMessages(recent)}
-[END RECENT RAW CONVERSATION]`;
-  } else {
-    const latestRawCount = 4;
-    const olderMessages = recent.slice(0, Math.max(0, recent.length - latestRawCount));
-    const latestMessages = recent.slice(-latestRawCount);
+  let olderSummaryBlock = '';
 
-    let olderSummaryBlock = '';
+  const latestSummary = await getLatestSummary(topicId);
+  const messagesSinceSummary = await countMessagesAfter(topicId, latestSummary?.created_at);
 
-    const latestSummary = await getLatestSummary(topicId);
-    const messagesSinceSummary = await countMessagesAfter(topicId, latestSummary?.created_at);
+  if (latestSummary && messagesSinceSummary < 8) {
+    olderSummaryBlock = `[OLDER CONVERSATION SUMMARY]\n${latestSummary.content}\n[END OLDER CONVERSATION SUMMARY]\n\n`;
+  } else if (olderMessages.length >= 12) {
+    const olderText = formatMessages(olderMessages);
+    const textToSummarize = latestSummary
+      ? `Existing summary:\n${latestSummary.content}\n\nNewer conversation:\n${olderText}`
+      : olderText;
+    const { summary, provider, model } = await summarizeMemory(textToSummarize, signal);
+    await saveTopicSummary({ topicId, userId, summary, provider, model });
 
-    if (latestSummary && messagesSinceSummary < 8) {
-      olderSummaryBlock = `[OLDER CONVERSATION SUMMARY]\n${latestSummary.content}\n[END OLDER CONVERSATION SUMMARY]\n\n`;
-    } else if (olderMessages.length >= 12) {
-      const olderText = formatMessages(olderMessages);
-      const textToSummarize = latestSummary
-        ? `Existing summary:\n${latestSummary.content}\n\nNewer conversation:\n${olderText}`
-        : olderText;
-      const { summary, provider, model } = await summarizeMemory(textToSummarize, signal);
-      await saveTopicSummary({ topicId, userId, summary, provider, model });
-
-      olderSummaryBlock = `[OLDER CONVERSATION SUMMARY]
+    olderSummaryBlock = `[OLDER CONVERSATION SUMMARY]
 ${summary}
 [SUMMARY SOURCE: ${provider}/${model}]
 [END OLDER CONVERSATION SUMMARY]
 
 `;
-    }
+  }
 
+  if (memoryMode === 'accurate') {
+    memoryText = `You are continuing the same chat topic. Use both the older summary and the latest raw conversation below to answer the user's next message. If the user's message is short or vague, infer it from this context.
+
+${olderSummaryBlock}[LATEST RAW CONVERSATION]
+${formatMessages(latestMessages)}
+[END LATEST RAW CONVERSATION]`;
+  } else {
     memoryText = `You are continuing the same chat topic. Use the memory below to answer the user's next message. If the user's message is short or vague, infer it from this context.
 
 ${olderSummaryBlock}[LATEST RAW CONVERSATION]
 ${formatMessages(latestMessages)}
 [END LATEST RAW CONVERSATION]`;
   }
+
+
 
   memoryText = trimContextBlock(memoryText, tokenBudget);
 

@@ -340,7 +340,7 @@ const ChatPage = () => {
               className={`memory-mode-btn ${memoryMode === 'summarized' ? 'active' : ''}`}
               onClick={() => {
                 setMemoryMode('summarized');
-                setHistoryLimit(4);
+                setHistoryLimit(8);
                 setRagEnabled(false);
               }}
             >
@@ -351,7 +351,7 @@ const ChatPage = () => {
               className={`memory-mode-btn ${memoryMode === 'accurate' ? 'active' : ''}`}
               onClick={() => {
                 setMemoryMode('accurate');
-                setHistoryLimit(6);
+                setHistoryLimit(12);
                 setRagEnabled(true);
               }}
             >
