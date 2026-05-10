@@ -88,8 +88,9 @@ router.post('/stream', optionalAuth, async (req, res) => {
     topicId,
     modelId = 'claude-sonnet',
     providerModelId,
-    memoryMode = 'accurate',
-    historyLimit = 10,
+    memoryMode = 'summarized',
+    historyLimit = 5,
+    ragEnabled = false,
   } = req.body;
 
   const user = req.user;
@@ -118,6 +119,9 @@ router.post('/stream', optionalAuth, async (req, res) => {
     const { createPromptBudget, trimTextByTokens, estimateTokens } = require('../services/tokenBudget.service');
 
     const modelConfig = MODELS[modelId];
+    const effectiveModelConfig = providerModelId
+      ? { ...modelConfig, model: providerModelId }
+      : modelConfig;
     if (!modelConfig) {
       res.write(`data: ${JSON.stringify({ error: 'Unknown model' })}\n\n`);
       res.end();
@@ -139,13 +143,46 @@ router.post('/stream', optionalAuth, async (req, res) => {
     }
 
     // Build context (same as regular endpoint)
+    // Build context (same as regular endpoint)
     const promptBudget = createPromptBudget(modelConfig);
-    const ragContext = await buildRAGContext(message, modelConfig.provider, abortController.signal, null, { tokenBudget: promptBudget.ragTokens });
-    const { context: historyContext } = await buildContextMessages(message, user?.id, topicId, { memoryMode, historyLimit }, abortController.signal);
-    const fileResults = await searchUserFilesRAG(message, user?.id, topicId, abortController.signal);
+
+    let ragContext = '';
+    let fileResults = [];
+
+    if (ragEnabled) {
+      ragContext = await buildRAGContext(
+        message,
+        modelConfig.provider,
+        abortController.signal,
+        null,
+        { tokenBudget: promptBudget.ragTokens }
+      );
+
+      fileResults = await searchUserFilesRAG(
+        message,
+        user?.id,
+        topicId,
+        abortController.signal
+      );
+    }
+
+    const { context: historyContext } = await buildContextMessages(
+      message,
+      user?.id,
+      topicId,
+      { memoryMode, historyLimit },
+      abortController.signal
+    );
+
     const fileContext = fileResults.length > 0
-      ? trimTextByTokens(`[UPLOADED FILE ANALYSES]\n${fileResults.map(r => `File: ${r.file_name}\n${r.chunk_text}`).join('\n\n---\n')}\n[END ANALYSES]\n`, promptBudget.fileTokens)
+      ? trimTextByTokens(
+        `[UPLOADED FILE ANALYSES]\n${fileResults
+          .map(r => `File: ${r.file_name}\n${r.chunk_text}`)
+          .join('\n\n---\n')}\n[END ANALYSES]\n`,
+        promptBudget.fileTokens
+      )
       : '';
+
 
     // Build AI messages
     const systemPrompt = `You are a helpful AI assistant.${ragContext ? '\n\n[CONTEXT FROM DOCUMENTS]\n' + ragContext : ''}${fileContext ? '\n\n' + fileContext : ''}`;
@@ -155,7 +192,7 @@ router.post('/stream', optionalAuth, async (req, res) => {
     ];
 
     // Get streaming response
-    const { text: reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0 } = await dispatchToAI(modelConfig, aiMessages, abortController.signal);
+    const { text: reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0 } = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
 
     // Send streamed response in chunks
     const chunkSize = 10; // Send 10 chars at a time (adjust as needed)
@@ -183,7 +220,7 @@ router.post('/stream', optionalAuth, async (req, res) => {
       cacheCreationTokens,
       cacheReadTokens,
       cacheHit: cacheReadTokens > 0,
-      model: modelConfig.label,
+      model: effectiveModelConfig.label,
       responseTime: Date.now() - startTime
     })}\n\n`);
 

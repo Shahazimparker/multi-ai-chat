@@ -41,8 +41,9 @@ const sendMessage = async (req, res) => {
     providerModelId,
     message,
     topicId,
-    memoryMode = 'accurate',
-    historyLimit = 6,
+    memoryMode = 'summarized',
+    historyLimit = 5,
+    ragEnabled = false,
   } = req.body;
 
   // ── 0. Setup Abort Controller for request cancellation ──
@@ -121,53 +122,62 @@ const sendMessage = async (req, res) => {
     const finalQuery = await maybeCompressQuery(compressedQuery, abortController.signal);
 
     // ── 5.5 Generate query embedding once to save tokens ──────
-    if (abortController.signal.aborted) throw { name: 'AbortError' };
-    const queryVector = await embedText(finalQuery, modelConfig.provider, 3, abortController.signal);
+    let queryVector = null;
 
-    const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId);
-    if (semanticCachedReply) {
-      await logAnalytics({
-        userId: user?.id,
-        query: message,
-        modelId,
-        tokensUsed: 0,
-        isAnonymous,
-        cacheHit: true,
-        responseTimeMs: Date.now() - startTime,
-      });
+    if (ragEnabled) {
+      if (abortController.signal.aborted) throw { name: 'AbortError' };
+      queryVector = await embedText(finalQuery, modelConfig.provider, 3, abortController.signal);
 
-      return res.json({
-        reply: semanticCachedReply,
-        tokensUsed: 0,
-        topicId: topicId || null,
-        cacheHit: true,
-        model: effectiveModelConfig.label,
-        tokenStats: user ? {
-          total: user.total_tokens,
-          used: user.used_tokens,
-          remaining: user.total_tokens - user.used_tokens,
-        } : null,
-      });
+      const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId);
+      if (semanticCachedReply) {
+        await logAnalytics({
+          userId: user?.id,
+          query: message,
+          modelId,
+          tokensUsed: 0,
+          isAnonymous,
+          cacheHit: true,
+          responseTimeMs: Date.now() - startTime,
+        });
+
+        return res.json({
+          reply: semanticCachedReply,
+          tokensUsed: 0,
+          topicId: topicId || null,
+          cacheHit: true,
+          model: effectiveModelConfig.label,
+          tokenStats: user ? {
+            total: user.total_tokens,
+            used: user.used_tokens,
+            remaining: user.total_tokens - user.used_tokens,
+          } : null,
+        });
+      }
     }
 
-
     // ── 6. Fetch RAG context ─────────────────────────────────
-    if (abortController.signal.aborted) throw { name: 'AbortError' };
-    const [ragContext, fileResults] = await Promise.all([
-      buildRAGContext(
-        finalQuery,
-        modelConfig.provider,
-        abortController.signal,
-        queryVector,
-        { tokenBudget: promptBudget.ragTokens }
-      ),
-      searchUserFilesRAG(
-        finalQuery,
-        user?.id,
-        topicId,
-        abortController.signal
-      )
-    ]);
+    let ragContext = '';
+    let fileResults = [];
+
+    if (ragEnabled) {
+      if (abortController.signal.aborted) throw { name: 'AbortError' };
+      [ragContext, fileResults] = await Promise.all([
+        buildRAGContext(
+          finalQuery,
+          modelConfig.provider,
+          abortController.signal,
+          queryVector,
+          { tokenBudget: promptBudget.ragTokens }
+        ),
+        searchUserFilesRAG(
+          finalQuery,
+          user?.id,
+          topicId,
+          abortController.signal
+        )
+      ]);
+    }
+
     const fileContext = fileResults.length > 0
       ? trimTextByTokens(
         `[UPLOADED FILE ANALYSES]\n${fileResults
@@ -176,6 +186,7 @@ const sendMessage = async (req, res) => {
         promptBudget.fileTokens
       )
       : '';
+
 
     // ── 8. Fetch conversation history context ────────────────
     const { context: historyContext } = await buildContextMessages(

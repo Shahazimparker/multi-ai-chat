@@ -35,7 +35,8 @@ const ChatPage = () => {
   const textareaRef = useRef(null);
   const abortControllerRef = useRef(null);
   const [memoryMode, setMemoryMode] = useState('summarized');
-  const [historyLimit, setHistoryLimit] = useState(10);
+  const [historyLimit, setHistoryLimit] = useState(5);
+  const [ragEnabled, setRagEnabled] = useState(false);
   const [showAdvancedMemory, setShowAdvancedMemory] = useState(false);
   const [unifiedProvider, setUnifiedProvider] = useState(null);
   const [providerModelId, setProviderModelId] = useState(null);
@@ -145,6 +146,7 @@ const ChatPage = () => {
           providerModelId,
           memoryMode,
           historyLimit: Number(historyLimit),
+          ragEnabled,
         }),
         signal: controller.signal,
       });
@@ -246,7 +248,7 @@ const ChatPage = () => {
       setLoading(false);
       abortControllerRef.current = null;
     }
-  }, [input, pendingFile, loading, model, activeTopic, memoryMode, historyLimit, providerModelId, refreshTokenStats]);
+  }, [input, pendingFile, loading, model, activeTopic, memoryMode, historyLimit, ragEnabled, providerModelId, refreshTokenStats]);
 
   // Ctrl+Enter or Enter (without shift) to send
   const handleKeyDown = (e) => {
@@ -336,14 +338,22 @@ const ChatPage = () => {
             <button
               type="button"
               className={`memory-mode-btn ${memoryMode === 'summarized' ? 'active' : ''}`}
-              onClick={() => setMemoryMode('summarized')}
+              onClick={() => {
+                setMemoryMode('summarized');
+                setHistoryLimit(4);
+                setRagEnabled(false);
+              }}
             >
               Summarized+
             </button>
             <button
               type="button"
               className={`memory-mode-btn ${memoryMode === 'accurate' ? 'active' : ''}`}
-              onClick={() => setMemoryMode('accurate')}
+              onClick={() => {
+                setMemoryMode('accurate');
+                setHistoryLimit(6);
+                setRagEnabled(true);
+              }}
             >
               Accurate+
             </button>
@@ -356,18 +366,30 @@ const ChatPage = () => {
             </button>
 
             {showAdvancedMemory && (
-              <label className="memory-limit-control">
-                Last
-                <input
-                  type="number"
-                  min="2"
-                  max="20"
-                  value={historyLimit}
-                  onChange={e => setHistoryLimit(e.target.value)}
-                />
-                msgs
-              </label>
+              <>
+                <label className="memory-limit-control">
+                  Last
+                  <input
+                    type="number"
+                    min="2"
+                    max="20"
+                    value={historyLimit}
+                    onChange={e => setHistoryLimit(e.target.value)}
+                  />
+                  msgs
+                </label>
+
+                <label className="memory-toggle-control">
+                  <input
+                    type="checkbox"
+                    checked={ragEnabled}
+                    onChange={e => setRagEnabled(e.target.checked)}
+                  />
+                  RAG on for Accurate+ by default
+                </label>
+              </>
             )}
+
           </div>
 
           <div className="input-box">

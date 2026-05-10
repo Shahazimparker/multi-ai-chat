@@ -43,7 +43,7 @@
   width: 100%;
 }
 
-.chat-toolbar > * {
+.chat-toolbar>* {
   flex-shrink: 0;
 }
 
@@ -129,7 +129,9 @@
 }
 
 @keyframes pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: scale(1);
     opacity: 0.7;
   }
@@ -203,7 +205,10 @@
 }
 
 @keyframes bounce {
-  0%, 60%, 100% {
+
+  0%,
+  60%,
+  100% {
     transform: translateY(0);
   }
 
@@ -280,13 +285,18 @@
   color: #fff;
 }
 
-.memory-limit-control {
+.memory-toggle-control {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   color: rgba(255, 255, 255, 0.55);
   font-size: 0.78rem;
 }
+
+.memory-toggle-control input {
+  accent-color: #8b5cf6;
+}
+
 
 .memory-limit-control input {
   width: 56px;
