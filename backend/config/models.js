@@ -5,6 +5,15 @@
 // ============================================================
 
 const MODELS = {
+
+  'groq-mixtral': {
+    label: 'Groq LLaMA 3.1 8B Instant (Free)',
+    provider: 'groq',
+    apiKey: process.env.GROQ_API_KEY,
+    model: 'llama-3.1-8b-instant',
+    paid: false,
+    maxTokens: 8192,
+  },
   // ── Groq (Ultra-fast inference) ───────────────────────────
   'groq-llama': {
     label: 'Groq LLaMA 3.3 70B (Free)',
@@ -14,14 +23,7 @@ const MODELS = {
     paid: false,
     maxTokens: 8192,
   },
-  'groq-mixtral': {
-    label: 'Groq LLaMA 3.1 8B Instant (Free)',
-    provider: 'groq',
-    apiKey: process.env.GROQ_API_KEY,
-    model: 'llama-3.1-8b-instant',
-    paid: false,
-    maxTokens: 8192,
-  },
+
   // ── Google Gemini ──────────────────────────────────────────
   'gemini-flash': {
     label: 'Gemini Flash 2.5 (Free)',
