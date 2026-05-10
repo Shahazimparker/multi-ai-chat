@@ -283,17 +283,6 @@
 }
 
 /* ── Responsive ─────────────────────────────── */
-@media (max-width: 768px) {
-  /* Hide desktop sidebar */
-  .sidebar   { display: none; }
-  
-  /* Mobile toolbar - make room for hamburger */
-  .chat-toolbar {
-    gap: 10px;
-    padding: 12px 12px;
-    flex-wrap: wrap;
-  }
-
   /* Adjust token bar for mobile safe area */
   .token-bar {
     padding-left: max(12px, env(safe-area-inset-left));
