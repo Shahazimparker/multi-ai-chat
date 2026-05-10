@@ -117,7 +117,11 @@ const ChatPage = () => {
       }
 
       // ← NEW: Use streaming endpoint instead
-      const response = await fetch('https://multi-ai-chat-backend.vercel.app/api/chat/stream', {
+      const apiUrl = process.env.NODE_ENV === 'production'
+        ? 'https://multi-ai-chat-backend.vercel.app/api/chat/stream'
+        : 'http://localhost:5000/api/chat/stream';
+
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
