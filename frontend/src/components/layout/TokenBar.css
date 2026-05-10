@@ -11,6 +11,7 @@
   font-size: 0.75rem;
   font-family: 'Inter', sans-serif;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 .token-icon  { color: #fbbf24; flex-shrink:0; }
 .token-label { color: rgba(255,255,255,0.4); flex-shrink:0; }
@@ -20,7 +21,7 @@
   background: rgba(255,255,255,0.1);
   border-radius: 999px;
   overflow: hidden;
-  flex-shrink: 0;
+  
 }
 .token-fill {
   height: 100%;
@@ -33,3 +34,22 @@
 .token-stat.total { color: rgba(255,255,255,0.4); }
 .token-sep        { color: rgba(255,255,255,0.2); }
 .token-remaining  { font-weight:600; font-size:0.72rem; }
+@media (max-width: 768px) {
+  .token-bar {
+    padding: 4px 10px;
+    gap: 4px;
+    font-size: 0.7rem;
+  }
+  
+  .token-track {
+    width: 80px;
+  }
+
+  .token-stat {
+    font-size: 0.68rem;
+  }
+
+  .token-remaining {
+    font-size: 0.65rem;
+  }
+}
