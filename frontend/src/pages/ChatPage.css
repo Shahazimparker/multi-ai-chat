@@ -43,14 +43,17 @@
   overflow: visible;
   position: relative;
   z-index: 10;
+  min-height: 56px;
 }
 
 @media (max-width: 768px) {
   .chat-toolbar {
     padding: 10px 12px;
     gap: 8px;
+    min-height: 52px;
   }
 }
+
 
 .topic-hint {
   font-size: 0.75rem;
