@@ -49,11 +49,17 @@
   width: 100%;
 }
 
+.chat-toolbar > * {
+  flex-shrink: 0;
+  min-width: 0;
+}
+
 @media (max-width: 768px) {
   .chat-toolbar {
     padding: 8px 10px;
     gap: 6px;
     min-height: 44px;
+    flex-wrap: nowrap;
   }
 }
 
