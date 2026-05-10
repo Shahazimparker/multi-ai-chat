@@ -4,8 +4,8 @@
 //          Returns JWT token on successful login
 // ============================================================
 
-const bcrypt   = require('bcryptjs');
-const jwt      = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const supabase = require('../config/supabase');
 
 /**
@@ -56,15 +56,16 @@ const login = async (req, res) => {
     res.json({
       token,
       user: {
-        id:            user.id,
-        username:      user.username,
-        email:         user.email,
-        role:          user.role,
-        totalTokens:   user.total_tokens,
-        usedTokens:    user.used_tokens,
-        perQueryLimit: user.per_query_limit,
-        expiresAt:     user.expires_at,
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        total_tokens: user.total_tokens,
+        used_tokens: user.used_tokens,
+        per_query_limit: user.per_query_limit,
+        expires_at: user.expires_at,
       },
+
     });
   } catch (err) {
     console.error('[Auth] Login error:', err.message);

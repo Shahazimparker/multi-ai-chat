@@ -13,16 +13,17 @@ const TokenBar = () => {
   const { user } = useAuth();
   if (!user) return null;
 
-  const total     = user.total_tokens  || 0;
-  const used      = user.used_tokens   || 0;
+  const total = user.total_tokens ?? user.totalTokens ?? 0;
+  const used = user.used_tokens ?? user.usedTokens ?? 0;
   const remaining = Math.max(total - used, 0);
-  const pct       = total > 0 ? Math.min((used / total) * 100, 100) : 0;
+  const pct = total > 0 ? Math.min((used / total) * 100, 100) : 0;
+
 
   // Color the bar based on usage %
   const barColor =
-    pct < 60  ? '#10b981' :   // green
-    pct < 80  ? '#f59e0b' :   // amber
-                '#ef4444';    // red
+    pct < 60 ? '#10b981' :   // green
+      pct < 80 ? '#f59e0b' :   // amber
+        '#ef4444';    // red
 
   return (
     <div className="token-bar">

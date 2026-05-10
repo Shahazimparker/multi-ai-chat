@@ -11,6 +11,8 @@ const { requireAuth } = require('../middleware/auth');
 const { tokenCheck } = require('../middleware/tokenCheck');
 const { MODELS } = require('../config/models');
 const { getProviderModels } = require('../services/modelCatalog.service');
+const supabase = require('../config/supabase');
+
 
 // Rate limit: 30 requests/minute per IP
 const chatLimiter = rateLimit({
@@ -116,7 +118,12 @@ router.post('/stream', optionalAuth, async (req, res) => {
     const { buildRAGContext, embedText } = require('../services/rag.service');
     const { buildContextMessages } = require('../services/context.service');
     const { searchUserFilesRAG } = require('../services/fileUpload.service');
-    const { createPromptBudget, trimTextByTokens, estimateTokens } = require('../services/tokenBudget.service');
+    const {
+      createPromptBudget,
+      trimTextByTokens,
+      estimateTokens,
+      estimateMessagesTokens,
+    } = require('../services/tokenBudget.service');
 
     const modelConfig = MODELS[modelId];
     const effectiveModelConfig = providerModelId
@@ -190,9 +197,13 @@ router.post('/stream', optionalAuth, async (req, res) => {
       { role: 'system', content: systemPrompt },
       { role: 'user', content: `${historyContext}\n\nUser: ${message}` }
     ];
+    const promptTokens = estimateMessagesTokens(aiMessages);
+
 
     // Get streaming response
     const { text: reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0 } = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
+    const billableTokens = Math.max(tokensUsed || 0, promptTokens + estimateTokens(reply));
+
 
     // Send streamed response in chunks
     const chunkSize = 10; // Send 10 chars at a time (adjust as needed)
@@ -214,19 +225,76 @@ router.post('/stream', optionalAuth, async (req, res) => {
     }
 
     // Send completion with metadata
+    let resolvedTopicId = topicId;
+
+    if (!isAnonymous) {
+      if (!resolvedTopicId) {
+        const topicTitle = message.trim().slice(0, 60) + (message.length > 60 ? '...' : '');
+        const { data: newTopic, error: topicError } = await supabase
+          .from('topics')
+          .insert({ user_id: user.id, title: topicTitle, model: modelId })
+          .select('id')
+          .single();
+
+        if (!topicError) {
+          resolvedTopicId = newTopic?.id;
+        } else {
+          console.error('[Stream] Topic creation failed:', topicError.message);
+        }
+      }
+
+      if (resolvedTopicId) {
+        await supabase.from('messages').insert([
+          {
+            topic_id: resolvedTopicId,
+            user_id: user.id,
+            role: 'user',
+            content: message,
+            model: modelId,
+            tokens_used: 0,
+          },
+          {
+            topic_id: resolvedTopicId,
+            user_id: user.id,
+            role: 'assistant',
+            content: reply,
+            model: modelId,
+            tokens_used: billableTokens,
+          }
+
+        ]);
+
+        await supabase
+          .from('topics')
+          .update({ updated_at: new Date().toISOString() })
+          .eq('id', resolvedTopicId);
+      }
+    }
+    if (user) {
+      await supabase
+        .from('users')
+        .update({ used_tokens: user.used_tokens + billableTokens })
+        .eq('id', user.id);
+    }
+
+
+    // Send completion with metadata
     res.write(`data: ${JSON.stringify({
       type: 'done',
-      tokensUsed,
+      tokensUsed: billableTokens,
       cacheCreationTokens,
       cacheReadTokens,
       cacheHit: cacheReadTokens > 0,
       model: effectiveModelConfig.label,
+      topicId: resolvedTopicId || null,
       responseTime: Date.now() - startTime
     })}\n\n`);
+
 
     if (!res.writableEnded && !res.destroyed) {
       try { res.end(); } catch { }
     }
+
     // Log analytics asynchronously
     const { logAnalytics } = require('../services/analytics.service');
     logAnalytics({
