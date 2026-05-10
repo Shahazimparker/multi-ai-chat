@@ -8,7 +8,9 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5000/api',
+  baseURL: process.env.NODE_ENV === 'production'
+    ? 'https://multi-ai-chat-backend.vercel.app/api'
+    : 'http://localhost:5000/api',
   timeout: 120000,  // 2 min timeout for long AI responses
   headers: { 'Content-Type': 'application/json' },
 });
@@ -16,7 +18,7 @@ const api = axios.create({
 // ── Attach JWT token to every request ─────────────────────
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('auth_token') ||
-                sessionStorage.getItem('auth_token');
+    sessionStorage.getItem('auth_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
