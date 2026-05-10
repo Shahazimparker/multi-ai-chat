@@ -75,6 +75,12 @@
   margin-left: auto;
 }
 
+@media (max-width: 768px) {
+  .topic-hint {
+    display: none;
+  }
+}
+
 /* ── Messages ───────────────────────────────── */
 .messages-area {
   flex: 1;
@@ -404,6 +410,12 @@
     font-size: 0.7rem;
     margin-left: auto;
     white-space: nowrap;
+  }
+
+  @media (max-width: 768px) {
+    .topic-hint {
+      display: none;
+    }
   }
 
   .memory-controls {
