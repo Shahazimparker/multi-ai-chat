@@ -106,13 +106,21 @@
 }
 
 @media (max-width: 480px) {
-  .model-name {
-    display: none;
+  .model-selector {
+    max-width: 80px;
   }
 
   .model-trigger {
     padding: 6px 8px;
-    font-size: 0.7rem;
+    min-width: auto;
+  }
+
+  .model-name {
+    display: none;
+  }
+
+  .model-emoji {
+    font-size: 1rem;
   }
 }
 .model-loading { color: rgba(255,255,255,0.4); font-size:0.84rem; }
