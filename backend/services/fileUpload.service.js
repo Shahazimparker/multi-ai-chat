@@ -273,6 +273,7 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
     processedFiles: results.length,
     skippedFiles: skipped.length,
     totalTokensUsed: results.reduce((sum, r) => sum + r.tokensUsed, 0),
+    message: `✅ ZIP processed. ${results.length} files ready for queries.`  // ← ADD
   };
 };
 
@@ -316,6 +317,8 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
       ragId,
       contentLength: extractedText.length,
       tokensUsed,
+      extractedText: extractedText.slice(0, 6000),  // ← ADD: First 6000 chars
+      message: `✅ File "${fileName}" uploaded successfully. You can now ask questions about it.`
     };
   } catch (err) {
     console.error('[FileUpload] Failed:', err);

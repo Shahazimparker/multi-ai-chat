@@ -85,11 +85,11 @@ const ChatPage = () => {
 
     if ((!input.trim() && !pendingFile) || !model) return;
 
-    const userMsg = String(input).trim();
+    let finalMessage = String(input).trim();
     const fileToUpload = pendingFile;
 
-    setFailedMessage(userMsg);
-    setInput('');
+    setFailedMessage(finalMessage);
+    //setInput('');
     setPendingFile(null);
 
     const controller = new AbortController();
@@ -98,14 +98,13 @@ const ChatPage = () => {
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setError('');
 
-    const optimisticMsg = userMsg || (fileToUpload ? `Attached: ${fileToUpload.name}` : '');
+    const optimisticMsg = finalMessage || (fileToUpload ? `Attached: ${fileToUpload.name}` : '');
     setMessages(prev => [...prev, { role: 'user', content: optimisticMsg }]);
     setLoading(true);
 
     try {
       let topicIdToUse = activeTopic?.id || null;
 
-      // Upload file if present
       if (fileToUpload) {
         const formData = new FormData();
         formData.append('file', fileToUpload);
@@ -116,10 +115,17 @@ const ChatPage = () => {
           headers: { 'Content-Type': 'multipart/form-data' },
           signal: controller.signal,
         });
+
         setUploadedFiles(prev => [...prev, uploadRes.data]);
+
+        // ← CHANGE: Update userMsg with file content
+        if (uploadRes.data.extractedText) {
+          const fileContent = uploadRes.data.extractedText;
+          finalMessage = `[File: ${uploadRes.data.fileName}]\n${fileContent}\n\nPlease analyze this file.`;
+        }
       }
 
-      // ← NEW: Use streaming endpoint instead
+      // ← Move streaming call HERE (outside file upload block)
       const apiUrl = process.env.NODE_ENV === 'production'
         ? 'https://multi-ai-chat-backend.vercel.app/api/chat/stream'
         : 'http://localhost:5000/api/chat/stream';
@@ -140,7 +146,7 @@ const ChatPage = () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          message: userMsg,
+          message: finalMessage,  // ← Use updated variable
           topicId: topicIdToUse,
           modelId: model.id,
           providerModelId,

@@ -95,7 +95,8 @@ router.post('/file', requireAuth, upload.single('file'), async (req, res) => {
     res.json({
       success: true,
       file: result,
-      message: `File analyzed with LLM and stored in topic RAG`
+      message: result.message,  // ← ADD: Show user-friendly message
+      extractedText: result.extractedText,  // ← ADD: Send content to frontend
     });
 
   } catch (err) {
