@@ -188,7 +188,7 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
         file_name: fileName,
         file_hash: fileHash,  // ← Store hash
         file_type: fileType,
-        original_content: fileContent.slice(0, 8000),
+        original_content: fileContent,
         llm_analysis: llmAnalysis,
         created_at: new Date().toISOString(),
       })
@@ -317,7 +317,7 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
       ragId,
       contentLength: extractedText.length,
       tokensUsed,
-      extractedText: extractedText.slice(0, 6000),  // ← ADD: First 6000 chars
+      extractedText: extractedText.slice(0, 5000),  // ← ADD: First 5000 chars
       message: `✅ File "${fileName}" uploaded successfully. You can now ask questions about it.`
     };
   } catch (err) {

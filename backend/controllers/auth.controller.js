@@ -23,7 +23,7 @@ const login = async (req, res) => {
     const { data: user, error } = await supabase
       .from('users')
       .select('*')
-      .or(`username.eq.${username},email.eq.${username}`)
+      .or(`username.ilike.${username},email.ilike.${username}`)
       .single();
 
     if (error || !user) {

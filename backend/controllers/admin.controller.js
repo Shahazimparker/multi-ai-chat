@@ -5,7 +5,7 @@
 // PROTECTED: requireAuth + requireAdmin middleware
 // ============================================================
 
-const bcrypt   = require('bcryptjs');
+const bcrypt = require('bcryptjs');
 const supabase = require('../config/supabase');
 
 // ── GET /api/admin/users — list all users ──────────────────
@@ -37,7 +37,7 @@ const createUser = async (req, res) => {
     const { data, error } = await supabase
       .from('users')
       .insert({
-        email, username, password_hash, role,
+        email, username: username.toLowerCase(), password_hash, role,
         total_tokens, per_query_limit, session_minutes,
         expires_at: expires_at || null,
         is_active: true,
@@ -61,7 +61,7 @@ const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
     const updates = {};
-    const allowed = ['email','username','role','is_active','total_tokens','per_query_limit','session_minutes','expires_at'];
+    const allowed = ['email', 'username', 'role', 'is_active', 'total_tokens', 'per_query_limit', 'session_minutes', 'expires_at'];
 
     allowed.forEach(field => {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
@@ -148,13 +148,13 @@ const getAnalytics = async (req, res) => {
       .select('tokens_used, cache_hit');
 
     const totalTokens = (totals || []).reduce((s, r) => s + (r.tokens_used || 0), 0);
-    const cacheHits   = (totals || []).filter(r => r.cache_hit).length;
+    const cacheHits = (totals || []).filter(r => r.cache_hit).length;
     const totalQueries = (totals || []).length;
 
     res.json({
       modelCounts,
-      topQueries:   topQueries  || [],
-      dailyUsage:   dailyUsage  || [],
+      topQueries: topQueries || [],
+      dailyUsage: dailyUsage || [],
       summary: {
         totalQueries,
         totalTokens,
