@@ -43,36 +43,66 @@ const getMessages = async (req, res) => {
   res.json({ messages: data || [] });
 };
 
-// ── DELETE /api/history/topics/:id — delete a topic ───────
 const deleteTopic = async (req, res) => {
-  const { id } = req.params;
+  try {
+    const { topicId } = req.params;
+    const user = req.user;
 
-  const { error } = await supabase
-    .from('topics')
-    .delete()
-    .eq('id', id)
-    .eq('user_id', req.user.id); // cascades to messages
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ message: 'Topic deleted' });
+    // DELETE related documents from RAG
+    await supabase
+      .from('rag_documents')
+      .delete()
+      .eq('topic_id', topicId);
+
+    // DELETE related user files
+    await supabase
+      .from('user_files')
+      .delete()
+      .eq('topic_id', topicId);
+
+    // DELETE messages
+    await supabase
+      .from('messages')
+      .delete()
+      .eq('topic_id', topicId);
+
+    // DELETE topic
+    await supabase
+      .from('topics')
+      .delete()
+      .eq('id', topicId)
+      .eq('user_id', user.id);
+
+    res.json({ success: true, message: 'Topic and related data deleted' });
+  } catch (err) {
+    console.error('[History] Delete error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 };
 
-// ── PATCH /api/history/topics/:id — rename topic ──────────
 const renameTopic = async (req, res) => {
-  const { id }    = req.params;
-  const { title } = req.body;
-  if (!title) return res.status(400).json({ error: 'Title required' });
+  try {
+    const { id } = req.params;
+    const { title } = req.body;
+    const user = req.user;
 
-  const { data, error } = await supabase
-    .from('topics')
-    .update({ title })
-    .eq('id', id)
-    .eq('user_id', req.user.id)
-    .select('id, title')
-    .single();
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    if (!title) return res.status(400).json({ error: 'Title required' });
 
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ topic: data });
+    const { data, error } = await supabase
+      .from('topics')
+      .update({ title, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .select();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, topic: data[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
 module.exports = { getTopics, getMessages, deleteTopic, renameTopic };

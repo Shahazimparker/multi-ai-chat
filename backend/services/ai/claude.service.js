@@ -1,23 +1,22 @@
-// ============================================================
-// FILE: backend/services/ai/claude.service.js
-// PURPOSE: Calls Anthropic Claude API
-// ============================================================
-
 const Anthropic = require('@anthropic-ai/sdk');
 
 const callClaude = async (modelName, apiKey, messages) => {
   const client = new Anthropic({ apiKey });
 
+  // SEPARATE static system prompt (cacheable)
+  const baseSystemPrompt = `You are a helpful AI assistant.
+You provide accurate, concise, and helpful responses.
+Always format code in code blocks when relevant.`;
+
   const response = await client.messages.create({
     model: modelName,
     max_tokens: 4096,
-    messages,
-    // Enable prompt caching for cost savings
     system: [{
       type: "text",
-      text: "You are a helpful AI assistant.",
-      cache_control: { type: "ephemeral" }  // ← Cache enabled
+      text: baseSystemPrompt,  // ✅ Static - will cache
+      cache_control: { type: "ephemeral" }
     }],
+    messages: messages,  // ✅ Dynamic content (user query + history)
   });
 
   return {

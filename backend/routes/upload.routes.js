@@ -31,7 +31,7 @@ const upload = multer({
   storage,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['text/plain', 'image/jpeg', 'image/png', 'application/pdf', 'application/zip', 'application/x-zip-compressed'];
+    const allowedTypes = ['text/plain', 'image/jpeg', 'image/png', 'application/pdf', 'application/zip', 'application/x-zip-compressed', 'application/x-rar-compressed'];
 
     // Allow .docx by checking extension too
     const ext = file.originalname.split('.').pop().toLowerCase();
@@ -81,6 +81,7 @@ router.post('/file', requireAuth, upload.single('file'), async (req, res) => {
 
     // Process file
     req.on('aborted', () => abortController.abort());
+    const ragEnabled = req.body.ragEnabled === 'true' || req.body.ragEnabled === true;
 
     const result = await processUploadedFile(
       req.file.path,
@@ -89,7 +90,8 @@ router.post('/file', requireAuth, upload.single('file'), async (req, res) => {
       req.user.id,
       topicId,
       modelId,
-      abortController.signal  // ← NEW
+      abortController.signal,  // ← NEW
+      ragEnabled
     );
 
     res.json({

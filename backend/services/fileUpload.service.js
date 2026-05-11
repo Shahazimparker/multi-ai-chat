@@ -17,6 +17,11 @@ const { MODELS } = require('../config/models');
 const { dispatchToAI } = require('./ai/dispatcher.service');
 const { trimTextByTokens } = require('./tokenBudget.service');
 const crypto = require('crypto');
+const detectLanguage = (fileName) => {
+  const ext = fileName.split('.').pop().toLowerCase();
+  const langMap = { js: 'javascript', py: 'python', ts: 'typescript', java: 'java', cpp: 'cpp' };
+  return langMap[ext] || ext;
+};
 
 const getFileHash = (fileName, fileContent) => {
   // Hash = filename + content checksum
@@ -196,6 +201,31 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
       .single();
 
     if (ragError) throw ragError;
+    // ← ADD: Also store in code_files if code
+    const codeExtensions = ['js', 'ts', 'py', 'java', 'cpp', 'go', 'rb'];
+    const ext = fileName.split('.').pop().toLowerCase();
+
+    if (codeExtensions.includes(ext)) {
+      // Delete old file if exists
+      await supabase
+        .from('code_files')
+        .delete()
+        .eq('file_name', fileName)
+        .eq('topic_id', topicId);
+
+      await supabase
+        .from('code_files')
+        .insert({
+          user_id: userId,
+          topic_id: topicId,
+          file_name: fileName,
+          file_type: fileType,
+          content: fileContent,
+          language: detectLanguage(fileName),
+          file_hash: fileHash
+        });
+    }
+
     console.log(`[FileUpload] Stored in RAG: ${fileName} (hash: ${fileHash})`);
     return ragRecord.id;
   } catch (err) {
@@ -280,7 +310,8 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
 /**
  * Main: Process uploaded file
  */
-const processUploadedFile = async (filePath, fileName, fileType, userId, topicId, modelId, signal = null) => {
+const processUploadedFile = async (filePath, fileName, fileType, userId, topicId, modelId, signal = null, ragEnabled = true) => {
+
   try {
     console.log(`[FileUpload] Processing: ${fileName}`);
 
@@ -299,7 +330,15 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
     }
 
     // 2. Send directly to LLM (no embedding!)
-    const { llmAnalysis, tokensUsed } = await analyzFileWithLLM(extractedText, fileName, fileType, modelId, signal);
+    let llmAnalysis, tokensUsed;
+    if (!ragEnabled) {
+      const result = await analyzFileWithLLM(extractedText, fileName, fileType, modelId, signal);
+      llmAnalysis = result.llmAnalysis;
+      tokensUsed = result.tokensUsed;
+    } else {
+      llmAnalysis = `File: ${fileName} ready for RAG search`;
+      tokensUsed = 0;
+    }
 
     await new Promise(resolve => setTimeout(resolve, 1000));
 

@@ -188,7 +188,7 @@ router.post('/stream', optionalAuth, async (req, res) => {
 
     const fileContext = fileResults.length > 0
       ? trimTextByTokens(
-        `[UPLOADED FILE ANALYSES]\n${fileResults
+        `[UPLOADED FILE CODE]\n${fileResults
           .map(r => `File: ${r.file_name}\n${r.chunk_text}`)
           .join('\n\n---\n')}\n[END ANALYSES]\n`,
         promptBudget.fileTokens

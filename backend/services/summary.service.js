@@ -29,7 +29,7 @@ const summaryPrompt = (text) => (
 Rules:
 - Keep facts, model names, preferences, decisions, and unresolved questions.
 - Do not be generic.
-- Keep it under 180 words.
+- Keep it under 280 words.
 - Use compact bullet points.
 
 Conversation:
@@ -47,7 +47,7 @@ const summarizeWithCerebras = async ({ model, apiKey, text }) => {
       model,
       messages: [{ role: 'user', content: summaryPrompt(text) }],
       temperature: 0.2,
-      max_tokens: 350,
+      max_tokens: 700,
     }),
   });
 
@@ -84,7 +84,7 @@ const summarizeWithMistral = async ({ model, apiKey, text }, signal = null) => {
       model,
       messages: [{ role: 'user', content: summaryPrompt(text) }],
       temperature: 0.2,
-      max_tokens: 350,
+      max_tokens: 700,
       signal: signal,
     }),
   });
