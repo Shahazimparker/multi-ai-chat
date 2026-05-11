@@ -185,16 +185,20 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
   try {
     const fileHash = getFileHash(fileName, fileContent);  // ← Use hash
 
+    const { embedText } = require('./rag.service');
+    const fileVector = await embedText(fileContent.slice(0, 2000), 'openai', 3, signal);
+
     const { data: ragRecord, error: ragError } = await supabase
       .from('uploaded_files_rag')
       .insert({
         user_id: userId,
         topic_id: topicId,
         file_name: fileName,
-        file_hash: fileHash,  // ← Store hash
+        file_hash: fileHash,
         file_type: fileType,
         original_content: fileContent,
         llm_analysis: llmAnalysis,
+        embedding: fileVector,  // ✅ ADD THIS
         created_at: new Date().toISOString(),
       })
       .select('id')
@@ -387,30 +391,29 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null) => {
   try {
     if (!userId || !topicId) return [];
 
+    // ✅ ADD: Generate embedding for query
+    const { embedText } = require('./rag.service');
+    const queryVector = await embedText(query, 'openai', 3, signal);
+
+    // ✅ CHANGE: Use vector similarity search
     const { data, error } = await supabase
       .from('uploaded_files_rag')
-      .select('id, file_name, file_hash, llm_analysis, original_content, created_at')
+      .select('id, file_name, file_hash, llm_analysis, original_content, created_at, embedding, 1 - (embedding <=> $1) as similarity',
+        { count: 'exact' }
+      )
       .eq('user_id', userId)
       .eq('topic_id', topicId)
-      .order('created_at', { ascending: false })  // Latest first
-      .limit(10);
+      .filter('embedding', 'is', 'not', null)  // ✅ Only with embeddings
+      .order('similarity', { ascending: false })
+      .limit(5);
 
     if (error) {
-      console.error('[FileSearch] Error:', error);
+      console.error('[FileSearch] Vector search failed:', error);
       return [];
     }
 
-    // Simple text matching
-    const queryWords = query
-      .toLowerCase()
-      .split(/\s+/)
-      .map(word => word.trim())
-      .filter(word => word.length > 1);
-
-    const results = (data || []).filter(doc => {
-      const combined = `${doc.file_name} ${doc.llm_analysis} ${doc.original_content || ''}`.toLowerCase();
-      return queryWords.some(word => combined.includes(word));
-    });
+    // ✅ CHANGE: Use similarity score instead of text matching
+    const results = (data || []).filter(doc => doc.similarity > 0.5);  // Thresholds
 
     return results.map(r => {
       const relevantText = r.original_content || r.llm_analysis;

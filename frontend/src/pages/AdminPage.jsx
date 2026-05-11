@@ -5,31 +5,42 @@
 // ============================================================
 
 import React, { useState, useEffect } from 'react';
-import { useNavigate }    from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { Users, BarChart2, Plus, Trash2, Edit2, RefreshCw, LogOut, MessageSquare, Zap, ChevronLeft } from 'lucide-react';
-import { useAuth }  from '../context/AuthContext';
-import api          from '../config/api';
-import UserModal    from '../components/admin/UserModal';
+import { useAuth } from '../context/AuthContext';
+import api from '../config/api';
+import UserModal from '../components/admin/UserModal';
 import './AdminPage.css';
 
-const COLORS = ['#7c3aed','#0ea5e9','#10b981','#f59e0b','#ef4444','#a78bfa'];
+const COLORS = ['#7c3aed', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#a78bfa'];
 
 const AdminPage = () => {
-  const { logout }           = useAuth();
-  const navigate             = useNavigate();
-  const [tab,       setTab]  = useState('users');   // 'users' | 'analytics'
-  const [users,     setUsers] = useState([]);
+  const { logout } = useAuth();
+  const navigate = useNavigate();
+  const [tab, setTab] = useState('users');   // 'users' | 'analytics'
+  const [users, setUsers] = useState([]);
   const [analytics, setAnalytics] = useState(null);
-  const [loading,   setLoading]   = useState(false);
-  const [modal,     setModal]     = useState({ open: false, user: null }); // create/edit modal
+  const [loading, setLoading] = useState(false);
+  const [modal, setModal] = useState({ open: false, user: null }); // create/edit modal
+  const [apiStatus, setApiStatus] = useState(null);
 
   // Load users
   useEffect(() => {
     if (tab === 'users') loadUsers();
     if (tab === 'analytics') loadAnalytics();
+    if (tab === 'api-status') loadApiStatus();
   }, [tab]);
 
+  const loadApiStatus = async () => {
+    setLoading(true);
+    try {
+      const res = await api.get('/admin/api-status');
+      setApiStatus(res.data);
+    }
+    catch { alert('Failed to load API status'); }
+    finally { setLoading(false); }
+  };
   const loadUsers = async () => {
     setLoading(true);
     try { const res = await api.get('/admin/users'); setUsers(res.data.users || []); }
@@ -78,15 +89,15 @@ const AdminPage = () => {
   // Build daily bar data
   const dailyBarData = analytics
     ? (() => {
-        const grouped = {};
-        (analytics.dailyUsage || []).forEach(r => {
-          const day = r.created_at?.slice(0, 10);
-          if (!grouped[day]) grouped[day] = { day, queries: 0, tokens: 0 };
-          grouped[day].queries++;
-          grouped[day].tokens += r.tokens_used || 0;
-        });
-        return Object.values(grouped).slice(-7);
-      })()
+      const grouped = {};
+      (analytics.dailyUsage || []).forEach(r => {
+        const day = r.created_at?.slice(0, 10);
+        if (!grouped[day]) grouped[day] = { day, queries: 0, tokens: 0 };
+        grouped[day].queries++;
+        grouped[day].tokens += r.tokens_used || 0;
+      });
+      return Object.values(grouped).slice(-7);
+    })()
     : [];
 
   return (
@@ -95,7 +106,10 @@ const AdminPage = () => {
       <aside className="admin-sidebar">
         <div className="admin-brand">⚙ Admin</div>
         <nav className="admin-nav">
-          <button className={tab === 'users'     ? 'active' : ''} onClick={() => setTab('users')}>
+          <button className={tab === 'api-status' ? 'active' : ''} onClick={() => setTab('api-status')}>
+            <Zap size={16} /> API Status
+          </button>
+          <button className={tab === 'users' ? 'active' : ''} onClick={() => setTab('users')}>
             <Users size={16} /> Users
           </button>
           <button className={tab === 'analytics' ? 'active' : ''} onClick={() => setTab('analytics')}>
@@ -103,9 +117,9 @@ const AdminPage = () => {
           </button>
         </nav>
         <div className="admin-footer-nav">
-          <button onClick={() => navigate('/chat')}><ChevronLeft size={15}/> Back to Chat</button>
+          <button onClick={() => navigate('/chat')}><ChevronLeft size={15} /> Back to Chat</button>
           <button onClick={() => { logout(); navigate('/login'); }} className="logout">
-            <LogOut size={14}/> Logout
+            <LogOut size={14} /> Logout
           </button>
         </div>
       </aside>
@@ -116,11 +130,11 @@ const AdminPage = () => {
         {tab === 'users' && (
           <div className="admin-panel">
             <div className="panel-header">
-              <h2><Users size={20}/> User Management</h2>
+              <h2><Users size={20} /> User Management</h2>
               <div className="panel-actions">
-                <button className="btn-refresh" onClick={loadUsers}><RefreshCw size={14}/> Refresh</button>
+                <button className="btn-refresh" onClick={loadUsers}><RefreshCw size={14} /> Refresh</button>
                 <button className="btn-create" onClick={() => setModal({ open: true, user: null })}>
-                  <Plus size={14}/> Create User
+                  <Plus size={14} /> Create User
                 </button>
               </div>
             </div>
@@ -150,9 +164,9 @@ const AdminPage = () => {
                         <td className="td-muted">{u.expires_at ? new Date(u.expires_at).toLocaleDateString() : 'Never'}</td>
                         <td>
                           <div className="td-actions">
-                            <button title="Edit"         onClick={() => setModal({ open: true, user: u })}><Edit2   size={13}/></button>
-                            <button title="Reset Tokens" onClick={() => handleResetTokens(u.id)}><Zap     size={13}/></button>
-                            <button title="Delete"       onClick={() => handleDelete(u.id)} className="del"><Trash2  size={13}/></button>
+                            <button title="Edit" onClick={() => setModal({ open: true, user: u })}><Edit2 size={13} /></button>
+                            <button title="Reset Tokens" onClick={() => handleResetTokens(u.id)}><Zap size={13} /></button>
+                            <button title="Delete" onClick={() => handleDelete(u.id)} className="del"><Trash2 size={13} /></button>
                           </div>
                         </td>
                       </tr>
@@ -168,8 +182,8 @@ const AdminPage = () => {
         {tab === 'analytics' && (
           <div className="admin-panel">
             <div className="panel-header">
-              <h2><BarChart2 size={20}/> Analytics</h2>
-              <button className="btn-refresh" onClick={loadAnalytics}><RefreshCw size={14}/> Refresh</button>
+              <h2><BarChart2 size={20} /> Analytics</h2>
+              <button className="btn-refresh" onClick={loadAnalytics}><RefreshCw size={14} /> Refresh</button>
             </div>
 
             {loading || !analytics ? <div className="loading-text">Loading…</div> : (
@@ -177,12 +191,12 @@ const AdminPage = () => {
                 {/* Summary cards */}
                 <div className="stat-cards">
                   {[
-                    { label: 'Total Queries',  value: analytics.summary.totalQueries.toLocaleString(), icon: <MessageSquare size={18}/>, color:'#7c3aed' },
-                    { label: 'Total Tokens',   value: analytics.summary.totalTokens.toLocaleString(),  icon: <Zap size={18}/>,            color:'#0ea5e9' },
-                    { label: 'Cache Hits',     value: analytics.summary.cacheHits.toLocaleString(),    icon: <RefreshCw size={18}/>,      color:'#10b981' },
-                    { label: 'Cache Hit Rate', value: `${analytics.summary.cacheHitRate}%`,            icon: <BarChart2 size={18}/>,      color:'#f59e0b' },
+                    { label: 'Total Queries', value: analytics.summary.totalQueries.toLocaleString(), icon: <MessageSquare size={18} />, color: '#7c3aed' },
+                    { label: 'Total Tokens', value: analytics.summary.totalTokens.toLocaleString(), icon: <Zap size={18} />, color: '#0ea5e9' },
+                    { label: 'Cache Hits', value: analytics.summary.cacheHits.toLocaleString(), icon: <RefreshCw size={18} />, color: '#10b981' },
+                    { label: 'Cache Hit Rate', value: `${analytics.summary.cacheHitRate}%`, icon: <BarChart2 size={18} />, color: '#f59e0b' },
                   ].map(c => (
-                    <div key={c.label} className="stat-card" style={{'--card-color': c.color}}>
+                    <div key={c.label} className="stat-card" style={{ '--card-color': c.color }}>
                       <div className="stat-icon">{c.icon}</div>
                       <div className="stat-val">{c.value}</div>
                       <div className="stat-lbl">{c.label}</div>
@@ -197,10 +211,10 @@ const AdminPage = () => {
                     <h3>Daily Queries (Last 7 Days)</h3>
                     <ResponsiveContainer width="100%" height={220}>
                       <BarChart data={dailyBarData}>
-                        <XAxis dataKey="day" tick={{ fill:'rgba(255,255,255,0.4)', fontSize:11 }} />
-                        <YAxis tick={{ fill:'rgba(255,255,255,0.4)', fontSize:11 }} />
-                        <Tooltip contentStyle={{ background:'#0f1629', border:'1px solid rgba(255,255,255,0.1)', borderRadius:'10px', color:'#fff' }} />
-                        <Bar dataKey="queries" fill="#7c3aed" radius={[4,4,0,0]} />
+                        <XAxis dataKey="day" tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 11 }} />
+                        <YAxis tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 11 }} />
+                        <Tooltip contentStyle={{ background: '#0f1629', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', color: '#fff' }} />
+                        <Bar dataKey="queries" fill="#7c3aed" radius={[4, 4, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -210,28 +224,31 @@ const AdminPage = () => {
                     <h3>Model Usage Distribution</h3>
                     <ResponsiveContainer width="100%" height={220}>
                       <PieChart>
-                        <Pie data={modelPieData} cx="50%" cy="50%" outerRadius={80}
-                          dataKey="value" label={({ name, percent }) => `${name} ${(percent*100).toFixed(0)}%`}
-                          labelLine={false}
+                        <Pie
+                          data={modelPieData}
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={80}
+                          dataKey="value"
+                          label={false}
                         >
                           {modelPieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                         </Pie>
-                        <Legend wrapperStyle={{ fontSize:'12px', color:'rgba(255,255,255,0.6)' }} />
-                        <Tooltip contentStyle={{ background:'#0f1629', border:'1px solid rgba(255,255,255,0.1)', borderRadius:'10px', color:'#fff' }} />
+                        <Legend />
+                        <Tooltip />
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
-
                 {/* Top queries table */}
                 <div className="top-queries">
                   <h3>Most Repeated Queries (Cache)</h3>
                   <table className="admin-table">
                     <thead><tr><th>#</th><th>Query</th><th>Model</th><th>Hit Count</th><th>Last Hit</th></tr></thead>
                     <tbody>
-                      {analytics.topQueries.slice(0,10).map((q, i) => (
+                      {analytics.topQueries.slice(0, 10).map((q, i) => (
                         <tr key={q.id || i}>
-                          <td className="td-muted">{i+1}</td>
+                          <td className="td-muted">{i + 1}</td>
                           <td>{q.query_text?.slice(0, 80)}{q.query_text?.length > 80 ? '…' : ''}</td>
                           <td className="td-muted">{q.model}</td>
                           <td><span className="hit-badge">{q.hit_count}×</span></td>
@@ -242,6 +259,25 @@ const AdminPage = () => {
                   </table>
                 </div>
               </>
+            )}
+          </div>
+        )}
+        {tab === 'api-status' && (
+          <div className="admin-panel">
+            <div className="panel-header">
+              <h2><Zap size={20} /> API Status</h2>
+              <button className="btn-refresh" onClick={loadApiStatus}><RefreshCw size={14} /> Refresh</button>
+            </div>
+            {loading || !apiStatus ? <div className="loading-text">Loading…</div> : (
+              <div className="status-grid">
+                {Object.entries(apiStatus).map(([key, value]) => (
+                  <div key={key} className="status-card">
+                    <div className={`status-indicator ${value === 'active' ? 'active' : 'inactive'}`}></div>
+                    <span className="status-name">{key.toUpperCase()}</span>
+                    <span className="status-value">{value}</span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         )}

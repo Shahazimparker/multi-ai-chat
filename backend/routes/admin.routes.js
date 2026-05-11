@@ -3,8 +3,9 @@
 // PURPOSE: Admin-only endpoints for user & analytics management
 // ============================================================
 
-const express  = require('express');
-const router   = express.Router();
+const express = require('express');
+const router = express.Router();
+const supabase = require('../config/supabase');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const {
   getUsers, createUser, updateUser, deleteUser, resetTokens, getAnalytics,
@@ -13,11 +14,34 @@ const {
 // All admin routes require both auth + admin role
 router.use(requireAuth, requireAdmin);
 
-router.get('/users',                  getUsers);
-router.post('/users',                 createUser);
-router.put('/users/:id',              updateUser);
-router.delete('/users/:id',           deleteUser);
+router.get('/users', getUsers);
+router.post('/users', createUser);
+router.put('/users/:id', updateUser);
+router.delete('/users/:id', deleteUser);
 router.post('/users/:id/reset-tokens', resetTokens);
-router.get('/analytics',              getAnalytics);
+router.get('/analytics', getAnalytics);
+
+router.get('/api-status', requireAuth, async (req, res) => {
+  const status = {
+    anthropic: process.env.ANTHROPIC_API_KEY ? 'active' : 'inactive',
+    openai: process.env.OPENAI_API_KEY ? 'active' : 'inactive',
+    groq: process.env.GROQ_API_KEY ? 'active' : 'inactive',
+    gemini: process.env.GEMINI_API_KEY ? 'active' : 'inactive',
+    openrouter:process.env.OPENROUTER_API_KEY ? 'active' : 'inactive',
+    together : process.env.TOGETHER_API_KEY ? 'active' : 'inactive',
+    anyapi: process.env.ANYAPI_API_KEY ? 'active' : 'inactive',
+    supabase: 'checking...'
+  };
+
+  // Test Supabase
+  try {
+    await supabase.from('users').select('count').limit(1);
+    status.supabase = 'active';
+  } catch {
+    status.supabase = 'inactive';
+  }
+
+  res.json(status);
+});
 
 module.exports = router;
