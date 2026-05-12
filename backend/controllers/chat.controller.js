@@ -44,6 +44,7 @@ const sendMessage = async (req, res) => {
     modelId,
     providerModelId,
     message,
+    image,
     topicId,
     memoryMode = 'summarized',
     historyLimit = 5,
@@ -236,7 +237,14 @@ const sendMessage = async (req, res) => {
     }
 
     // Current user message
-    aiMessages.push({ role: 'user', content: trimTextByTokens(finalQuery, promptBudget.queryTokens) });
+    const userContent = image
+      ? [
+        { type: 'text', text: finalQuery || 'Analyze this image' },
+        { type: 'image_url', image_url: { url: image } }
+      ]
+      : trimTextByTokens(finalQuery, promptBudget.queryTokens);
+    aiMessages.push({ role: 'user', content: userContent });
+
 
     const promptTokens = estimateMessagesTokens(aiMessages);
     if (user && promptTokens > user.per_query_limit) {

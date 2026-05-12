@@ -87,6 +87,7 @@ router.post('/stream', optionalAuth, async (req, res) => {
   const startTime = Date.now();
   const {
     message,
+    image,
     topicId,
     modelId = 'claude-sonnet',
     providerModelId,
@@ -221,7 +222,13 @@ router.post('/stream', optionalAuth, async (req, res) => {
     if (historyContext && historyContext.length > 0) {
       aiMessages.push(...historyContext);
     }
-    aiMessages.push({ role: 'user', content: message });
+    const userContent = image
+      ? [
+        { type: 'text', text: message || 'Analyze this image' },
+        { type: 'image_url', image_url: { url: image } }
+      ]
+      : message;
+    aiMessages.push({ role: 'user', content: userContent });
     const promptTokens = estimateMessagesTokens(aiMessages);
 
     // Get streaming response

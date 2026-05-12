@@ -30,6 +30,7 @@ const ChatPage = () => {
   const [error, setError] = useState('');
 
   const [pendingFile, setPendingFile] = useState(null);
+  const [pendingImage, setPendingImage] = useState(null);
 
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
@@ -50,11 +51,23 @@ const ChatPage = () => {
   }, [messages, loading]);
 
   // Auto-grow textarea
-  const handleInputChange = (e) => {
-    setInput(e.target.value);
-    const ta = textareaRef.current;
-    if (ta) { ta.style.height = 'auto'; ta.style.height = e.target.value ? `${Math.min(ta.scrollHeight, 160)}px` : '24px'; }
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+        const reader = new FileReader();
+        reader.onload = () => setPendingImage(reader.result);
+        reader.readAsDataURL(file);
+        break;
+      }
+    }
   };
+
 
   // Load messages when switching topics
   const handleTopicSelect = async (topic) => {
@@ -149,7 +162,8 @@ const ChatPage = () => {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          message: finalMessage,  // ← Use updated variable
+          message: finalMessage,
+          image: pendingImage,
           topicId: topicIdToUse,
           modelId: model.id,
           providerModelId,
@@ -237,6 +251,7 @@ const ChatPage = () => {
       });
 
       setInput('');
+      setPendingImage(null);
       setFailedMessage(null);
 
       // Update topic if new
@@ -436,8 +451,20 @@ const ChatPage = () => {
               placeholder={model ? `Message ${model.label}…` : 'Select a model first…'}
               disabled={loading || !model}
               rows={1}
+              onPaste={handlePaste}
             />
 
+            {pendingImage && (
+              <div style={{ position: 'relative', display: 'inline-block', marginBottom: 8 }}>
+                <img src={pendingImage} alt="Pasted" style={{ maxHeight: 120, borderRadius: 8 }} />
+                <button
+                  onClick={() => setPendingImage(null)}
+                  style={{ position: 'absolute', top: -6, right: -6, background: 'red', color: 'white', border: 'none', borderRadius: '50%', width: 20, height: 20, cursor: 'pointer' }}
+                >
+                  ✕
+                </button>
+              </div>
+            )}
             <button
               className="send-btn"
               onClick={handleSend}
