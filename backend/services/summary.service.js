@@ -7,9 +7,14 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const SUMMARY_MODELS = [
   {
-    provider: 'cerebras',
-    model: 'llama3.1-8b',
-    apiKey: process.env.CEREBRAS_SUMMARY_API_KEY,
+    provider: 'openrouter',
+    model: 'microsoft/phi-3-mini-128k-instruct',
+    apiKey: process.env.OPENROUTER_API_KEY,
+  },
+  {
+    provider: 'openrouter',
+    model: 'google/gemini-flash-1.5',
+    apiKey: process.env.OPENROUTER_API_KEY,
   },
   {
     provider: 'gemini',
@@ -20,6 +25,11 @@ const SUMMARY_MODELS = [
     provider: 'mistral',
     model: 'mistral-small-latest',
     apiKey: process.env.MISTRAL_SUMMARY_API_KEY,
+  },
+  {
+    provider: 'cerebras',
+    model: 'llama3.1-8b',
+    apiKey: process.env.CEREBRAS_SUMMARY_API_KEY,
   },
 ];
 
@@ -55,6 +65,27 @@ const summarizeWithCerebras = async ({ model, apiKey, text }) => {
   const data = await res.json();
   return data.choices?.[0]?.message?.content?.trim();
 };
+
+const summarizeWithOpenRouter = async ({ model, apiKey, text }, signal = null) => {
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: summaryPrompt(text) }],
+      temperature: 0.2,
+      max_tokens: 700,
+    }),
+  });
+
+  if (!res.ok) throw new Error(`OpenRouter summary failed: ${res.status}`);
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content?.trim();
+};
+
 
 const summarizeWithGemini = async ({ model, apiKey, text }, signal = null) => {
   const genAI = new GoogleGenerativeAI(apiKey);
@@ -109,7 +140,9 @@ const summarizeMemory = async (text, signal = null) => {
     try {
       let summary;
 
-      if (cfg.provider === 'cerebras') {
+      if (cfg.provider === 'openrouter') {
+        summary = await summarizeWithOpenRouter({ ...cfg, text }, signal);
+      } else if (cfg.provider === 'cerebras') {
         summary = await summarizeWithCerebras({ ...cfg, text }, signal);
       } else if (cfg.provider === 'gemini') {
         summary = await summarizeWithGemini({ ...cfg, text }, signal);
