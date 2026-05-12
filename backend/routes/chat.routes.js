@@ -157,20 +157,36 @@ router.post('/stream', optionalAuth, async (req, res) => {
     let fileResults = [];
 
     if (ragEnabled) {
-      ragContext = await buildRAGContext(
-        message,
-        modelConfig.provider,
-        abortController.signal,
-        null,
-        { tokenBudget: promptBudget.ragTokens }
-      );
+      // Check if user has uploaded files for this topic
+      const { count, error: countError } = await supabase
+        .from('uploaded_files_rag')
+        .select('id', { count: 'exact' })
+        .eq('user_id', user?.id)
+        .eq('topic_id', topicId);
 
-      fileResults = await searchUserFilesRAG(
-        message,
-        user?.id,
-        topicId,
-        abortController.signal
-      );
+      if (count > 0) {
+        console.log('[RAG] Files found:', count);
+
+        ragContext = await buildRAGContext(
+          message,
+          'openrouter',
+          abortController.signal,
+          null,
+          { tokenBudget: promptBudget.ragTokens }
+        );
+        console.log('[RAG] Context:', ragContext.slice(0, 100));
+
+        fileResults = await searchUserFilesRAG(
+          message,
+          user?.id,
+          topicId,
+          abortController.signal,
+          'openrouter'
+        );
+        console.log('[RAG] FileResults count:', fileResults?.length);
+        console.log('[RAG] FileResults:', JSON.stringify(fileResults, null, 2));
+
+      }
     }
 
     const { context: historyContext, _debug } = await buildContextMessages(
@@ -179,7 +195,7 @@ router.post('/stream', optionalAuth, async (req, res) => {
       { memoryMode, historyLimit, tokenBudget: promptBudget.historyTokens, userId: user?.id },
       abortController.signal
     );
-    
+
 
     // Log dynamic budget info
     if (_debug) {

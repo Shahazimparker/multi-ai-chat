@@ -13,6 +13,7 @@ const { callClaude } = require('./claude.service');
 const { callOpenRouter } = require('./openrouter.service');
 const { callTogether } = require('./together.service');
 const { callAnyAPI } = require('./anyapi.service');
+const { calldeepseekAPI } = require('./deepseek.service');
 
 const supportsCache = (modelConfig) => {
   if (modelConfig.supportsCache === false) return false;
@@ -48,6 +49,7 @@ const dispatchToAI = async (modelConfig, messages, signal = null) => {
     case 'openrouter': return callOpenRouter(model, apiKey, messages, signal);
     case 'together': return callTogether(model, apiKey, messages, signal);
     case 'anyapi': return callAnyAPI(model, apiKey, messages, signal);
+    case 'deepseek': return calldeepseekAPI(model, apiKey, messages, signal);
 
     default:
       throw new Error(`Unknown AI provider: ${provider}`);

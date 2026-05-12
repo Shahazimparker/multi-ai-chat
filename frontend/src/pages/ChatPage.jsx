@@ -89,7 +89,7 @@ const ChatPage = () => {
     const fileToUpload = pendingFile;
 
     setFailedMessage(finalMessage);
-    //setInput('');
+    setInput('');
     setPendingFile(null);
 
     const controller = new AbortController();
@@ -109,6 +109,7 @@ const ChatPage = () => {
         const formData = new FormData();
         formData.append('file', fileToUpload);
         formData.append('modelId', model.id);
+        formData.append('ragEnabled', ragEnabled);  // ← ADD THIS
         if (topicIdToUse) formData.append('topicId', topicIdToUse);
 
         const uploadRes = await api.post('/upload/file', formData, {
@@ -232,6 +233,9 @@ const ChatPage = () => {
         };
         return updated;
       });
+      
+      setInput('');
+      setFailedMessage(null);
 
       // Update topic if new
       if (metadata.topicId && !activeTopic) {

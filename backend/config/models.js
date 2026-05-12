@@ -42,8 +42,6 @@ const MODELS = {
     maxTokens: 8192,
   },
 
-
-
   // ── Mistral AI ────────────────────────────────────────────
   'mistral-small': {
     label: 'Mistral Small (Free)',
@@ -58,6 +56,24 @@ const MODELS = {
     provider: 'mistral',
     apiKey: process.env.MISTRAL_API_KEY,
     model: 'mistral-medium-latest',
+    paid: false,
+    maxTokens: 8192,
+  },
+
+  // ── DeepSeek AI ────────────────────────────────────────────
+  'deepseek-v4-flash': {
+    label: 'deepseek-v4-flash (paid)',
+    provider: 'deepseek',
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    model: 'deepseek-v4-flash',
+    paid: false,
+    maxTokens: 10000,
+  },
+  'deepseek-v4-pro': {
+    label: 'deepseek-v4-pro (Paid)',
+    provider: 'deepseek',
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    model: 'deepseek-v4-pro',
     paid: false,
     maxTokens: 8192,
   },

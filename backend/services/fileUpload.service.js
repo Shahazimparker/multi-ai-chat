@@ -5,6 +5,13 @@
 //   2. /tmp storage for Vercel (read-only handling)
 //   3. Store query+response pairs in RAG globally
 //   4. Next query - retrieve past file responses for THIS topic
+const calculateCosineSimilarity = (vecA, vecB) => {
+  if (!vecA || !vecB) return 0;
+  const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
+  const magA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
+  const magB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
+  return magA && magB ? dotProduct / (magA * magB) : 0;
+};
 
 const fs = require('fs');
 const path = require('path');
@@ -17,6 +24,7 @@ const { MODELS } = require('../config/models');
 const { dispatchToAI } = require('./ai/dispatcher.service');
 const { trimTextByTokens } = require('./tokenBudget.service');
 const crypto = require('crypto');
+
 const detectLanguage = (fileName) => {
   const ext = fileName.split('.').pop().toLowerCase();
   const langMap = { js: 'javascript', py: 'python', ts: 'typescript', java: 'java', cpp: 'cpp' };
@@ -42,6 +50,14 @@ const SUPPORTED_FILE_TYPES = {
   jpg: 'image',
   jpeg: 'image',
   png: 'image',
+  zip: 'zip',
+  js: 'code',
+  ts: 'code',
+  py: 'code',
+  java: 'code',
+  cpp: 'code',
+  go: 'code',
+  rb: 'code',
 };
 
 // ==================== STORAGE CONFIG ====================
@@ -181,36 +197,42 @@ File ready for queries.`,
  * Store file + LLM response in RAG (globally, not per-topic)
  * This allows RAG to retrieve past file analyses for any query
  */
-const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userId, topicId, signal = null) => {
+const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userId, topicId, signal = null, ragEnabled = true, provider = 'openrouter') => {
   try {
-    const fileHash = getFileHash(fileName, fileContent);  // ← Use hash
+    const fileHash = getFileHash(fileName, fileContent);
 
     const { embedText } = require('./rag.service');
-    const fileVector = await embedText(fileContent.slice(0, 2000), 'openai', 3, signal);
+    let ragRecord = null;
 
-    const { data: ragRecord, error: ragError } = await supabase
-      .from('uploaded_files_rag')
-      .insert({
-        user_id: userId,
-        topic_id: topicId,
-        file_name: fileName,
-        file_hash: fileHash,
-        file_type: fileType,
-        original_content: fileContent,
-        llm_analysis: llmAnalysis,
-        embedding: fileVector,  // ✅ ADD THIS
-        created_at: new Date().toISOString(),
-      })
-      .select('id')
-      .single();
+    if (ragEnabled) {
+      const fileVector = await embedText(fileContent.slice(0, 2000), 'openrouter', 3, signal);
+      console.log('[RAG Save] Final fileVector type:', typeof fileVector);
+      console.log('[RAG Save] Final fileVector is array:', Array.isArray(fileVector));
+      console.log('[RAG Save] Final fileVector length:', fileVector?.length);
 
-    if (ragError) throw ragError;
-    // ← ADD: Also store in code_files if code
+      const { data, error: ragError } = await supabase
+        .rpc('insert_rag_document', {
+          p_user_id: userId,
+          p_topic_id: topicId,
+          p_file_name: fileName,
+          p_file_hash: fileHash,
+          p_file_type: fileType,
+          p_original_content: fileContent,
+          p_llm_analysis: llmAnalysis,
+          p_embedding: fileVector,
+        })
+        .select('id')
+        .single();
+
+      if (ragError) throw ragError;
+      ragRecord = data;
+    }
+
+    // Store in code_files if code
     const codeExtensions = ['js', 'ts', 'py', 'java', 'cpp', 'go', 'rb'];
     const ext = fileName.split('.').pop().toLowerCase();
 
     if (codeExtensions.includes(ext)) {
-      // Delete old file if exists
       await supabase
         .from('code_files')
         .delete()
@@ -226,12 +248,13 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
           file_type: fileType,
           content: fileContent,
           language: detectLanguage(fileName),
-          file_hash: fileHash
+          file_hash: fileHash,
+          rag_record_id: ragRecord?.id || null
         });
     }
 
     console.log(`[FileUpload] Stored in RAG: ${fileName} (hash: ${fileHash})`);
-    return ragRecord.id;
+    return ragRecord?.id || null;
   } catch (err) {
     console.error('[FileUpload] RAG storage failed:', err);
     throw err;
@@ -282,7 +305,9 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
         llmAnalysis,
         userId,
         topicId,
-        signal
+        signal,
+        true,
+        'openrouter'
       );
 
       results.push({
@@ -339,15 +364,28 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
       const result = await analyzFileWithLLM(extractedText, fileName, fileType, modelId, signal);
       llmAnalysis = result.llmAnalysis;
       tokensUsed = result.tokensUsed;
-    } else {
-      llmAnalysis = `File: ${fileName} ready for RAG search`;
-      tokensUsed = 0;
+
+      cleanupTempFile(filePath);
+
+      return {
+        fileName,
+        fileType,
+        ragId: null,
+        contentLength: extractedText.length,
+        tokensUsed,
+        extractedText: extractedText.slice(0, 5000),
+        message: `✅ File "${fileName}" uploaded. Content ready for chat.`
+      };
     }
+
+    // Only reach here if ragEnabled = true
+    llmAnalysis = `File: ${fileName} ready for RAG search`;
+    tokensUsed = 0;
 
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // 3. Store in RAG globally
-    const ragId = await saveFileToRAG(fileName, fileType, extractedText, llmAnalysis, userId, topicId, signal);
+    // 3. Store in RAG
+    const ragId = await saveFileToRAG(fileName, fileType, extractedText, llmAnalysis, userId, topicId, signal, ragEnabled, 'openrouter');
 
     // 4. Cleanup temp file
     cleanupTempFile(filePath);
@@ -360,7 +398,7 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
       ragId,
       contentLength: extractedText.length,
       tokensUsed,
-      extractedText: extractedText.slice(0, 5000),  // ← ADD: First 5000 chars
+      extractedText: extractedText.slice(0, 5000),
       message: `✅ File "${fileName}" uploaded successfully. You can now ask questions about it.`
     };
   } catch (err) {
@@ -387,45 +425,76 @@ const cleanupTempFile = (filePath) => {
  * MODIFIED: Search uploaded files RAG for THIS TOPIC
  * Returns relevant file analyses from past uploads in this topic
  */
-const searchUserFilesRAG = async (query, userId, topicId, signal = null) => {
+const searchUserFilesRAG = async (query, userId, topicId, signal = null, provider = 'openrouter') => {
   try {
     if (!userId || !topicId) return [];
 
     // ✅ ADD: Generate embedding for query
     const { embedText } = require('./rag.service');
-    const queryVector = await embedText(query, 'openai', 3, signal);
+
+    const queryVector = await embedText(query, 'openrouter', 3, signal);
+    console.log('[FileSearch] queryVector length:', queryVector?.length);
+
+
+
+    if (!queryVector || queryVector.length === 0) {
+      console.warn('[FileSearch] Invalid queryVector');
+      return [];
+    }
 
     // ✅ CHANGE: Use vector similarity search
     const { data, error } = await supabase
       .from('uploaded_files_rag')
-      .select('id, file_name, file_hash, llm_analysis, original_content, created_at, embedding, 1 - (embedding <=> $1) as similarity',
-        { count: 'exact' }
-      )
+      .select('id, file_name, file_hash, llm_analysis, original_content, created_at, embedding')
       .eq('user_id', userId)
       .eq('topic_id', topicId)
-      .filter('embedding', 'is', 'not', null)  // ✅ Only with embeddings
-      .order('similarity', { ascending: false })
+      .not('embedding', 'is', null)
       .limit(5);
 
     if (error) {
-      console.error('[FileSearch] Vector search failed:', error);
+      console.error('[FileSearch] error:', error);
       return [];
     }
+    console.log('[FileSearch] data fetched:', data?.length);
+    if (!data || data.length === 0) {
+      console.warn('[FileSearch] No documents found');
+      return [];
+    }
+    const results = (data || [])
+      .filter(doc => doc.embedding)
+      .map(doc => {
+        let embedding = doc.embedding;
 
-    // ✅ CHANGE: Use similarity score instead of text matching
-    const results = (data || []).filter(doc => doc.similarity > 0.5);  // Thresholds
+        console.log('[FileSearch] doc.embedding type:', typeof doc.embedding);
+        console.log('[FileSearch] Similarity calc:', queryVector.length, 'vs', doc.embedding?.length);
+        if (typeof embedding === 'string') {
+          try {
+            embedding = JSON.parse(embedding);
+          } catch {
+            console.warn('[FileSearch] Failed to parse embedding');
+            return null;
+          }
+        }
+        return {
+          ...doc,
+          similarity: calculateCosineSimilarity(queryVector, embedding)
+        };
+      })
+      .filter(doc => doc && doc.similarity > 0.3)
+      .sort((a, b) => b.similarity - a.similarity);
+    console.log('[FileSearch] Final results:', results.length);
+    console.log('[FileSearch] Similarity scores:', results.map(r => r.similarity));
 
-    return results.map(r => {
-      const relevantText = r.original_content || r.llm_analysis;
 
-      return {
-        file_id: r.id,
-        file_name: r.file_name,
-        file_hash: r.file_hash,
-        chunk_text: trimTextByTokens(relevantText, 300),
-        similarity: 0.85,
-      };
-    });
+    //const relevantText = r.original_content || r.llm_analysis;
+
+    return results.map(r => ({
+      file_id: r.id,
+      file_name: r.file_name,
+      chunk_text: trimTextByTokens(r.original_content || r.llm_analysis, 300),
+      similarity: r.similarity,
+    }));
+
   } catch (err) {
     console.error('[FileSearch] Failed:', err);
     return [];

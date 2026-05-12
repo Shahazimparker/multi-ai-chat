@@ -31,11 +31,11 @@ const upload = multer({
   storage,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['text/plain', 'image/jpeg', 'image/png', 'application/pdf', 'application/zip', 'application/x-zip-compressed', 'application/x-rar-compressed'];
+    const allowedTypes = ['text/plain','text/javascript', 'application/javascript','image/jpeg', 'image/png', 'application/pdf', 'application/zip', 'application/x-zip-compressed', 'application/x-rar-compressed'];
 
     // Allow .docx by checking extension too
     const ext = file.originalname.split('.').pop().toLowerCase();
-    if (['doc', 'docx', 'zip'].includes(ext) || allowedTypes.includes(file.mimetype)) {
+    if (['doc', 'docx', 'zip','js','mjs','cjs'].includes(ext) || allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
       cb(new Error(`File type not allowed: ${file.mimetype}`));
@@ -82,7 +82,8 @@ router.post('/file', requireAuth, upload.single('file'), async (req, res) => {
     // Process file
     req.on('aborted', () => abortController.abort());
     const ragEnabled = req.body.ragEnabled === 'true' || req.body.ragEnabled === true;
-
+    console.log('[Upload] ragEnabled:', ragEnabled, 'req.body:', req.body);
+    
     const result = await processUploadedFile(
       req.file.path,
       req.file.originalname,
@@ -96,7 +97,7 @@ router.post('/file', requireAuth, upload.single('file'), async (req, res) => {
 
     res.json({
       success: true,
-      file: result,
+      ...result,
       message: result.message,  // ← ADD: Show user-friendly message
       extractedText: result.extractedText,  // ← ADD: Send content to frontend
     });
