@@ -303,7 +303,7 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
 /**
  * Process ZIP file - extract all supported files and analyze each
  */
-const processZipFile = async (filePath, fileName, userId, topicId, modelId, signal = null) => {
+const processZipFile = async (filePath, fileName, userId, topicId, modelId, signal, ragEnabled) => {
   const zip = await JSZip.loadAsync(fs.readFileSync(filePath));
   const results = [];
   const skipped = [];
@@ -345,7 +345,7 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
         userId,
         topicId,
         signal,
-        true,
+        ragEnabled,
         'openrouter'
       );
 
@@ -391,7 +391,7 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
     console.log(`[FileUpload] Processing: ${fileName}`);
 
     if (fileType === 'zip') {
-      const result = await processZipFile(filePath, fileName, userId, topicId, modelId, signal);
+      const result = await processZipFile(filePath, fileName, userId, topicId, modelId, signal,ragEnabled);
       cleanupTempFile(filePath);
       return result;
     }
