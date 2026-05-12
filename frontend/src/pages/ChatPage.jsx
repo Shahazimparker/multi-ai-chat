@@ -58,6 +58,22 @@ const ChatPage = () => {
     for (const item of items) {
       if (item.type.startsWith('image/')) {
         e.preventDefault();
+
+        // Check if selected model supports vision
+        const visionProviders = ['openai', 'gemini', 'claude'];
+        const visionOpenRouterModels = ['gemini', 'gpt', 'claude'];
+        const provider = model?.provider;
+        const modelId = model?.model || '';
+
+        const supportsVision =
+          visionProviders.includes(provider) ||
+          (provider === 'openrouter' && visionOpenRouterModels.some(v => modelId.includes(v)));
+
+        if (!supportsVision) {
+          alert('This model does not support image input. Use the 📎 attachment button to upload files, or switch to a vision-capable model (GPT-4o, Gemini, Claude).');
+          return;
+        }
+
         const file = item.getAsFile();
         if (!file) continue;
         const reader = new FileReader();
@@ -67,6 +83,7 @@ const ChatPage = () => {
       }
     }
   };
+
 
 
   // Load messages when switching topics
@@ -288,7 +305,7 @@ const ChatPage = () => {
       handleSend();
     }
   };
-  
+
   const handleInputChange = (e) => {
     setInput(e.target.value);
   };
