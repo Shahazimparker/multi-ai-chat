@@ -23,11 +23,15 @@ const { logAnalytics } = require('../services/analytics.service');
 
 const {
   createPromptBudget,
+  createDynamicPromptBudget,
+  calculateComplexityScore,
+  getTopicTurnCount,
   estimateMessagesTokens,
   estimateTokens,
   fitMessagesToBudget,
   trimTextByTokens,
 } = require('../services/tokenBudget.service');
+
 
 /**
  * POST /api/chat/message
@@ -72,6 +76,17 @@ const sendMessage = async (req, res) => {
 
     // ── 2. Check per-query token limit ───────────────────────
     let promptBudget = createPromptBudget(modelConfig);
+    // Try dynamic budget if we have a topic
+    if (topicId && user) {
+      try {
+        const turnCount = await getTopicTurnCount(topicId);
+        const complexityScore = calculateComplexityScore(message);
+        promptBudget = createDynamicPromptBudget(turnCount, complexityScore, modelConfig);
+      } catch (err) {
+        console.warn('[Chat] Dynamic budget failed, using static:', err.message);
+      }
+    }
+
     if (user?.per_query_limit && user.per_query_limit < promptBudget.maxPromptTokens) {
       const scale = Math.max(0.35, user.per_query_limit / promptBudget.maxPromptTokens);
       promptBudget = {
