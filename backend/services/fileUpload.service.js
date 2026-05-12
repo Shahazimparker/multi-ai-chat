@@ -58,6 +58,22 @@ const SUPPORTED_FILE_TYPES = {
   cpp: 'code',
   go: 'code',
   rb: 'code',
+  html: 'code',
+  json: 'code',
+  css: 'code',
+  xml: 'code',
+  yml: 'code',
+  yaml: 'code',
+  md: 'code',
+  sql: 'code',
+  sh: 'code',
+  bat: 'code',
+  php: 'code',
+  rs: 'code',
+  swift: 'code',
+  kt: 'code',
+  vue: 'code',
+  svelte: 'code',
 };
 
 // ==================== STORAGE CONFIG ====================
@@ -123,28 +139,47 @@ const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, f
         '.png': 'image/png',
       };
       const mimeType = mimeTypeMap[ext] || 'image/jpeg';
+      if (fileType === 'image') {
+        const base64Image = buffer.toString('base64');
+        const ext = path.extname(fileName).toLowerCase();
+        const mimeTypeMap = {
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.png': 'image/png',
+        };
+        const mimeType = mimeTypeMap[ext] || 'image/jpeg';
 
-      try {
-        const { GoogleGenerativeAI } = require('@google/generative-ai');
-        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        try {
+          const { callOpenRouter } = require('./ai/openrouter.service');
 
-        const result = await model.generateContent([
-          'Extract all text and important information from this image. Be detailed.',
-          {
-            inlineData: {
-              data: base64Image,
-              mimeType: mimeType
-            }
-          }
-        ]);
+          const result = await callOpenRouter(
+            'google/gemini-2.0-flash-001',
+            process.env.OPENROUTER_API_KEY,
+            [{
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: 'Extract all text and important information from this image. Be detailed.',
+                },
+                {
+                  type: 'image_url',
+                  image_url: {
+                    url: `data:${mimeType};base64,${base64Image}`,
+                  },
+                },
+              ],
+            }]
+          );
 
-        const text = result.response.text();
-        return text;
-      } catch (err) {
-        console.error('[Image] Vision API failed:', err.message);
-        return `[Image: ${fileName}] - Could not extract text. File uploaded for reference.`;
+          return result.text;
+        } catch (err) {
+          console.error('[Image] Vision API via OpenRouter failed:', err.message);
+          return `[Image: ${fileName}] - Could not extract text. File uploaded for reference.`;
+        }
       }
+
+
     }
 
     if (fileType === 'pdf') {
@@ -155,6 +190,10 @@ const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, f
     if (fileType === 'doc') {
       const result = await mammoth.extractRawText({ buffer });
       return result.value;
+    }
+
+    if (fileType === 'code') {
+      return buffer.toString('utf-8');
     }
 
     throw new Error(`Unsupported file type: ${fileType}`);

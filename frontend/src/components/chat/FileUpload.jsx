@@ -34,7 +34,7 @@ const FileUpload = ({ onFileSelect, disabled }) => {
         <div className="upload-input-wrapper">
           <input
             type="file"
-            accept=".pdf,.txt,.doc,.docx,.jpg,.jpeg,.png,.zip"
+            accept=".pdf,.txt,.doc,.docx,.jpg,.jpeg,.png,.zip,.js,.ts,.py,.java,.cpp,.go,.rb,.cjs,.mjs,.html,.json,.css,.xml,.yml,.yaml,.md,.sql,.sh,.bat,.php,.rs,.swift,.kt,.vue,.svelte,.*"
             onChange={handleFileSelect}
             id="file-input"
             style={{ display: 'none' }}

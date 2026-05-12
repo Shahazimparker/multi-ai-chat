@@ -31,11 +31,11 @@ const upload = multer({
   storage,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['text/plain','text/javascript', 'application/javascript','image/jpeg', 'image/png', 'application/pdf', 'application/zip', 'application/x-zip-compressed', 'application/x-rar-compressed'];
+    const allowedTypes = ['text/plain', 'text/javascript', 'application/javascript', 'image/jpeg', 'image/png', 'application/pdf', 'application/zip', 'application/x-zip-compressed', 'application/x-rar-compressed'];
 
     // Allow .docx by checking extension too
     const ext = file.originalname.split('.').pop().toLowerCase();
-    if (['doc', 'docx', 'zip','js','mjs','cjs'].includes(ext) || allowedTypes.includes(file.mimetype)) {
+    if (['doc', 'docx', 'zip', 'js', 'mjs', 'cjs', 'html', 'json', 'css', 'xml', 'yml', 'yaml', 'md', 'sql', 'sh', 'bat', 'php', 'rs', 'swift', 'kt', 'vue', 'svelte', 'rb', 'go', 'cpp', 'java', 'py', 'ts'].includes(ext) || allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
       cb(new Error(`File type not allowed: ${file.mimetype}`));
@@ -74,6 +74,32 @@ router.post('/file', requireAuth, upload.single('file'), async (req, res) => {
       jpeg: 'image',
       png: 'image',
       zip: 'zip',
+      mjs: 'code',
+      cjs: 'code',
+      rb: 'code',
+      go: 'code',
+      cpp: 'code',
+      java: 'code',
+      py: 'code',
+      ts: 'code',
+      js: 'code',
+      html: 'code',
+      json: 'code',
+      css: 'code',
+      xml: 'code',
+      yml: 'code',
+      yaml: 'code',
+      md: 'code',
+      sql: 'code',
+      sh: 'code',
+      bat: 'code',
+      php: 'code',
+      rs: 'code',
+      swift: 'code',
+      kt: 'code',
+      vue: 'code',
+      svelte: 'code',
+
     };
 
     const fileType = fileTypeMap[ext];
@@ -83,7 +109,7 @@ router.post('/file', requireAuth, upload.single('file'), async (req, res) => {
     req.on('aborted', () => abortController.abort());
     const ragEnabled = req.body.ragEnabled === 'true' || req.body.ragEnabled === true;
     console.log('[Upload] ragEnabled:', ragEnabled, 'req.body:', req.body);
-    
+
     const result = await processUploadedFile(
       req.file.path,
       req.file.originalname,
