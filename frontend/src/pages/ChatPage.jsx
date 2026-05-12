@@ -288,6 +288,11 @@ const ChatPage = () => {
       handleSend();
     }
   };
+  
+  const handleInputChange = (e) => {
+    setInput(e.target.value);
+  };
+
 
   return (
     <div className="chat-root">
