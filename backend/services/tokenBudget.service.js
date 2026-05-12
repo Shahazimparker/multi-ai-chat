@@ -53,10 +53,10 @@ const createPromptBudget = (modelConfig = {}) => {
 
   return {
     maxPromptTokens,
-    systemTokens: Math.floor(maxPromptTokens * 0.34),
-    historyTokens: Math.floor(maxPromptTokens * 0.28),
+    systemTokens: Math.floor(maxPromptTokens * 0.30),
+    historyTokens: Math.floor(maxPromptTokens * 0.25),
     ragTokens: Math.floor(maxPromptTokens * 0.18),
-    fileTokens: Math.floor(maxPromptTokens * 0.16),
+    fileTokens: Math.floor(maxPromptTokens * 0.22),
     queryTokens: Math.floor(maxPromptTokens * 0.18),
   };
 };

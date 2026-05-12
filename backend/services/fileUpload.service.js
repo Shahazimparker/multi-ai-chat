@@ -424,14 +424,25 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
       };
     }
 
+
     // Only reach here if ragEnabled = true
-    llmAnalysis = `File: ${fileName} ready for RAG search`;
+    llmAnalysis = `File: ${fileName} (${fileType})
+
+Content length: ${extractedText.length} characters
+
+Preview:
+${extractedText.slice(0, 1000)}
+
+Upload timestamp: ${new Date().toISOString()}
+
+File ready for queries.`;
     tokensUsed = 0;
 
     await new Promise(resolve => setTimeout(resolve, 1000));
 
     // 3. Store in RAG
     const ragId = await saveFileToRAG(fileName, fileType, extractedText, llmAnalysis, userId, topicId, signal, ragEnabled, 'openrouter');
+
 
     // 4. Cleanup temp file
     cleanupTempFile(filePath);
