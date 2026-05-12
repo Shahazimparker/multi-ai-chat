@@ -123,6 +123,8 @@ const ChatPage = () => {
         if (uploadRes.data.extractedText) {
           const fileContent = uploadRes.data.extractedText;
           finalMessage = `[File: ${uploadRes.data.fileName}]\n${fileContent}\n\nPlease analyze this file.`;
+        } else if (uploadRes.data.fileType === 'zip') {
+          finalMessage = `[ZIP: ${uploadRes.data.fileName}] Please analyze all extracted files.`;
         }
       }
 
@@ -233,7 +235,7 @@ const ChatPage = () => {
         };
         return updated;
       });
-      
+
       setInput('');
       setFailedMessage(null);
 

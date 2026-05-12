@@ -326,22 +326,15 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
     throw new Error('ZIP did not contain any processable files');
   }
 
-  const summary = results
-    .map(r => `• ${r.fileName} (${r.fileType})`)
-    .join('\n')
-    .slice(0, 4000);
-
   return {
     fileName,
     fileType: 'zip',
     processedFiles: results.length,
     skippedFiles: skipped.length,
     totalTokensUsed: results.reduce((sum, r) => sum + r.tokensUsed, 0),
-    extractedText: `ZIP "${fileName}" uploaded. ${results.length} file(s) parsed:\n${summary}`,
-    message: `✅ ZIP processed. ${results.length} files ready for queries.`
+    message: `✅ ZIP processed. ${results.length} files ready for queries.`  // ← ADD
   };
 };
-
 
 /**
  * Main: Process uploaded file

@@ -45,7 +45,7 @@ const getMessages = async (req, res) => {
 
 const deleteTopic = async (req, res) => {
   try {
-    const { topicId } = req.params;
+    const topicId = req.params.id;
     const user = req.user;
 
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
