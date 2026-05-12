@@ -126,6 +126,10 @@ const AdminPage = () => {
 
       {/* Main panel */}
       <main className="admin-main">
+        {/* Mobile back button — visible only on small screens */}
+        <button className="mobile-back-btn" onClick={() => navigate('/chat')}>
+          <ChevronLeft size={16} /> Back to Chat
+        </button>
         {/* ── USERS TAB ───────────────────────────────── */}
         {tab === 'users' && (
           <div className="admin-panel">
