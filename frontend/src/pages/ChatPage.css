@@ -11,14 +11,15 @@
   background: #080b14;
   color: #fff;
   font-family: 'Inter', sans-serif;
-  overflow: visible;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .chat-main {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: visible;
+  overflow: hidden;
   min-width: 0;
   background:
     radial-gradient(circle at top left, rgba(124, 58, 237, 0.14), transparent 24%),
