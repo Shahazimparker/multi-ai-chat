@@ -1,9 +1,27 @@
 // FILE: backend/services/tokenBudget.service.js
 // PURPOSE: Lightweight prompt budgeting so RAG, files, and history cannot grow without bounds.
 
-const CHARS_PER_TOKEN = 4;
 const supabase = require('../config/supabase');
-const estimateTokens = (text = '') => Math.ceil(String(text).length / CHARS_PER_TOKEN);
+
+/**
+ * Estimate token count using a hybrid approach:
+ * - Word-based: ~1.3 tokens per word (accurate for natural language)
+ * - Char-based: ~4 chars per token (fallback for dense/text code)
+ * - Uses max of both to be conservative (overestimate > underestimate)
+ */
+const estimateTokens = (text = '') => {
+  if (!text) return 0;
+  const str = String(text).trim();
+  if (!str) return 0;
+
+  const charEstimate = Math.ceil(str.length / 4);
+  const words = str.split(/\s+/).length;
+  const wordEstimate = Math.ceil(words * 1.3);
+
+  return Math.max(charEstimate, wordEstimate);
+};
+
+const CHARS_PER_TOKEN = 4; // kept for backward compatibility in trim logic
 
 const trimTextByTokens = (text = '', maxTokens = 0) => {
   if (!text || maxTokens <= 0) return '';

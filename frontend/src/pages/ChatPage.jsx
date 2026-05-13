@@ -42,6 +42,8 @@ const ChatPage = () => {
   const [unifiedProvider, setUnifiedProvider] = useState(null);
   const [providerModelId, setProviderModelId] = useState(null);
   const [messageQueue, setMessageQueue] = useState([]);
+  const [queuePopoverOpen, setQueuePopoverOpen] = useState(false);
+  const queuePopoverRef = useRef(null);
   const [failedMessage, setFailedMessage] = useState(null);
   const [llmError, setLlmError] = useState(null);
   const [uploadedFiles, setUploadedFiles] = useState([]);
@@ -296,8 +298,22 @@ const ChatPage = () => {
     }
     // Clear the queue
     setMessageQueue([]);
+    setQueuePopoverOpen(false);
     setLoading(false);
   }, []);
+
+  // Close queue popover on outside click
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (queuePopoverRef.current && !queuePopoverRef.current.contains(e.target)) {
+        setQueuePopoverOpen(false);
+      }
+    };
+    if (queuePopoverOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [queuePopoverOpen]);
 
   // Ctrl+Enter or Enter (without shift) to send
   const handleKeyDown = (e) => {
@@ -496,7 +512,27 @@ const ChatPage = () => {
               {loading ? <StopCircle size={18} /> : <Send size={18} />}
             </button>
             {messageQueue.length > 0 && (
-              <div className="queue-badge">{messageQueue.length} queued</div>
+              <div className="queue-badge-wrapper" ref={queuePopoverRef}>
+                <div
+                  className="queue-badge"
+                  onClick={() => setQueuePopoverOpen(p => !p)}
+                >
+                  {messageQueue.length} queued {queuePopoverOpen ? '▲' : '▼'}
+                </div>
+                {queuePopoverOpen && (
+                  <div className="queue-popover">
+                    <div className="queue-popover-header">Queued Messages ({messageQueue.length})</div>
+                    <div className="queue-popover-list">
+                      {messageQueue.map((q, i) => (
+                        <div key={i} className="queue-popover-item" title={q.text || q.file?.name || 'message'}>
+                          <span className="queue-popover-num">{i + 1}.</span>
+                          <span className="queue-popover-text">{q.text || q.file?.name || 'message'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 

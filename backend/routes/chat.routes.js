@@ -81,7 +81,7 @@ router.post('/message', chatLimiter, optionalAuth, tokenCheck, sendMessage);
  * POST /api/chat/stream
  * Streaming response using Server-Sent Events
  */
-router.post('/stream', optionalAuth, async (req, res) => {
+router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) => {
   req.setTimeout(0);
   res.setTimeout(0);
   const startTime = Date.now();

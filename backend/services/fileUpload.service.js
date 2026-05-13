@@ -139,47 +139,35 @@ const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, f
         '.png': 'image/png',
       };
       const mimeType = mimeTypeMap[ext] || 'image/jpeg';
-      if (fileType === 'image') {
-        const base64Image = buffer.toString('base64');
-        const ext = path.extname(fileName).toLowerCase();
-        const mimeTypeMap = {
-          '.jpg': 'image/jpeg',
-          '.jpeg': 'image/jpeg',
-          '.png': 'image/png',
-        };
-        const mimeType = mimeTypeMap[ext] || 'image/jpeg';
 
-        try {
-          const { callOpenRouter } = require('./ai/openrouter.service');
+      try {
+        const { callOpenRouter } = require('./ai/openrouter.service');
 
-          const result = await callOpenRouter(
-            'google/gemini-2.0-flash-001',
-            process.env.OPENROUTER_API_KEY,
-            [{
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: 'Extract all text and important information from this image. Be detailed.',
+        const result = await callOpenRouter(
+          'google/gemini-2.0-flash-001',
+          process.env.OPENROUTER_API_KEY,
+          [{
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'Extract all text and important information from this image. Be detailed.',
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:${mimeType};base64,${base64Image}`,
                 },
-                {
-                  type: 'image_url',
-                  image_url: {
-                    url: `data:${mimeType};base64,${base64Image}`,
-                  },
-                },
-              ],
-            }]
-          );
+              },
+            ],
+          }]
+        );
 
-          return result.text;
-        } catch (err) {
-          console.error('[Image] Vision API via OpenRouter failed:', err.message);
-          return `[Image: ${fileName}] - Could not extract text. File uploaded for reference.`;
-        }
+        return result.text;
+      } catch (err) {
+        console.error('[Image] Vision API via OpenRouter failed:', err.message);
+        return `[Image: ${fileName}] - Could not extract text. File uploaded for reference.`;
       }
-
-
     }
 
     if (fileType === 'pdf') {
@@ -207,7 +195,7 @@ const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, f
  * NEW: Send file content directly to LLM and store response
  * Returns: { fileContent, llmAnalysis, tokensUsed }
  */
-const analyzFileWithLLM = async (extractedText, fileName, fileType, modelId, signal = null) => {
+const analyzeFileWithLLM = async (extractedText, fileName, fileType, modelId, signal = null) => {
   try {
     // SKIP LLM analysis - store file content only
     // AI will analyze during query (when needed)
@@ -334,7 +322,7 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
       }
 
       // Send to LLM
-      const { llmAnalysis, tokensUsed } = await analyzFileWithLLM(extractedText, entryName, innerType, modelId, signal);
+      const { llmAnalysis, tokensUsed } = await analyzeFileWithLLM(extractedText, entryName, innerType, modelId, signal);
 
       // Store in RAG
       const ragId = await saveFileToRAG(
@@ -407,7 +395,7 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
     // 2. Send directly to LLM (no embedding!)
     let llmAnalysis, tokensUsed;
     if (!ragEnabled) {
-      const result = await analyzFileWithLLM(extractedText, fileName, fileType, modelId, signal);
+      const result = await analyzeFileWithLLM(extractedText, fileName, fileType, modelId, signal);
       llmAnalysis = result.llmAnalysis;
       tokensUsed = result.tokensUsed;
 
@@ -580,4 +568,5 @@ module.exports = {
   ensureUploadDir,
   getSupportedFileType,
   getFileHash,
+  analyzeFileWithLLM,
 };
