@@ -62,11 +62,11 @@ const MODELS = {
 
   // ── DeepSeek AI ────────────────────────────────────────────
   'deepseek-v4-flash': {
-    label: 'deepseek-v4-flash (paid)',
+    label: 'deepseek-v4-flash (Paid)',
     provider: 'deepseek',
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: 'deepseek-v4-flash',
-    paid: false,
+    paid: true,
     maxTokens: 10000,
   },
   'deepseek-v4-pro': {
@@ -74,44 +74,8 @@ const MODELS = {
     provider: 'deepseek',
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: 'deepseek-v4-pro',
-    paid: false,
+    paid: true,
     maxTokens: 8192,
-  },
-
-  // ── Cohere ────────────────────────────────────────────────
-  'cohere-command': {
-    label: 'Cohere Command R (Free)',
-    provider: 'cohere',
-    apiKey: process.env.COHERE_API_KEY,
-    model: 'command-r',
-    paid: false,
-    maxTokens: 4096,
-  },
-  'cohere-command-plus': {
-    label: 'Cohere Command R+ (Free)',
-    provider: 'cohere',
-    apiKey: process.env.COHERE_API_KEY,
-    model: 'command-r-plus',
-    paid: false,
-    maxTokens: 4096,
-  },
-
-  // ── OpenAI GPT ────────────────────────────────────────────
-  'gpt-4o-mini': {
-    label: 'GPT-4o Mini (Paid)',
-    provider: 'openai',
-    apiKey: process.env.OPENAI_API_KEY,
-    model: 'gpt-4o-mini',
-    paid: true,
-    maxTokens: 4096,
-  },
-  'gpt-4o': {
-    label: 'GPT-4o (Paid)',
-    provider: 'openai',
-    apiKey: process.env.OPENAI_API_KEY,
-    model: 'gpt-4o',
-    paid: true,
-    maxTokens: 4096,
   },
 
   // ── Anthropic Claude ──────────────────────────────────────
@@ -139,89 +103,16 @@ const MODELS = {
     paid: true,
     maxTokens: 4096,
   },
+
+  // ── OpenRouter (Live model list) ──────────────────────────
   'openrouter': {
     label: 'OpenRouter',
     provider: 'openrouter',
     apiKey: process.env.OPENROUTER_API_KEY,
-    model: 'meta-llama/llama-3.1-8b-instruct:free',
-    paid: false,
-    unified: true,
-    models: [
-      { id: 'meta-llama/llama-3.1-8b-instruct:free', label: 'Llama 3.1 8B Instruct (Free)', paid: false },
-      { id: 'google/gemini-flash-1.5', label: 'Gemini Flash 1.5', paid: false },
-      { id: 'mistralai/mistral-7b-instruct:free', label: 'Mistral 7B Instruct (Free)', paid: false },
-    ],
-  },
-
-  'openrouter-claude-sonnet': {
-    label: 'Claude 3.5 Sonnet (OpenRouter)',
-    provider: 'openrouter',
-    apiKey: process.env.OPENROUTER_API_KEY,
-    model: 'anthropic/claude-3.5-sonnet',
-    unified: true,
-    supportsCache: true,  // ← Mark as cache-supporting
-  },
-
-  'openrouter-gpt-4': {
-    label: 'GPT-4 Turbo (OpenRouter)',
-    provider: 'openrouter',
-    apiKey: process.env.OPENROUTER_API_KEY,
-    model: 'openai/gpt-4-turbo',
-    unified: true,
-    supportsCache: true,  // ← Mark as cache-supporting (experimental)
-  },
-  'openrouter-gpt-4-turbo': {
-    label: 'GPT-4 Turbo (OpenRouter - with Cache)',
-    provider: 'openrouter',
-    apiKey: process.env.OPENROUTER_API_KEY,
-    model: 'openai/gpt-4-turbo',
-    unified: true,
-    supportsCache: true,  // ← Cache enabled
-  },
-
-  'openrouter-claude-opus': {
-    label: 'Claude 3 Opus (OpenRouter)',
-    provider: 'openrouter',
-    apiKey: process.env.OPENROUTER_API_KEY,
-    model: 'anthropic/claude-3-opus',
-    unified: true,
-    supportsCache: true,
-  },
-
-  'openrouter-gpt-4o': {
-    label: 'GPT-4o (OpenRouter)',
-    provider: 'openrouter',
-    apiKey: process.env.OPENROUTER_API_KEY,
-    model: 'openai/gpt-4o',
-    unified: true,
-    supportsCache: false,  // GPT-4o cache not fully supported yet
-  },
-
-  'together': {
-    label: 'Together AI',
-    provider: 'together',
-    apiKey: process.env.TOGETHER_API_KEY,
-    model: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
-    paid: false,
-    unified: true,
-    models: [
-      { id: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo', label: 'Llama 3.1 8B Turbo', paid: false },
-      { id: 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo', label: 'Llama 3.1 70B Turbo', paid: true },
-    ],
-  },
-
-  'anyapi': {
-    label: 'AnyAPI',
-    provider: 'anyapi',
-    apiKey: process.env.ANYAPI_API_KEY,
-    model: 'gpt-4o-mini',
+    model: 'openrouter',
     paid: true,
     unified: true,
-    models: [
-      { id: 'gpt-4o-mini', label: 'GPT-4o Mini', paid: true },
-      { id: 'gpt-4o', label: 'GPT-4o', paid: true },
-      { id: 'claude-3-5-sonnet-latest', label: 'Claude 3.5 Sonnet', paid: true },
-    ],
+    models: [],
   },
 };
 

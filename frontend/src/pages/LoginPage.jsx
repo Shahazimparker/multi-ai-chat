@@ -47,7 +47,7 @@ const LoginPage = () => {
 
         {/* AI model pills */}
         <div className="model-pills">
-          {['Gemini', 'Groq', 'Mistral', 'Cohere', 'GPT-4o', 'Claude'].map(m => (
+          {['Gemini', 'Groq', 'Mistral', 'Claude'].map(m => (
             <span key={m} className="pill">{m}</span>
           ))}
         </div>

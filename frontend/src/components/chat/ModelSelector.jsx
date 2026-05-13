@@ -8,9 +8,8 @@ const PROVIDER_META = {
   gemini: { label: 'Google Gemini', color: '#4285f4', emoji: 'G' },
   groq: { label: 'Groq', color: '#f97316', emoji: 'Q' },
   mistral: { label: 'Mistral AI', color: '#7c3aed', emoji: 'M' },
-  cohere: { label: 'Cohere', color: '#0ea5e9', emoji: 'C' },
-  openai: { label: 'OpenAI GPT', color: '#10b981', emoji: 'O' },
   claude: { label: 'Anthropic Claude', color: '#f59e0b', emoji: 'A' },
+  openrouter: { label: 'OpenRouter', color: '#8b5cf6', emoji: 'R' },
 };
 
 const MOBILE_BREAKPOINT = 768;
