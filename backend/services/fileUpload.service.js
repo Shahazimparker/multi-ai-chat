@@ -265,34 +265,34 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
 
       if (ragError) throw ragError;
       ragRecord = data;
+
+      // Store in code_files if code (only when RAG is enabled)
+      const codeExtensions = ['js', 'ts', 'py', 'java', 'cpp', 'go', 'rb'];
+      const ext = fileName.split('.').pop().toLowerCase();
+
+      if (codeExtensions.includes(ext)) {
+        await supabase
+          .from('code_files')
+          .delete()
+          .eq('file_name', fileName)
+          .eq('topic_id', topicId);
+
+        await supabase
+          .from('code_files')
+          .insert({
+            user_id: userId,
+            topic_id: topicId,
+            file_name: fileName,
+            file_type: fileType,
+            content: fileContent,
+            language: detectLanguage(fileName),
+            file_hash: fileHash,
+            rag_record_id: ragRecord?.id || null
+          });
+      }
+
+      console.log(`[FileUpload] Stored in RAG: ${fileName} (hash: ${fileHash})`);
     }
-
-    // Store in code_files if code
-    const codeExtensions = ['js', 'ts', 'py', 'java', 'cpp', 'go', 'rb'];
-    const ext = fileName.split('.').pop().toLowerCase();
-
-    if (codeExtensions.includes(ext)) {
-      await supabase
-        .from('code_files')
-        .delete()
-        .eq('file_name', fileName)
-        .eq('topic_id', topicId);
-
-      await supabase
-        .from('code_files')
-        .insert({
-          user_id: userId,
-          topic_id: topicId,
-          file_name: fileName,
-          file_type: fileType,
-          content: fileContent,
-          language: detectLanguage(fileName),
-          file_hash: fileHash,
-          rag_record_id: ragRecord?.id || null
-        });
-    }
-
-    console.log(`[FileUpload] Stored in RAG: ${fileName} (hash: ${fileHash})`);
     return ragRecord?.id || null;
   } catch (err) {
     console.error('[FileUpload] RAG storage failed:', err);

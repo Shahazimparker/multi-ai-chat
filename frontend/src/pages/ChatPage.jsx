@@ -35,9 +35,9 @@ const ChatPage = () => {
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
   const abortControllerRef = useRef(null);
-  const [memoryMode, setMemoryMode] = useState('summarized');
-  const [historyLimit, setHistoryLimit] = useState(5);
-  const [ragEnabled, setRagEnabled] = useState(false);
+  const [memoryMode, setMemoryMode] = useState('accurate');
+  const [historyLimit, setHistoryLimit] = useState(8);
+  const [ragEnabled, setRagEnabled] = useState(true);
   const [showAdvancedMemory, setShowAdvancedMemory] = useState(false);
   const [unifiedProvider, setUnifiedProvider] = useState(null);
   const [providerModelId, setProviderModelId] = useState(null);
@@ -393,7 +393,7 @@ const ChatPage = () => {
               className={`memory-mode-btn ${memoryMode === 'summarized' ? 'active' : ''}`}
               onClick={() => {
                 setMemoryMode('summarized');
-                setHistoryLimit(8);
+                setHistoryLimit(5);
                 setRagEnabled(false);
               }}
             >
@@ -404,7 +404,7 @@ const ChatPage = () => {
               className={`memory-mode-btn ${memoryMode === 'accurate' ? 'active' : ''}`}
               onClick={() => {
                 setMemoryMode('accurate');
-                setHistoryLimit(12);
+                setHistoryLimit(8);
                 setRagEnabled(true);
               }}
             >
