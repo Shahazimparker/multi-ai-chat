@@ -75,6 +75,18 @@ const deleteTopic = async (req, res) => {
       .eq('id', topicId)
       .eq('user_id', user.id);
 
+    // DELETE uploaded_files_rag
+    await supabase
+      .from('uploaded_files_rag')
+      .delete()
+      .eq('topic_id', topicId);
+
+    // DELETE code_files
+    await supabase
+      .from('code_files')
+      .delete()
+      .eq('topic_id', topicId);
+
     res.json({ success: true, message: 'Topic and related data deleted' });
   } catch (err) {
     console.error('[History] Delete error:', err.message);
