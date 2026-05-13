@@ -22,6 +22,7 @@ const AdminPage = () => {
   const [users, setUsers] = useState([]);
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [modal, setModal] = useState({ open: false, user: null }); // create/edit modal
   const [apiStatus, setApiStatus] = useState(null);
 
@@ -56,6 +57,8 @@ const AdminPage = () => {
   };
 
   const handleSaveUser = async (userData, isEdit) => {
+    if (saving) return; // prevent double-submit
+    setSaving(true);
     try {
       if (isEdit) {
         await api.put(`/admin/users/${userData.id}`, userData);
@@ -66,6 +69,8 @@ const AdminPage = () => {
       loadUsers();
     } catch (err) {
       alert(err.response?.data?.error || 'Save failed');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -293,6 +298,7 @@ const AdminPage = () => {
           user={modal.user}
           onSave={handleSaveUser}
           onClose={() => setModal({ open: false, user: null })}
+          saving={saving}
         />
       )}
     </div>

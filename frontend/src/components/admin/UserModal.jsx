@@ -14,7 +14,7 @@ const DEFAULT_FORM = {
   session_minutes: 60, is_active: true, expires_at: '',
 };
 
-const UserModal = ({ user, onSave, onClose }) => {
+const UserModal = ({ user, onSave, onClose, saving }) => {
   const isEdit = !!user;
   const [form, setForm] = useState(DEFAULT_FORM);
 
@@ -98,9 +98,9 @@ const UserModal = ({ user, onSave, onClose }) => {
           </label>
 
           <div className="modal-footer">
-            <button type="button" className="btn-cancel" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn-save">
-              <Save size={14}/> {isEdit ? 'Save Changes' : 'Create User'}
+            <button type="button" className="btn-cancel" onClick={onClose} disabled={saving}>Cancel</button>
+            <button type="submit" className="btn-save" disabled={saving}>
+              <Save size={14}/> {saving ? 'Saving…' : (isEdit ? 'Save Changes' : 'Create User')}
             </button>
           </div>
         </form>
