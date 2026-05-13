@@ -320,6 +320,7 @@
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.12);
   transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+  position: relative
 }
 
 .input-box:focus-within {
@@ -482,4 +483,17 @@
   height: 32px;
   width: 32px;
   flex-shrink: 0;
+}
+
+.queue-badge {
+  position: absolute;
+  top: -8px;
+  right: 48px;
+  background: #f59e0b;
+  color: #000;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
 }

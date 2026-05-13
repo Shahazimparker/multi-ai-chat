@@ -41,6 +41,7 @@ const ChatPage = () => {
   const [showAdvancedMemory, setShowAdvancedMemory] = useState(false);
   const [unifiedProvider, setUnifiedProvider] = useState(null);
   const [providerModelId, setProviderModelId] = useState(null);
+  const [messageQueue, setMessageQueue] = useState([]);
   const [failedMessage, setFailedMessage] = useState(null);
   const [llmError, setLlmError] = useState(null);
   const [uploadedFiles, setUploadedFiles] = useState([]);
@@ -105,21 +106,11 @@ const ChatPage = () => {
   };
 
   // Send message
-  const handleSend = useCallback(async () => {
-    if (loading) {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-      return;
-    }
-
-    if ((!input.trim() && !pendingFile) || !model) return;
-
-    let finalMessage = String(input).trim();
-    const fileToUpload = pendingFile;
+  const sendMessage = useCallback(async (msgText, file, image) => {
+    let finalMessage = String(msgText).trim();
+    const fileToUpload = file;
 
     setFailedMessage(finalMessage);
-    setInput('');
     setPendingFile(null);
 
     const controller = new AbortController();
@@ -139,7 +130,7 @@ const ChatPage = () => {
         const formData = new FormData();
         formData.append('file', fileToUpload);
         formData.append('modelId', model.id);
-        formData.append('ragEnabled', ragEnabled);  // ← ADD THIS
+        formData.append('ragEnabled', ragEnabled);
         if (topicIdToUse) formData.append('topicId', topicIdToUse);
 
         const uploadRes = await api.post('/upload/file', formData, {
@@ -149,7 +140,6 @@ const ChatPage = () => {
 
         setUploadedFiles(prev => [...prev, uploadRes.data]);
 
-        // ← CHANGE: Update userMsg with file content
         if (uploadRes.data.extractedText) {
           const fileContent = uploadRes.data.extractedText;
           finalMessage = `[File: ${uploadRes.data.fileName}]\n${fileContent}\n\nPlease analyze this file.`;
@@ -158,7 +148,6 @@ const ChatPage = () => {
         }
       }
 
-      // ← Move streaming call HERE (outside file upload block)
       const apiUrl = process.env.NODE_ENV === 'production'
         ? 'https://multi-ai-chat-backend.vercel.app/api/chat/stream'
         : 'http://localhost:5000/api/chat/stream';
@@ -167,20 +156,15 @@ const ChatPage = () => {
         localStorage.getItem('auth_token') ||
         sessionStorage.getItem('auth_token');
 
-      const headers = {
-        'Content-Type': 'application/json',
-      };
-
-      if (authToken) {
-        headers.Authorization = `Bearer ${authToken}`;
-      }
+      const headers = { 'Content-Type': 'application/json' };
+      if (authToken) headers.Authorization = `Bearer ${authToken}`;
 
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify({
           message: finalMessage,
-          image: pendingImage,
+          image: image,
           topicId: topicIdToUse,
           modelId: model.id,
           providerModelId,
@@ -191,7 +175,6 @@ const ChatPage = () => {
         signal: controller.signal,
       });
 
-
       if (!response.ok) throw new Error('Stream failed');
 
       const reader = response.body.getReader();
@@ -200,7 +183,6 @@ const ChatPage = () => {
       let metadata = {};
       let streamingText = '';
 
-      // Add empty assistant message for streaming
       setMessages(prev => [...prev, { role: 'assistant', content: '', streaming: true }]);
 
       while (true) {
@@ -212,22 +194,14 @@ const ChatPage = () => {
 
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
-
           try {
             const data = JSON.parse(line.slice(6));
-            if (data.type === 'error') {
-              setError(data.error);
-              break;
-            }
+            if (data.type === 'error') { setError(data.error); break; }
             if (data.type === 'chunk') {
               streamingText += data.text;
-              // Update last message with streamed content
               setMessages(prev => {
                 const updated = [...prev];
-                updated[updated.length - 1] = {
-                  ...updated[updated.length - 1],
-                  content: streamingText
-                };
+                updated[updated.length - 1] = { ...updated[updated.length - 1], content: streamingText };
                 return updated;
               });
             } else if (data.type === 'done') {
@@ -238,57 +212,44 @@ const ChatPage = () => {
               metadata = { cacheHit: true, tokensUsed: 0 };
               setMessages(prev => {
                 const updated = [...prev];
-                updated[updated.length - 1] = {
-                  ...updated[updated.length - 1],
-                  content: fullReply,
-                  ...metadata,
-                  streaming: false
-                };
+                updated[updated.length - 1] = { ...updated[updated.length - 1], content: fullReply, ...metadata, streaming: false };
                 return updated;
               });
               break;
             }
-          } catch (e) {
-            // Ignore parse errors
-          }
+          } catch (e) { }
         }
       }
 
-      // Update final message metadata
       setMessages(prev => {
         const updated = [...prev];
-        updated[updated.length - 1] = {
-          ...updated[updated.length - 1],
-          streaming: false,
-          model: metadata.model,
-          tokensUsed: metadata.tokensUsed,
-          cacheHit: metadata.cacheHit,
-        };
+        updated[updated.length - 1] = { ...updated[updated.length - 1], streaming: false, model: metadata.model, tokensUsed: metadata.tokensUsed, cacheHit: metadata.cacheHit };
         return updated;
       });
 
-      setInput('');
       setPendingImage(null);
       setFailedMessage(null);
 
-      // Update topic if new
       if (metadata.topicId && !activeTopic) {
-        console.log('[DEBUG] Setting topic after response:', metadata.topicId);
         setActiveTopic({ id: metadata.topicId });
         setSidebarRefresh(p => p + 1);
       } else if (metadata.topicId && activeTopic?.id !== metadata.topicId) {
-        console.log('[DEBUG] Updating topic:', metadata.topicId);
         setActiveTopic({ id: metadata.topicId });
       }
 
       await refreshTokenStats();
-
     } catch (err) {
       if (err.name === 'CanceledError' || err.name === 'AbortError') {
-        setMessages(prev => [...prev.slice(0, -1), { role: 'assistant', content: '_Query stopped by user._' }]);
+        setMessages(prev => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last && last.role === 'assistant') {
+            updated[updated.length - 1] = { ...last, streaming: false };
+          }
+          return updated;
+        });
         return;
       }
-
       const msg = err.response?.data?.error || err.message || 'Something went wrong.';
       setError(msg);
       setMessages(prev => [...prev, { role: 'assistant', content: `❌ Error: ${msg}` }]);
@@ -296,7 +257,47 @@ const ChatPage = () => {
       setLoading(false);
       abortControllerRef.current = null;
     }
-  }, [input, pendingFile, loading, model, activeTopic, memoryMode, historyLimit, ragEnabled, providerModelId, refreshTokenStats]);
+  }, [model, activeTopic, memoryMode, historyLimit, ragEnabled, providerModelId, refreshTokenStats]);
+
+  useEffect(() => {
+    if (!loading && messageQueue.length > 0) {
+      const [next, ...rest] = messageQueue;
+      setMessageQueue(rest);
+      sendMessage(next.text, next.file, next.image);
+    }
+  }, [loading, messageQueue, sendMessage]);
+
+  const handleSend = useCallback(async () => {
+    if (!input.trim() && !pendingFile) return;
+
+    if (loading) {
+      setMessageQueue(prev => [...prev, { text: input, file: pendingFile, image: pendingImage }]);
+      setInput('');
+      setPendingFile(null);
+      setPendingImage(null);
+      return;
+    }
+
+    setInput('');
+    setPendingFile(null);
+    setPendingImage(null);
+    await sendMessage(input, pendingFile, pendingImage);
+
+
+    // Process queue after send completes
+
+  }, [input, pendingFile, pendingImage, loading, sendMessage]);
+
+  const handleStop = useCallback(() => {
+    // Abort current AI request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    // Clear the queue
+    setMessageQueue([]);
+    setLoading(false);
+  }, []);
 
   // Ctrl+Enter or Enter (without shift) to send
   const handleKeyDown = (e) => {
@@ -471,7 +472,7 @@ const ChatPage = () => {
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               placeholder={model ? `Message ${model.label}…` : 'Select a model first…'}
-              disabled={loading || !model}
+              disabled={!model}
               rows={1}
               onPaste={handlePaste}
             />
@@ -488,12 +489,15 @@ const ChatPage = () => {
               </div>
             )}
             <button
-              className="send-btn"
-              onClick={handleSend}
-              disabled={(!input.trim() && !pendingFile && !loading) || !model}
+              className={`send-btn ${loading ? 'stop-btn' : ''}`}
+              onClick={loading ? handleStop : handleSend}
+              disabled={loading ? false : (!input.trim() && !pendingFile) || !model}
             >
               {loading ? <StopCircle size={18} /> : <Send size={18} />}
             </button>
+            {messageQueue.length > 0 && (
+              <div className="queue-badge">{messageQueue.length} queued</div>
+            )}
           </div>
 
           <p className="input-hint">Enter to send · Shift+Enter for new line</p>
