@@ -138,6 +138,45 @@ CREATE TABLE IF NOT EXISTS rag_chunks (
 );
 
 -- ─────────────────────────────────────────────
+-- TABLE: uploaded_files_rag (File uploads with RAG embeddings)
+-- ─────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS uploaded_files_rag (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id           UUID REFERENCES users(id) ON DELETE CASCADE,
+  topic_id          UUID REFERENCES topics(id) ON DELETE SET NULL,
+  file_name         TEXT NOT NULL,
+  file_hash         TEXT,
+  file_type         TEXT,
+  original_content  TEXT,
+  llm_analysis      TEXT,
+  embedding         vector(1536),
+  created_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ─────────────────────────────────────────────
+-- FUNCTION: insert_rag_document (Insert into uploaded_files_rag)
+-- ─────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION insert_rag_document(
+  p_user_id           UUID,
+  p_topic_id          UUID,
+  p_file_name         TEXT,
+  p_file_hash         TEXT,
+  p_file_type         TEXT,
+  p_original_content  TEXT,
+  p_llm_analysis      TEXT,
+  p_embedding         vector(1536)
+)
+RETURNS TABLE (id UUID)
+LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN QUERY
+  INSERT INTO uploaded_files_rag (user_id, topic_id, file_name, file_hash, file_type, original_content, llm_analysis, embedding)
+  VALUES (p_user_id, p_topic_id, p_file_name, p_file_hash, p_file_type, p_original_content, p_llm_analysis, p_embedding)
+  RETURNING uploaded_files_rag.id;
+END;
+$$;
+
+-- ─────────────────────────────────────────────
 -- FUNCTION: search_uploaded_files (Vector search)
 -- ─────────────────────────────────────────────
 DROP FUNCTION IF EXISTS search_uploaded_files(vector, UUID, INT);

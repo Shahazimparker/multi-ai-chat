@@ -28,7 +28,8 @@
     "multer": "^2.1.1",
     "natural": "^6.10.4",
     "openai": "^4.28.4",
-    "pdf-parse": "^1.1.4"
+    "pdf-parse": "^1.1.4",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "eslint": "^8.57.0",

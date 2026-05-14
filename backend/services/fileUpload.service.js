@@ -44,6 +44,8 @@ const getFileHash = (fileName, fileContent) => {
 
 const SUPPORTED_FILE_TYPES = {
   txt: 'txt',
+  csv: 'csv',
+  xlsx: 'xlsx',
   pdf: 'pdf',
   doc: 'doc',
   docx: 'doc',
@@ -126,8 +128,20 @@ const isSafeZipEntryName = (entryName) => {
  */
 const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, fileName = '') => {
   try {
-    if (fileType === 'txt') {
+    if (fileType === 'txt' || fileType === 'csv') {
       return buffer.toString('utf-8');
+    }
+
+    if (fileType === 'xlsx') {
+      const XLSX = require('xlsx');
+      const workbook = XLSX.read(buffer, { type: 'buffer' });
+      const sheets = [];
+      workbook.SheetNames.forEach(name => {
+        const sheet = workbook.Sheets[name];
+        const csv = XLSX.utils.sheet_to_csv(sheet);
+        sheets.push(`[Sheet: ${name}]\n${csv}`);
+      });
+      return sheets.join('\n\n');
     }
 
     if (fileType === 'image') {
@@ -228,11 +242,15 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
   try {
     const fileHash = getFileHash(fileName, fileContent);
 
+    // Strip null bytes (\u0000) from content to avoid PostgreSQL error
+    const sanitizedContent = (fileContent || '').replace(/\0/g, '');
+    const sanitizedAnalysis = (llmAnalysis || '').replace(/\0/g, '');
+
     const { embedText } = require('./rag.service');
     let ragRecord = null;
 
     if (ragEnabled) {
-      const fileVector = await embedText(fileContent.slice(0, 2000), 'openrouter', 3, signal);
+      const fileVector = await embedText(sanitizedContent.slice(0, 2000), 'openrouter', 3, signal);
       console.log('[RAG Save] Final fileVector type:', typeof fileVector);
       console.log('[RAG Save] Final fileVector is array:', Array.isArray(fileVector));
       console.log('[RAG Save] Final fileVector length:', fileVector?.length);
@@ -244,8 +262,8 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
           p_file_name: fileName,
           p_file_hash: fileHash,
           p_file_type: fileType,
-          p_original_content: fileContent,
-          p_llm_analysis: llmAnalysis,
+          p_original_content: sanitizedContent,
+          p_llm_analysis: sanitizedAnalysis,
           p_embedding: fileVector,
         })
         .select('id')

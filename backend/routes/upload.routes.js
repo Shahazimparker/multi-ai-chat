@@ -31,11 +31,11 @@ const upload = multer({
   storage,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['text/plain', 'text/javascript', 'application/javascript', 'image/jpeg', 'image/png', 'application/pdf', 'application/zip', 'application/x-zip-compressed', 'application/x-rar-compressed'];
+    const allowedTypes = ['text/plain', 'text/csv', 'text/javascript', 'application/javascript', 'image/jpeg', 'image/png', 'application/pdf', 'application/zip', 'application/x-zip-compressed', 'application/x-rar-compressed', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
 
-    // Allow .docx by checking extension too
+    // Allow by extension too
     const ext = file.originalname.split('.').pop().toLowerCase();
-    if (['doc', 'docx', 'zip', 'js', 'mjs', 'cjs', 'html', 'json', 'css', 'xml', 'yml', 'yaml', 'md', 'sql', 'sh', 'bat', 'php', 'rs', 'swift', 'kt', 'vue', 'svelte', 'rb', 'go', 'cpp', 'java', 'py', 'ts'].includes(ext) || allowedTypes.includes(file.mimetype)) {
+    if (['csv', 'xlsx', 'doc', 'docx', 'zip', 'js', 'mjs', 'cjs', 'html', 'json', 'css', 'xml', 'yml', 'yaml', 'md', 'sql', 'sh', 'bat', 'php', 'rs', 'swift', 'kt', 'vue', 'svelte', 'rb', 'go', 'cpp', 'java', 'py', 'ts'].includes(ext) || allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
       cb(new Error(`File type not allowed: ${file.mimetype}`));
@@ -67,6 +67,8 @@ router.post('/file', requireAuth, upload.single('file'), async (req, res) => {
     const ext = fileName.split('.').pop().toLowerCase();
     const fileTypeMap = {
       txt: 'txt',
+      csv: 'csv',
+      xlsx: 'xlsx',
       pdf: 'pdf',
       doc: 'doc',
       docx: 'doc',
