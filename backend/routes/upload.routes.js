@@ -7,7 +7,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { requireAuth } = require('../middleware/auth');
-const { processUploadedFile, searchUserFilesRAG, deleteUploadedFile, getSupportedFileType } = require('../services/fileUpload.service');
+const { processUploadedFile, searchUserFilesRAG, getFileContent, deleteUploadedFile, getSupportedFileType } = require('../services/fileUpload.service');
 
 
 // Ensure upload directory exists and use absolute path
@@ -168,6 +168,38 @@ router.delete('/:fileId', requireAuth, async (req, res) => {
     await deleteUploadedFile(fileId, req.user.id);
 
     res.json({ message: 'File deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/upload/content/:fileId
+ * Fetch full file content by file ID (used by hybrid tool approach)
+ * The AI calls this via [GET_FILE:id=<fileId>] and the server fetches it
+ */
+router.get('/content/:fileId', requireAuth, async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const { topicId } = req.query;
+
+    if (!topicId) {
+      return res.status(400).json({ error: 'topicId query parameter is required' });
+    }
+
+    const fileData = await getFileContent(fileId, req.user.id, topicId);
+
+    if (!fileData) {
+      return res.status(404).json({ error: 'File not found or access denied' });
+    }
+
+    res.json({
+      id: fileData.id,
+      file_name: fileData.file_name,
+      file_type: fileData.file_type,
+      content: fileData.original_content || fileData.llm_analysis || '',
+      created_at: fileData.created_at,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

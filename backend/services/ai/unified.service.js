@@ -14,7 +14,7 @@ const callOpenAICompatible = async ({ baseURL, apiKey, modelName, messages, syst
 
   const requestBody = {
     model: modelName,
-    max_tokens: 4096,
+    max_tokens: 16000,
     messages,
   };
 

@@ -119,7 +119,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     const { getCachedResponse } = require('../services/cache.service');
     const { buildRAGContext, embedText } = require('../services/rag.service');
     const { buildContextMessages } = require('../services/context.service');
-    const { searchUserFilesRAG } = require('../services/fileUpload.service');
+    const { searchUserFilesRAG, getFileContent } = require('../services/fileUpload.service');
     const {
       createPromptBudget,
       trimTextByTokens,
@@ -204,13 +204,14 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
       console.log(`[Dynamic Budget] Complexity: ${_debug.complexity.toFixed(2)}, Turns: ${_debug.turnCount}, Allocated: ${_debug.allocatedBudget} tokens`);
     }
 
+    // ── HYBRID APPROACH: File names only (not full content) ──
     const fileContext = fileResults.length > 0
-      ? trimTextByTokens(
-        `[UPLOADED FILE CODE]\n${fileResults
-          .map(r => `File: ${r.file_name}\n${r.chunk_text}`)
-          .join('\n\n---\n')}\n[END ANALYSES]\n`,
-        promptBudget.fileTokens
-      )
+      ? `[AVAILABLE UPLOADED FILES]\n${fileResults
+          .map(r => `- ${r.file_name} (id: ${r.file_id})`)
+          .join('\n')}\n[END UPLOADED FILES]\n\n` +
+        `You have access to a "get_file_content" tool. When the user asks about the contents of any uploaded file, ` +
+        `call the tool with the file's id to retrieve its full content. ` +
+        `To use it, respond with: [GET_FILE:id=<file_id>] and I will inject the content.`
       : '';
 
 
@@ -235,27 +236,66 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     aiMessages.push({ role: 'user', content: userContent });
     const promptTokens = estimateMessagesTokens(aiMessages);
 
-    // Get streaming response
-    const { text: reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0 } = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
-    const billableTokens = Math.max(tokensUsed || 0, promptTokens + estimateTokens(reply));
+    // ── Tool-call loop: AI can request file content, we fetch it and re-invoke ──
+    let reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0;
+    let finalReply = '';
+    let billableTokens = 0;
 
+    const MAX_TOOL_ROUNDS = 3;
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      const result = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
+      reply = result.text;
+      tokensUsed = result.tokensUsed;
+      cacheCreationTokens = result.cacheCreationTokens || 0;
+      cacheReadTokens = result.cacheReadTokens || 0;
+
+      if (abortController.signal.aborted) return;
+
+      // Check if AI requested file content via tool
+      const toolMatch = reply.match(/\[GET_FILE:id=([^\]]+)\]/);
+      if (!toolMatch) {
+        finalReply = reply;
+        billableTokens = Math.max(tokensUsed || 0, promptTokens + estimateTokens(finalReply));
+        break;
+      }
+
+      const fileId = toolMatch[1].trim();
+      console.log(`[Stream Tool] AI requested file content: id=${fileId}`);
+
+      const fileData = await getFileContent(fileId, user?.id, topicId);
+      if (!fileData) {
+        aiMessages.push({ role: 'assistant', content: reply });
+        aiMessages.push({ role: 'user', content: `[Tool Result] File with id "${fileId}" not found or access denied.` });
+        continue;
+      }
+
+      const fileContent = fileData.original_content || fileData.llm_analysis || '[No content available]';
+      const contentBlock = `[FILE CONTENT: ${fileData.file_name}]\n\`\`\`\n${fileContent}\n\`\`\`\n[END FILE CONTENT]\n\nNow answer the user's question based on this file content. Be concise and accurate.`;
+
+      aiMessages.push({ role: 'assistant', content: reply.replace(toolMatch[0], '').trim() || `[Requesting file: ${fileData.file_name}]` });
+      aiMessages.push({ role: 'user', content: contentBlock });
+    }
+
+    if (!finalReply) {
+      finalReply = reply || '';
+      billableTokens = Math.max(tokensUsed || 0, promptTokens + estimateTokens(finalReply));
+    }
 
     // Send streamed response in chunks
-    const chunkSize = 10; // Send 10 chars at a time (adjust as needed)
+    const chunkSize = 10;
     let sentChars = 0;
 
-    while (sentChars < reply.length) {
+    while (sentChars < finalReply.length) {
       if (abortController.signal.aborted) break;
 
-      const chunk = reply.slice(sentChars, sentChars + chunkSize);
+      const chunk = finalReply.slice(sentChars, sentChars + chunkSize);
       res.write(`data: ${JSON.stringify({
         type: 'chunk',
         text: chunk,
-        progress: Math.round((sentChars / reply.length) * 100)
+        progress: Math.round((sentChars / finalReply.length) * 100)
       })}\n\n`);
 
       sentChars += chunkSize;
-      // Small delay for realistic streaming effect
       await new Promise(resolve => setTimeout(resolve, 10));
     }
     // ✅ CREATE NEW TOPIC IF NEEDED (BEFORE res.end())

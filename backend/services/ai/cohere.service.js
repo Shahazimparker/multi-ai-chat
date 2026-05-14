@@ -19,7 +19,7 @@ const callCohere = async (modelName, apiKey, messages) => {
       model:        modelName,
       message:      lastMessage,
       chat_history: chatHistory,
-      max_tokens:   4096,
+      max_tokens:   16000,
       temperature:  0.7,
     },
     {

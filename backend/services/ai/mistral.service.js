@@ -11,7 +11,7 @@ const callMistral = async (modelName, apiKey, messages) => {
     {
       model:       modelName,
       messages:    messages.map(m => ({ role: m.role, content: m.content })),
-      max_tokens:  4096,
+      max_tokens:  16000,
       temperature: 0.7,
     },
     {

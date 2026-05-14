@@ -554,7 +554,7 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
     return results.map(r => ({
       file_id: r.id,
       file_name: r.file_name,
-      chunk_text: trimTextByTokens(r.original_content || r.llm_analysis, 300),
+      chunk_text: trimTextByTokens(r.original_content || r.llm_analysis, 2000),
       similarity: r.similarity,
     }));
 
@@ -568,6 +568,34 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
 /**
  * Delete uploaded file and its RAG records
  */
+/**
+ * Get full file content by file_id (for hybrid tool approach)
+ * Returns the complete original_content so the AI can read it on demand
+ */
+const getFileContent = async (fileId, userId, topicId) => {
+  try {
+    if (!fileId || !userId || !topicId) return null;
+
+    const { data, error } = await supabase
+      .from('uploaded_files_rag')
+      .select('id, file_name, file_type, original_content, llm_analysis, created_at')
+      .eq('id', fileId)
+      .eq('user_id', userId)
+      .eq('topic_id', topicId)
+      .single();
+
+    if (error) {
+      console.error('[FileContent] Fetch error:', error.message);
+      return null;
+    }
+
+    return data;
+  } catch (err) {
+    console.error('[FileContent] Failed:', err);
+    return null;
+  }
+};
+
 const deleteUploadedFile = async (fileId, userId) => {
   const { error } = await supabase
     .from('uploaded_files_rag')
@@ -581,6 +609,7 @@ const deleteUploadedFile = async (fileId, userId) => {
 module.exports = {
   processUploadedFile,
   searchUserFilesRAG,
+  getFileContent,
   deleteUploadedFile,
   getTempDir,
   ensureUploadDir,

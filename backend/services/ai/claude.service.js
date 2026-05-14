@@ -10,7 +10,7 @@ Always format code in code blocks when relevant.`;
 
   const response = await client.messages.create({
     model: modelName,
-    max_tokens: 4096,
+    max_tokens: 16000,
     system: [{
       type: "text",
       text: baseSystemPrompt,  // ✅ Static - will cache

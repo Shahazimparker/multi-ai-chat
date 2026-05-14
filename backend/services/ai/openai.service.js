@@ -10,7 +10,7 @@ const callOpenAI = async (modelName, apiKey, messages) => {
 
   const response = await client.chat.completions.create({
     model: modelName,
-    max_tokens: 10000,
+    max_tokens: 16000,
     messages,
     // Prompt caching (if model supports - GPT-4 Turbo+)
   });

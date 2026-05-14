@@ -18,7 +18,7 @@ const { compressPrompt } = require('../services/compress.service');
 const { getCachedResponse, getSemanticCachedResponse, setCachedResponse } = require('../services/cache.service');
 const { buildRAGContext, embedText } = require('../services/rag.service');
 const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
-const { searchUserFilesRAG } = require('../services/fileUpload.service');
+const { searchUserFilesRAG, getFileContent } = require('../services/fileUpload.service');
 const { logAnalytics } = require('../services/analytics.service');
 
 const {
@@ -194,13 +194,18 @@ const sendMessage = async (req, res) => {
       ]);
     }
 
+    // ── HYBRID APPROACH: File names only (not full content) ──
+    // RAG already found relevant files via semantic search.
+    // Instead of injecting full content (which gets trimmed),
+    // we inject only file names + IDs so the AI can request
+    // full content on demand via the get_file_content tool.
     const fileContext = fileResults.length > 0
-      ? trimTextByTokens(
-        `[UPLOADED FILE ANALYSES]\n${fileResults
-          .map(r => `File: ${r.file_name}\n${r.chunk_text}`)
-          .join('\n\n---\n')}\n[END ANALYSES]\n`,
-        promptBudget.fileTokens
-      )
+      ? `[AVAILABLE UPLOADED FILES]\n${fileResults
+          .map(r => `- ${r.file_name} (id: ${r.file_id})`)
+          .join('\n')}\n[END UPLOADED FILES]\n\n` +
+        `You have access to a "get_file_content" tool. When the user asks about the contents of any uploaded file, ` +
+        `call the tool with the file's id to retrieve its full content. ` +
+        `To use it, respond with: [GET_FILE:id=<file_id>] and I will inject the content.`
       : '';
 
 
@@ -254,15 +259,59 @@ const sendMessage = async (req, res) => {
     }
 
     // ── 9. Call AI ───────────────────────────────────────────
-    const { text: reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0 } = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
-    const billableTokens = Math.max(tokensUsed || 0, promptTokens + estimateTokens(reply));
+    let reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0;
+    let finalReply = '';
+
+    // Tool-call loop: AI can request file content, we fetch it and re-invoke
+    const MAX_TOOL_ROUNDS = 3;
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      const result = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
+      reply = result.text;
+      tokensUsed = result.tokensUsed;
+      cacheCreationTokens = result.cacheCreationTokens || 0;
+      cacheReadTokens = result.cacheReadTokens || 0;
+
+      if (abortController.signal.aborted) return;
+
+      // Check if AI requested file content via tool
+      const toolMatch = reply.match(/\[GET_FILE:id=([^\]]+)\]/);
+      if (!toolMatch) {
+        finalReply = reply;
+        break; // No tool call — done
+      }
+
+      const fileId = toolMatch[1].trim();
+      console.log(`[Tool] AI requested file content: id=${fileId}`);
+
+      // Fetch the full file content
+      const fileData = await getFileContent(fileId, user?.id, topicId);
+      if (!fileData) {
+        // File not found — tell AI
+        aiMessages.push({ role: 'assistant', content: reply });
+        aiMessages.push({ role: 'user', content: `[Tool Result] File with id "${fileId}" not found or access denied.` });
+        continue;
+      }
+
+      const fileContent = fileData.original_content || fileData.llm_analysis || '[No content available]';
+      const contentBlock = `[FILE CONTENT: ${fileData.file_name}]\n\`\`\`\n${fileContent}\n\`\`\`\n[END FILE CONTENT]\n\nNow answer the user's question based on this file content. Be concise and accurate.`;
+
+      // Inject AI's tool call + file content as context for the next round
+      aiMessages.push({ role: 'assistant', content: reply.replace(toolMatch[0], '').trim() || `[Requesting file: ${fileData.file_name}]` });
+      aiMessages.push({ role: 'user', content: contentBlock });
+    }
+
+    if (!finalReply) {
+      finalReply = reply || '';
+    }
+
+    const billableTokens = Math.max(tokensUsed || 0, promptTokens + estimateTokens(finalReply));
 
     // Check if user aborted while AI was generating
     if (abortController.signal.aborted) return;
 
     // ── 10. Cache the response for future repeated queries ────
     if (!isIdentityQuestion) {
-      await setCachedResponse(finalQuery, modelId, reply, queryVector);
+      await setCachedResponse(finalQuery, modelId, finalReply, queryVector);
     }
 
     // ── 12. Save messages to DB (logged-in users only) ────────
@@ -288,7 +337,7 @@ const sendMessage = async (req, res) => {
         // Save user message + assistant reply
         await supabase.from('messages').insert([
           { topic_id: resolvedTopicId, user_id: user.id, role: 'user', content: message, model: modelId, tokens_used: estimatedInputTokens },
-          { topic_id: resolvedTopicId, user_id: user.id, role: 'assistant', content: reply, model: modelId, tokens_used: billableTokens },
+          { topic_id: resolvedTopicId, user_id: user.id, role: 'assistant', content: finalReply, model: modelId, tokens_used: billableTokens },
         ]);
 
         // Update topic timestamp
@@ -314,7 +363,7 @@ const sendMessage = async (req, res) => {
 
     // ── 14. Return response ───────────────────────────────────
     res.json({
-      reply,
+      reply: finalReply,
       tokensUsed: billableTokens,
       topicId: resolvedTopicId,
       cacheHit: false,

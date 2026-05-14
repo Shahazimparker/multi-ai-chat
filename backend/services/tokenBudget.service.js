@@ -66,15 +66,16 @@ const trimContextBlock = (block, maxTokens) => trimTextByTokens(block, maxTokens
 
 const createPromptBudget = (modelConfig = {}) => {
   const modelLimit = modelConfig.maxTokens || 4096;
-  const reservedOutputTokens = Math.min(1600, Math.max(800, Math.floor(modelLimit * 0.35)));
+  const reservedOutputTokens = Math.min(4000, Math.max(800, Math.floor(modelLimit * 0.35)));
   const maxPromptTokens = Math.max(1200, modelLimit - reservedOutputTokens);
 
+  // HYBRID APPROACH: fileTokens reduced (only file names), redistributed to history + rag
   return {
     maxPromptTokens,
     systemTokens: Math.floor(maxPromptTokens * 0.30),
-    historyTokens: Math.floor(maxPromptTokens * 0.25),
-    ragTokens: Math.floor(maxPromptTokens * 0.18),
-    fileTokens: Math.floor(maxPromptTokens * 0.22),
+    historyTokens: Math.floor(maxPromptTokens * 0.32),  // ↑ was 0.25
+    ragTokens: Math.floor(maxPromptTokens * 0.23),       // ↑ was 0.18
+    fileTokens: Math.floor(maxPromptTokens * 0.05),      // ↓ was 0.22 (only file names now)
     queryTokens: Math.floor(maxPromptTokens * 0.18),
   };
 };
@@ -166,12 +167,13 @@ const createDynamicPromptBudget = (turnCount, complexityScore, modelConfig = {})
     historyTokens = 1500;
   }
 
+  // HYBRID APPROACH: fileTokens reduced (only file names), redistributed to history + rag
   return {
     maxPromptTokens,
     systemTokens: Math.floor(maxPromptTokens * 0.20),
     historyTokens,                                        // ← DYNAMIC!
-    ragTokens: Math.floor(maxPromptTokens * 0.15),
-    fileTokens: Math.floor(maxPromptTokens * 0.15),
+    ragTokens: Math.floor(maxPromptTokens * 0.20),        // ↑ was 0.15
+    fileTokens: Math.floor(maxPromptTokens * 0.05),       // ↓ was 0.15 (only file names now)
     queryTokens: Math.floor(maxPromptTokens * 0.20),
     // Debug info
     _debug: {
