@@ -596,6 +596,42 @@ const getFileContent = async (fileId, userId, topicId) => {
   }
 };
 
+/**
+ * List uploaded files for a topic (no similarity filter)
+ * @param {string} userId
+ * @param {string} topicId
+ * @param {number} maxFiles - max files to return (default 200)
+ */
+const listUserFiles = async (userId, topicId, maxFiles = 200) => {
+  try {
+    if (!userId || !topicId) return [];
+
+    const { data, error, count } = await supabase
+      .from('uploaded_files_rag')
+      .select('id, file_name, file_type, created_at', { count: 'exact' })
+      .eq('user_id', userId)
+      .eq('topic_id', topicId)
+      .order('created_at', { ascending: false })
+      .limit(maxFiles);
+
+    if (error) {
+      console.error('[listUserFiles] error:', error.message);
+      return [];
+    }
+
+    const files = (data || []).map(r => ({
+      file_id: r.id,
+      file_name: r.file_name,
+      file_type: r.file_type,
+    }));
+
+    return { files, totalCount: count || files.length };
+  } catch (err) {
+    console.error('[listUserFiles] Failed:', err);
+    return { files: [], totalCount: 0 };
+  }
+};
+
 const deleteUploadedFile = async (fileId, userId) => {
   const { error } = await supabase
     .from('uploaded_files_rag')
@@ -610,6 +646,7 @@ module.exports = {
   processUploadedFile,
   searchUserFilesRAG,
   getFileContent,
+  listUserFiles,
   deleteUploadedFile,
   getTempDir,
   ensureUploadDir,

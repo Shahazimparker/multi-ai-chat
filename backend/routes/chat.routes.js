@@ -119,7 +119,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     const { getCachedResponse } = require('../services/cache.service');
     const { buildRAGContext, embedText } = require('../services/rag.service');
     const { buildContextMessages } = require('../services/context.service');
-    const { searchUserFilesRAG, getFileContent } = require('../services/fileUpload.service');
+    const { searchUserFilesRAG, getFileContent, listUserFiles } = require('../services/fileUpload.service');
     const {
       createPromptBudget,
       trimTextByTokens,
@@ -157,6 +157,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
 
     let ragContext = '';
     let fileResults = [];
+    let totalFileCount = 0;
 
     if (ragEnabled) {
       // Check if user has uploaded files for this topic
@@ -178,15 +179,11 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
         );
         console.log('[RAG] Context:', ragContext.slice(0, 100));
 
-        fileResults = await searchUserFilesRAG(
-          message,
-          user?.id,
-          topicId,
-          abortController.signal,
-          'openrouter'
-        );
-        console.log('[RAG] FileResults count:', fileResults?.length);
-        console.log('[RAG] FileResults:', JSON.stringify(fileResults, null, 2));
+        // HYBRID: Get ALL files for the topic (no limit, no similarity filter)
+        const fileData = await listUserFiles(user?.id, topicId);
+        fileResults = fileData.files || [];
+        totalFileCount = fileData.totalCount || 0;
+        console.log('[RAG] FileResults count:', fileResults.length, 'total:', totalFileCount);
 
       }
     }
@@ -204,14 +201,19 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
       console.log(`[Dynamic Budget] Complexity: ${_debug.complexity.toFixed(2)}, Turns: ${_debug.turnCount}, Allocated: ${_debug.allocatedBudget} tokens`);
     }
 
-    // ── HYBRID APPROACH: File names only (not full content) ──
+    // ── HYBRID APPROACH: File names only, tools for content ──
+    const fileCountNote = totalFileCount > fileResults.length
+      ? `\n(Showing ${fileResults.length} of ${totalFileCount} total files — use SEARCH_FILES to find older ones)`
+      : '';
     const fileContext = fileResults.length > 0
       ? `[AVAILABLE UPLOADED FILES]\n${fileResults
           .map(r => `- ${r.file_name} (id: ${r.file_id})`)
-          .join('\n')}\n[END UPLOADED FILES]\n\n` +
-        `You have access to a "get_file_content" tool. When the user asks about the contents of any uploaded file, ` +
-        `call the tool with the file's id to retrieve its full content. ` +
-        `To use it, respond with: [GET_FILE:id=<file_id>] and I will inject the content.`
+          .join('\n')}${fileCountNote}\n[END UPLOADED FILES]\n\n` +
+        `You have access to two tools for uploaded files:\n` +
+        `1. SEARCH_FILES — use when the user asks what a file contains or which file has specific data. ` +
+        `Respond with: [SEARCH_FILES:query=<search text>] and I will return brief snippets of matching files.\n` +
+        `2. GET_FILE — use when you need the full content of a specific file. ` +
+        `Respond with: [GET_FILE:id=<file_id>] and I will inject the full content.`
       : '';
 
 
@@ -251,29 +253,49 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
 
       if (abortController.signal.aborted) return;
 
-      // Check if AI requested file content via tool
-      const toolMatch = reply.match(/\[GET_FILE:id=([^\]]+)\]/);
-      if (!toolMatch) {
-        finalReply = reply;
-        billableTokens = Math.max(tokensUsed || 0, promptTokens + estimateTokens(finalReply));
-        break;
-      }
+      // Check for SEARCH_FILES tool call
+      const searchMatch = reply.match(/\[SEARCH_FILES:query=([^\]]+)\]/);
+      if (searchMatch) {
+        const query = searchMatch[1].trim();
+        console.log(`[Stream Tool] AI searching files: query="${query}"`);
 
-      const fileId = toolMatch[1].trim();
-      console.log(`[Stream Tool] AI requested file content: id=${fileId}`);
+        const searchResults = await searchUserFilesRAG(query, user?.id, topicId, abortController.signal);
+        const resultBlock = searchResults.length > 0
+          ? `[SEARCH RESULTS for "${query}"]\n${searchResults
+              .map(r => `- ${r.file_name} (id: ${r.file_id}): ${r.chunk_text.slice(0, 300)}`)
+              .join('\n')}\n[END SEARCH RESULTS]`
+          : `[SEARCH RESULTS for "${query}"]\nNo matching files found.\n[END SEARCH RESULTS]`;
 
-      const fileData = await getFileContent(fileId, user?.id, topicId);
-      if (!fileData) {
-        aiMessages.push({ role: 'assistant', content: reply });
-        aiMessages.push({ role: 'user', content: `[Tool Result] File with id "${fileId}" not found or access denied.` });
+        aiMessages.push({ role: 'assistant', content: reply.replace(searchMatch[0], '').trim() || `[Searching files for "${query}"]` });
+        aiMessages.push({ role: 'user', content: resultBlock });
         continue;
       }
 
-      const fileContent = fileData.original_content || fileData.llm_analysis || '[No content available]';
-      const contentBlock = `[FILE CONTENT: ${fileData.file_name}]\n\`\`\`\n${fileContent}\n\`\`\`\n[END FILE CONTENT]\n\nNow answer the user's question based on this file content. Be concise and accurate.`;
+      // Check for GET_FILE tool call
+      const getFileMatch = reply.match(/\[GET_FILE:id=([^\]]+)\]/);
+      if (getFileMatch) {
+        const fileId = getFileMatch[1].trim();
+        console.log(`[Stream Tool] AI requested file content: id=${fileId}`);
 
-      aiMessages.push({ role: 'assistant', content: reply.replace(toolMatch[0], '').trim() || `[Requesting file: ${fileData.file_name}]` });
-      aiMessages.push({ role: 'user', content: contentBlock });
+        const fileData = await getFileContent(fileId, user?.id, topicId);
+        if (!fileData) {
+          aiMessages.push({ role: 'assistant', content: reply });
+          aiMessages.push({ role: 'user', content: `[Tool Result] File with id "${fileId}" not found or access denied.` });
+          continue;
+        }
+
+        const fileContent = fileData.original_content || fileData.llm_analysis || '[No content available]';
+        const contentBlock = `[FILE CONTENT: ${fileData.file_name}]\n\`\`\`\n${fileContent}\n\`\`\`\n[END FILE CONTENT]\n\nNow answer the user's question based on this file content. Be concise and accurate.`;
+
+        aiMessages.push({ role: 'assistant', content: reply.replace(getFileMatch[0], '').trim() || `[Requesting file: ${fileData.file_name}]` });
+        aiMessages.push({ role: 'user', content: contentBlock });
+        continue;
+      }
+
+      // No tool call — done
+      finalReply = reply;
+      billableTokens = Math.max(tokensUsed || 0, promptTokens + estimateTokens(finalReply));
+      break;
     }
 
     if (!finalReply) {

@@ -18,7 +18,7 @@ const { compressPrompt } = require('../services/compress.service');
 const { getCachedResponse, getSemanticCachedResponse, setCachedResponse } = require('../services/cache.service');
 const { buildRAGContext, embedText } = require('../services/rag.service');
 const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
-const { searchUserFilesRAG, getFileContent } = require('../services/fileUpload.service');
+const { searchUserFilesRAG, getFileContent, listUserFiles } = require('../services/fileUpload.service');
 const { logAnalytics } = require('../services/analytics.service');
 
 const {
@@ -174,10 +174,11 @@ const sendMessage = async (req, res) => {
     // ── 6. Fetch RAG context ─────────────────────────────────
     let ragContext = '';
     let fileResults = [];
+    let totalFileCount = 0;
 
     if (ragEnabled) {
       if (abortController.signal.aborted) throw { name: 'AbortError' };
-      [ragContext, fileResults] = await Promise.all([
+      const [ragCtx, fileData] = await Promise.all([
         buildRAGContext(
           finalQuery,
           modelConfig.provider,
@@ -185,27 +186,30 @@ const sendMessage = async (req, res) => {
           queryVector,
           { tokenBudget: promptBudget.ragTokens }
         ),
-        searchUserFilesRAG(
-          finalQuery,
-          user?.id,
-          topicId,
-          abortController.signal
-        )
+        // HYBRID: Get ALL files for the topic (no limit, no similarity filter)
+        listUserFiles(user?.id, topicId)
       ]);
+      ragContext = ragCtx;
+      fileResults = fileData.files || [];
+      totalFileCount = fileData.totalCount || 0;
     }
 
-    // ── HYBRID APPROACH: File names only (not full content) ──
-    // RAG already found relevant files via semantic search.
-    // Instead of injecting full content (which gets trimmed),
-    // we inject only file names + IDs so the AI can request
-    // full content on demand via the get_file_content tool.
+    // ── HYBRID APPROACH: File names only, tools for content ──
+    // All file names listed (minimal tokens). AI has two tools:
+    // 1. [SEARCH_FILES:query=<text>] — semantic search across uploaded files, returns brief snippets
+    // 2. [GET_FILE:id=<file_id>] — fetch full file content on demand
+    const fileCountNote = totalFileCount > fileResults.length
+      ? `\n(Showing ${fileResults.length} of ${totalFileCount} total files — use SEARCH_FILES to find older ones)`
+      : '';
     const fileContext = fileResults.length > 0
       ? `[AVAILABLE UPLOADED FILES]\n${fileResults
           .map(r => `- ${r.file_name} (id: ${r.file_id})`)
-          .join('\n')}\n[END UPLOADED FILES]\n\n` +
-        `You have access to a "get_file_content" tool. When the user asks about the contents of any uploaded file, ` +
-        `call the tool with the file's id to retrieve its full content. ` +
-        `To use it, respond with: [GET_FILE:id=<file_id>] and I will inject the content.`
+          .join('\n')}${fileCountNote}\n[END UPLOADED FILES]\n\n` +
+        `You have access to two tools for uploaded files:\n` +
+        `1. SEARCH_FILES — use when the user asks what a file contains or which file has specific data. ` +
+        `Respond with: [SEARCH_FILES:query=<search text>] and I will return brief snippets of matching files.\n` +
+        `2. GET_FILE — use when you need the full content of a specific file. ` +
+        `Respond with: [GET_FILE:id=<file_id>] and I will inject the full content.`
       : '';
 
 
@@ -262,7 +266,7 @@ const sendMessage = async (req, res) => {
     let reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0;
     let finalReply = '';
 
-    // Tool-call loop: AI can request file content, we fetch it and re-invoke
+    // Tool-call loop: AI can search files or request full content
     const MAX_TOOL_ROUNDS = 3;
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const result = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
@@ -273,31 +277,48 @@ const sendMessage = async (req, res) => {
 
       if (abortController.signal.aborted) return;
 
-      // Check if AI requested file content via tool
-      const toolMatch = reply.match(/\[GET_FILE:id=([^\]]+)\]/);
-      if (!toolMatch) {
-        finalReply = reply;
-        break; // No tool call — done
-      }
+      // Check for SEARCH_FILES tool call
+      const searchMatch = reply.match(/\[SEARCH_FILES:query=([^\]]+)\]/);
+      if (searchMatch) {
+        const query = searchMatch[1].trim();
+        console.log(`[Tool] AI searching files: query="${query}"`);
 
-      const fileId = toolMatch[1].trim();
-      console.log(`[Tool] AI requested file content: id=${fileId}`);
+        const searchResults = await searchUserFilesRAG(query, user?.id, topicId, abortController.signal);
+        const resultBlock = searchResults.length > 0
+          ? `[SEARCH RESULTS for "${query}"]\n${searchResults
+              .map(r => `- ${r.file_name} (id: ${r.file_id}): ${r.chunk_text.slice(0, 300)}`)
+              .join('\n')}\n[END SEARCH RESULTS]`
+          : `[SEARCH RESULTS for "${query}"]\nNo matching files found.\n[END SEARCH RESULTS]`;
 
-      // Fetch the full file content
-      const fileData = await getFileContent(fileId, user?.id, topicId);
-      if (!fileData) {
-        // File not found — tell AI
-        aiMessages.push({ role: 'assistant', content: reply });
-        aiMessages.push({ role: 'user', content: `[Tool Result] File with id "${fileId}" not found or access denied.` });
+        aiMessages.push({ role: 'assistant', content: reply.replace(searchMatch[0], '').trim() || `[Searching files for "${query}"]` });
+        aiMessages.push({ role: 'user', content: resultBlock });
         continue;
       }
 
-      const fileContent = fileData.original_content || fileData.llm_analysis || '[No content available]';
-      const contentBlock = `[FILE CONTENT: ${fileData.file_name}]\n\`\`\`\n${fileContent}\n\`\`\`\n[END FILE CONTENT]\n\nNow answer the user's question based on this file content. Be concise and accurate.`;
+      // Check for GET_FILE tool call
+      const getFileMatch = reply.match(/\[GET_FILE:id=([^\]]+)\]/);
+      if (getFileMatch) {
+        const fileId = getFileMatch[1].trim();
+        console.log(`[Tool] AI requested file content: id=${fileId}`);
 
-      // Inject AI's tool call + file content as context for the next round
-      aiMessages.push({ role: 'assistant', content: reply.replace(toolMatch[0], '').trim() || `[Requesting file: ${fileData.file_name}]` });
-      aiMessages.push({ role: 'user', content: contentBlock });
+        const fileData = await getFileContent(fileId, user?.id, topicId);
+        if (!fileData) {
+          aiMessages.push({ role: 'assistant', content: reply });
+          aiMessages.push({ role: 'user', content: `[Tool Result] File with id "${fileId}" not found or access denied.` });
+          continue;
+        }
+
+        const fileContent = fileData.original_content || fileData.llm_analysis || '[No content available]';
+        const contentBlock = `[FILE CONTENT: ${fileData.file_name}]\n\`\`\`\n${fileContent}\n\`\`\`\n[END FILE CONTENT]\n\nNow answer the user's question based on this file content. Be concise and accurate.`;
+
+        aiMessages.push({ role: 'assistant', content: reply.replace(getFileMatch[0], '').trim() || `[Requesting file: ${fileData.file_name}]` });
+        aiMessages.push({ role: 'user', content: contentBlock });
+        continue;
+      }
+
+      // No tool call — done
+      finalReply = reply;
+      break;
     }
 
     if (!finalReply) {
