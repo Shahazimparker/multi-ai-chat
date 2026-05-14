@@ -14,6 +14,8 @@ import MessageBubble from '../components/chat/MessageBubble';
 import './AnonymousPage.css';
 
 const SESSION_KEY = 'anon_messages'; // sessionStorage key
+const TOKEN_KEY   = 'anon_tokens';   // sessionStorage key for token count
+const MAX_TOKENS  = 20000;           // max tokens per anonymous session
 
 const AnonymousPage = () => {
   const navigate  = useNavigate();
@@ -30,12 +32,21 @@ const AnonymousPage = () => {
   const [model,   setModel]   = useState(null);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
+  const [tokensUsed, setTokensUsed] = useState(() => {
+    try { return Number(sessionStorage.getItem(TOKEN_KEY)) || 0; }
+    catch { return 0; }
+  });
 
   // Persist to sessionStorage on every change
   useEffect(() => {
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(messages));
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Persist token count
+  useEffect(() => {
+    sessionStorage.setItem(TOKEN_KEY, String(tokensUsed));
+  }, [tokensUsed]);
 
   const handleInputChange = (e) => {
     setInput(e.target.value);
@@ -55,10 +66,19 @@ const AnonymousPage = () => {
 
   const handleSend = async () => {
     if (!input.trim() || loading || !model) return;
+    if (tokensUsed >= MAX_TOKENS) {
+      setError(`Token limit reached (${MAX_TOKENS}). Start a new session to continue.`);
+      return;
+    }
     const userMsg = input.trim();
     setInput('');
     setError('');
     if (taRef.current) taRef.current.style.height = 'auto';
+
+    // Build history from current messages (excluding any streaming assistant)
+    const history = messages
+      .filter(m => m.content && !m.streaming)
+      .map(m => ({ role: m.role, content: m.content }));
 
     setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
     setLoading(true);
@@ -81,6 +101,7 @@ const AnonymousPage = () => {
           memoryMode: 'accurate',
           historyLimit: 5,
           ragEnabled: false,
+          history, // send local session history for context
         }),
         signal: controller.signal,
       });
@@ -134,6 +155,7 @@ const AnonymousPage = () => {
         updated[updated.length - 1] = { ...updated[updated.length - 1], streaming: false, model: metadata.model, tokensUsed: metadata.tokensUsed, cacheHit: metadata.cacheHit };
         return updated;
       });
+      if (metadata.tokensUsed) setTokensUsed(prev => prev + metadata.tokensUsed);
     } catch (err) {
       if (err.name === 'AbortError') {
         setMessages(prev => {
@@ -162,7 +184,9 @@ const AnonymousPage = () => {
   const clearSession = () => {
     if (window.confirm('Clear all messages?')) {
       setMessages([]);
+      setTokensUsed(0);
       sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(TOKEN_KEY);
     }
   };
 
@@ -179,6 +203,7 @@ const AnonymousPage = () => {
         </div>
         <div className="anon-notice">Session only · Not saved</div>
         <div className="anon-header-right">
+          <span className="anon-token-count">{tokensUsed}/{MAX_TOKENS} tokens</span>
           <ModelSelector selectedModel={model} onModelChange={setModel} />
           {messages.length > 0 && (
             <button className="clear-btn" onClick={clearSession}>Clear</button>
@@ -191,8 +216,8 @@ const AnonymousPage = () => {
         {messages.length === 0 ? (
           <div className="anon-empty">
             <Ghost size={40} className="ghost-icon" />
-            <h3>No account needed</h3>
-            <p>Your messages are only stored in this browser session. Close the tab and they're gone.</p>
+            <h3>Start of conversation</h3>
+            <p>This is a fresh anonymous session. Messages are stored only in this tab and lost when you close it.</p>
           </div>
         ) : (
           messages.map((msg, i) => <MessageBubble key={i} message={msg} />)
@@ -220,7 +245,7 @@ const AnonymousPage = () => {
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             placeholder={model ? `Message ${model.label}…` : 'Select a model first…'}
-            disabled={loading || !model}
+            disabled={loading || !model || tokensUsed >= MAX_TOKENS}
             rows={1}
           />
           <button className="anon-send" onClick={loading ? handleStop : handleSend} disabled={loading ? false : (!input.trim() || !model)}>

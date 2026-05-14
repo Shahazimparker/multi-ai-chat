@@ -94,6 +94,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     memoryMode = 'summarized',
     historyLimit = 5,
     ragEnabled = false,
+    history, // client-provided conversation history (used for anonymous sessions)
   } = req.body;
 
   const user = req.user;
@@ -221,6 +222,9 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     // Add history context if it exists
     if (historyContext && historyContext.length > 0) {
       aiMessages.push(...historyContext);
+    } else if (history && Array.isArray(history) && history.length > 0) {
+      // For anonymous sessions: use client-provided history
+      aiMessages.push(...history);
     }
     const userContent = image
       ? [
