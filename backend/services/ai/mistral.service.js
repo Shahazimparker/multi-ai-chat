@@ -5,7 +5,7 @@
 
 const axios = require('axios');
 
-const callMistral = async (modelName, apiKey, messages) => {
+const callMistral = async (modelName, apiKey, messages, signal = null) => {
   const response = await axios.post(
     'https://api.mistral.ai/v1/chat/completions',
     {
@@ -19,6 +19,7 @@ const callMistral = async (modelName, apiKey, messages) => {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
+      signal,
     }
   );
 

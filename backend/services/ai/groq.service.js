@@ -5,14 +5,14 @@
 
 const Groq = require('groq-sdk');
 
-const callGroq = async (modelName, apiKey, messages) => {
+const callGroq = async (modelName, apiKey, messages, signal = null) => {
   const client   = new Groq({ apiKey });
   const response = await client.chat.completions.create({
     model:       modelName,
     messages:    messages.map(m => ({ role: m.role, content: m.content })),
     max_tokens:  16000,
     temperature: 0.7,
-  });
+  }, { signal });
 
   const text       = response.choices[0]?.message?.content || '';
   const tokensUsed = response.usage?.total_tokens || 0;

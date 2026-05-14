@@ -5,25 +5,42 @@
 
 const { callOpenAICompatible } = require('./unified.service');
 
-const callOpenRouter = async (modelName, apiKey, messages) => {
+const callOpenRouter = async (modelName, apiKey, messages, signal = null) => {
   // Check if model supports cache
   const isClaudeModel = modelName.includes('claude');
   const isGPT4Turbo = modelName.includes('gpt-4-turbo');
+
+  // Extract system messages from the messages array
+  const systemMessages = messages.filter(m => m.role === 'system');
+  const chatMessages = messages.filter(m => m.role !== 'system');
 
   const baseConfig = {
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey,
     modelName,
-    messages,
+    messages: chatMessages,
+    signal,
   };
 
-  // Enable cache for Claude and GPT-4 Turbo models
-  if (isClaudeModel || isGPT4Turbo) {
-    baseConfig.system = [{
-      type: "text",
-      text: "You are a helpful AI assistant.",
-      cache_control: { type: "ephemeral" }
-    }];
+  // Claude models: use Anthropic-style system parameter for prompt caching
+  // Other models: prepend system as a system-role message in the messages array
+  if (systemMessages.length > 0) {
+    const systemText = systemMessages.map(m => m.content).join('\n');
+
+    if (isClaudeModel || isGPT4Turbo) {
+      // Anthropic-style system with cache control
+      baseConfig.system = [{
+        type: "text",
+        text: systemText,
+        cache_control: { type: "ephemeral" }
+      }];
+    } else {
+      // OpenAI-compatible: prepend system message
+      baseConfig.messages = [
+        { role: 'system', content: systemText },
+        ...chatMessages,
+      ];
+    }
   }
 
   const response = await callOpenAICompatible(baseConfig);

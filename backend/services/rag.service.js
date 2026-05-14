@@ -60,8 +60,6 @@ const setCachedEmbedding = (key, vector) => {
  * @param {AbortSignal} signal
  */
 const embedText = async (text, provider = 'openrouter', retries = 3, signal = null) => {
-  console.log('[RAG] embedText called - provider:', provider, 'text length:', text.length);
-
   // Immediate check if already aborted
   throwIfAborted(signal);
 
@@ -69,11 +67,8 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
   const cacheKey = getCacheKey(text, provider);
   const cachedVector = getCachedEmbedding(cacheKey);
   if (cachedVector) {
-    console.log('[RAG] Using cached embedding, length:', cachedVector.length);
-    //console.log('[RAG] Using cached embedding');
     return cachedVector;
   }
-  console.log('[RAG] No cache hit, generating new embedding...');
 
   if (provider === 'openrouter') {
     if (!process.env.OPENROUTER_API_KEY) {
@@ -98,7 +93,6 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
       );
 
       let vector = response.data.data[0].embedding;
-      console.log('[RAG] OpenRouter embedding length:', vector.length);
 
       if (vector.length < 1536) {
         vector = [...vector, ...new Array(1536 - vector.length).fill(0)];

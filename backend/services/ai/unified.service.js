@@ -5,7 +5,7 @@
 
 const OpenAI = require('openai');
 
-const callOpenAICompatible = async ({ baseURL, apiKey, modelName, messages, system }) => {
+const callOpenAICompatible = async ({ baseURL, apiKey, modelName, messages, system, signal }) => {
   const client = new OpenAI({
     apiKey,
     baseURL,
@@ -18,12 +18,14 @@ const callOpenAICompatible = async ({ baseURL, apiKey, modelName, messages, syst
     messages,
   };
 
-  // Add system if provided (for cache control)
+  // Add system field only if explicitly provided (OpenRouter supports this for Claude)
   if (system) {
-    requestBody.system = system;
+    requestBody.system = typeof system === 'string'
+      ? system
+      : system;
   }
 
-  const response = await client.chat.completions.create(requestBody);
+  const response = await client.chat.completions.create(requestBody, { signal });
 
   return {
     text: response.choices[0].message.content,

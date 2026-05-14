@@ -5,12 +5,13 @@
 
 const { callOpenAICompatible } = require('./unified.service');
 
-const callAnyAPI = async (modelName, apiKey, messages) => {
+const callAnyAPI = async (modelName, apiKey, messages, signal = null) => {
   return callOpenAICompatible({
     baseURL: 'https://api.anyapi.ai/v1',
     apiKey,
     modelName,
     messages,
+    signal,
   });
 };
 

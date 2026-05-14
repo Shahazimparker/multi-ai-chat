@@ -1,6 +1,6 @@
 const Anthropic = require('@anthropic-ai/sdk');
 
-const callClaude = async (modelName, apiKey, messages) => {
+const callClaude = async (modelName, apiKey, messages, signal = null) => {
   const client = new Anthropic({ apiKey });
 
   // SEPARATE static system prompt (cacheable)
@@ -17,7 +17,7 @@ Always format code in code blocks when relevant.`;
       cache_control: { type: "ephemeral" }
     }],
     messages: messages,  // ✅ Dynamic content (user query + history)
-  });
+  }, { signal });
 
   return {
     text: response.content[0].type === 'text' ? response.content[0].text : '',

@@ -143,12 +143,9 @@ const ChatPage = () => {
 
         setUploadedFiles(prev => [...prev, uploadRes.data]);
 
-        if (uploadRes.data.extractedText) {
-          const fileContent = uploadRes.data.extractedText;
-          finalMessage = `[File: ${uploadRes.data.fileName}]\n${fileContent}\n\nPlease analyze this file.`;
-        } else if (uploadRes.data.fileType === 'zip') {
-          finalMessage = `[ZIP: ${uploadRes.data.fileName}] Please analyze all extracted files.`;
-        }
+        // HYBRID: Don't inject file content into message — AI sees file names via listUserFiles
+        // and uses SEARCH_FILES / GET_FILE tools to access content on demand
+        finalMessage = `[File uploaded: ${uploadRes.data.fileName}]`;
       }
 
       const apiUrl = process.env.NODE_ENV === 'production'
@@ -445,7 +442,10 @@ const ChatPage = () => {
                     min="2"
                     max="20"
                     value={historyLimit}
-                    onChange={e => setHistoryLimit(e.target.value)}
+                    onChange={e => {
+                      const val = parseInt(e.target.value, 10);
+                      setHistoryLimit(isNaN(val) ? 2 : Math.max(2, Math.min(20, val)));
+                    }}
                   />
                   msgs
                 </label>

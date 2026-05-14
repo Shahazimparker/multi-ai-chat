@@ -5,13 +5,20 @@
 
 const axios = require('axios');
 
-const callCohere = async (modelName, apiKey, messages) => {
-  // Cohere separates last user message from chat history
-  const chatHistory = messages.slice(0, -1).map(m => ({
+const callCohere = async (modelName, apiKey, messages, signal = null) => {
+  // Extract system preamble from messages (Cohere uses preamble_override for this)
+  const systemMessages = messages.filter(m => m.role === 'system');
+  const preamble = systemMessages.length > 0
+    ? systemMessages.map(m => m.content).join('\n')
+    : undefined;
+
+  // Chat history: system messages removed, non-user → CHATBOT, user → USER
+  const nonSystemMsgs = messages.filter(m => m.role !== 'system');
+  const chatHistory = nonSystemMsgs.slice(0, -1).map(m => ({
     role:    m.role === 'user' ? 'USER' : 'CHATBOT',
     message: m.content,
   }));
-  const lastMessage = messages[messages.length - 1].content;
+  const lastMessage = nonSystemMsgs[nonSystemMsgs.length - 1]?.content || '';
 
   const response = await axios.post(
     'https://api.cohere.ai/v1/chat',
@@ -19,6 +26,7 @@ const callCohere = async (modelName, apiKey, messages) => {
       model:        modelName,
       message:      lastMessage,
       chat_history: chatHistory,
+      ...(preamble && { preamble_override: preamble }),
       max_tokens:   16000,
       temperature:  0.7,
     },
@@ -27,6 +35,7 @@ const callCohere = async (modelName, apiKey, messages) => {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
+      signal,
     }
   );
 

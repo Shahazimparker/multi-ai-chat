@@ -320,7 +320,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
       sentChars += chunkSize;
       await new Promise(resolve => setTimeout(resolve, 10));
     }
-    // ✅ CREATE NEW TOPIC IF NEEDED (BEFORE res.end())
+    // ✅ CREATE NEW TOPIC IF NEEDED (BEFORE persistence)
     if (!isAnonymous && !resolvedTopicId) {
       const topicTitle = message.trim().slice(0, 60) + (message.length > 60 ? '...' : '');
       const { data: newTopic, error: topicError } = await supabase
@@ -336,24 +336,10 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
         console.log('[Stream] New topic created:', resolvedTopicId);
       }
     }
-    // ✅ SEND COMPLETION RESPONSE FIRST (with topicId)
-    res.write(`data: ${JSON.stringify({
-      type: 'done',
-      tokensUsed: billableTokens,
-      cacheCreationTokens,
-      cacheReadTokens,
-      cacheHit: cacheReadTokens > 0,
-      model: effectiveModelConfig.label,
-      topicId: resolvedTopicId || null,
-      responseTime: Date.now() - startTime
-    })}\n\n`);
-
-    if (!res.writableEnded && !res.destroyed) {
-      try { res.end(); } catch { }
-    }
-    // ✅ THEN SAVE MESSAGES ASYNCHRONOUSLY (fire and forget)
+    // ✅ SAVE MESSAGES TO DB BEFORE SENDING DONE (ensure consistency)
+    let persistError = null;
     if (!isAnonymous && resolvedTopicId) {
-      supabase.from('messages').insert([
+      const { error: msgError } = await supabase.from('messages').insert([
         {
           topic_id: resolvedTopicId,
           user_id: user.id,
@@ -366,46 +352,63 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
           topic_id: resolvedTopicId,
           user_id: user.id,
           role: 'assistant',
-          content: reply,
+          content: finalReply || reply || '',
           model: modelId,
           tokens_used: billableTokens,
         }
-      ])
-        .then(({ error }) => {
-          if (error) console.error('[Stream] Message insert error:', error);
-        })
-        .catch(err => console.error('[Stream] Message insert error:', err));
+      ]);
 
-      // Update topic timestamp
-      supabase
-        .from('topics')
-        .update({ updated_at: new Date().toISOString() })
-        .eq('id', resolvedTopicId)
-        .then(({ error }) => {
-          if (error) console.error('[Stream] Topic update error:', error);
-        })
-        .catch(err => console.error('[Stream] Topic update error:', err));
+      if (msgError) {
+        persistError = msgError;
+        console.error('[Stream] Message insert error:', msgError.message);
+      } else {
+        // Only update topic timestamp if messages saved
+        const { error: topicError } = await supabase
+          .from('topics')
+          .update({ updated_at: new Date().toISOString() })
+          .eq('id', resolvedTopicId);
+
+        if (topicError) {
+          console.error('[Stream] Topic update error:', topicError.message);
+        }
+
+        // ✅ UPDATE USER TOKEN COUNT ONLY IF MESSAGES SAVED SUCCESSFULLY
+        if (user) {
+          const { error: userError } = await supabase
+            .from('users')
+            .update({ used_tokens: user.used_tokens + billableTokens })
+            .eq('id', user.id);
+
+          if (userError) {
+            console.error('[Stream] User update error:', userError.message);
+          }
+        }
+      }
+    }
+    // ✅ SEND COMPLETION RESPONSE AFTER PERSISTENCE ATTEMPT
+    res.write(`data: ${JSON.stringify({
+      type: 'done',
+      tokensUsed: billableTokens,
+      cacheCreationTokens,
+      cacheReadTokens,
+      cacheHit: cacheReadTokens > 0,
+      model: effectiveModelConfig.label,
+      topicId: resolvedTopicId || null,
+      responseTime: Date.now() - startTime,
+      persistError: persistError ? 'Failed to save messages' : undefined,
+    })}\n\n`);
+
+    if (!res.writableEnded && !res.destroyed) {
+      try { res.end(); } catch { }
     }
 
-    // ✅ UPDATE USER TOKEN COUNT ASYNCHRONOUSLY
-    if (user) {
-      supabase
-        .from('users')
-        .update({ used_tokens: user.used_tokens + billableTokens })
-        .eq('id', user.id)
-        .then(({ error }) => {
-          if (error) console.error('[Stream] User update error:', error);
-        })
-        .catch(err => console.error('[Stream] User update error:', err));
-    }
-
-    // Log analytics asynchronously
+    // Log analytics asynchronously (fire-and-forget is fine here)
     const { logAnalytics } = require('../services/analytics.service');
     logAnalytics({
       userId: user?.id,
       query: message,
       modelId,
-      tokensUsed,
+      tokensUsed: billableTokens,
       isAnonymous,
       cacheHit: cacheReadTokens > 0,
       responseTimeMs: Date.now() - startTime,

@@ -251,9 +251,6 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
 
     if (ragEnabled) {
       const fileVector = await embedText(sanitizedContent.slice(0, 2000), 'openrouter', 3, signal);
-      console.log('[RAG Save] Final fileVector type:', typeof fileVector);
-      console.log('[RAG Save] Final fileVector is array:', Array.isArray(fileVector));
-      console.log('[RAG Save] Final fileVector length:', fileVector?.length);
 
       const { data, error: ragError } = await supabase
         .rpc('insert_rag_document', {
@@ -496,10 +493,6 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
     const { embedText } = require('./rag.service');
 
     const queryVector = await embedText(query, 'openrouter', 3, signal);
-    console.log('[FileSearch] queryVector length:', queryVector?.length);
-
-
-
     if (!queryVector || queryVector.length === 0) {
       console.warn('[FileSearch] Invalid queryVector');
       return [];
@@ -518,7 +511,6 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
       console.error('[FileSearch] error:', error);
       return [];
     }
-    console.log('[FileSearch] data fetched:', data?.length);
     if (!data || data.length === 0) {
       console.warn('[FileSearch] No documents found');
       return [];
@@ -528,8 +520,6 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
       .map(doc => {
         let embedding = doc.embedding;
 
-        console.log('[FileSearch] doc.embedding type:', typeof doc.embedding);
-        console.log('[FileSearch] Similarity calc:', queryVector.length, 'vs', doc.embedding?.length);
         if (typeof embedding === 'string') {
           try {
             embedding = JSON.parse(embedding);
@@ -545,8 +535,6 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
       })
       .filter(doc => doc && doc.similarity > 0.3)
       .sort((a, b) => b.similarity - a.similarity);
-    console.log('[FileSearch] Final results:', results.length);
-    console.log('[FileSearch] Similarity scores:', results.map(r => r.similarity));
 
 
     //const relevantText = r.original_content || r.llm_analysis;
