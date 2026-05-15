@@ -132,6 +132,8 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
   const latestSummary = await getLatestSummary(topicId);
   const messagesSinceSummary = await countMessagesAfter(topicId, latestSummary?.created_at);
 
+  let summaryTokens = 0;  // ← track summary LLM tokens
+
   if (latestSummary && messagesSinceSummary < 8) {
     olderSummaryBlock = `[OLDER CONVERSATION SUMMARY]\n${latestSummary.content}\n[END OLDER CONVERSATION SUMMARY]\n\n`;
   } else if (olderMessages.length >= 8) {
@@ -139,7 +141,9 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
     const textToSummarize = latestSummary
       ? `Existing summary:\n${latestSummary.content}\n\nNewer conversation:\n${olderText}`
       : olderText;
-    const { summary, provider, model } = await summarizeMemory(textToSummarize, signal);
+    const summaryResult = await summarizeMemory(textToSummarize, signal);
+    const { summary, provider, model } = summaryResult;
+    summaryTokens = summaryResult.tokensUsed || 0;  // ← capture token usage
     await saveTopicSummary({ topicId, userId, summary, provider, model });
 
     olderSummaryBlock = `[OLDER CONVERSATION SUMMARY]
@@ -173,6 +177,7 @@ ${formatMessages(latestMessages)}
       content: String(memoryText),
     }],
     isNewTopic: false,
+    summaryTokens,  // ← expose summary token usage to caller
     _debug: {
       complexity: complexityScore,
       turnCount,
@@ -183,10 +188,10 @@ ${formatMessages(latestMessages)}
 
 const maybeCompressQuery = async (query, signal = null) => {
   const wordCount = query.split(/\s+/).length;
-  if (wordCount < 300) return query;
+  if (wordCount < 300) return { query, tokensUsed: 0 };
 
-  const { summary } = await summarizeMemory(query, signal);
-  return summary || query;
+  const result = await summarizeMemory(query, signal);
+  return { query: result.summary || query, tokensUsed: result.tokensUsed || 0 };
 };
 
 module.exports = { buildContextMessages, maybeCompressQuery, getRecentMessages };

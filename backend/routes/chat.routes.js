@@ -118,7 +118,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     const { compressPrompt } = require('../services/compress.service');
     const { getCachedResponse } = require('../services/cache.service');
     const { buildRAGContext, embedText } = require('../services/rag.service');
-    const { buildContextMessages } = require('../services/context.service');
+    const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
     const { searchUserFilesRAG, getFileContent, listUserFiles } = require('../services/fileUpload.service');
     const {
       createPromptBudget,
@@ -152,7 +152,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     }
 
     // Build context (same as regular endpoint)
-    // Build context (same as regular endpoint)
+    const estimatedInputTokens = estimateTokens(message);
     const promptBudget = createPromptBudget(modelConfig);
 
     let ragContext = '';
@@ -188,8 +188,20 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
       }
     }
 
-    const { context: historyContext, _debug } = await buildContextMessages(
-      message,
+    // Compress long queries
+    const compressResult = await maybeCompressQuery(message, abortController.signal);
+    const streamQuery = typeof compressResult === 'string' ? compressResult : compressResult.query;
+    const compressTokens = typeof compressResult === 'string' ? 0 : (compressResult.tokensUsed || 0);
+    let totalEmbeddingTokens = 0;
+
+    // Generate query embedding to track token cost
+    if (ragEnabled) {
+      const embedResult = await embedText(streamQuery, 'openrouter', 3, abortController.signal);
+      if (embedResult) totalEmbeddingTokens += embedResult.tokensUsed;
+    }
+
+    const { context: historyContext, summaryTokens: historySummaryTokens, _debug } = await buildContextMessages(
+      streamQuery,
       topicId,
       { memoryMode, historyLimit, userId: user?.id },
       abortController.signal
@@ -237,6 +249,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
       : message;
     aiMessages.push({ role: 'user', content: userContent });
     const promptTokens = estimateMessagesTokens(aiMessages);
+    let totalAITokens = 0;
 
     // ── Tool-call loop: AI can request file content, we fetch it and re-invoke ──
     let reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0;
@@ -259,7 +272,9 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
         const query = searchMatch[1].trim();
         console.log(`[Stream Tool] AI searching files: query="${query}"`);
 
-        const searchResults = await searchUserFilesRAG(query, user?.id, topicId, abortController.signal);
+        const searchResult = await searchUserFilesRAG(query, user?.id, topicId, abortController.signal);
+        const searchResults = searchResult.results || [];
+        totalEmbeddingTokens += searchResult.embedTokens || 0;
         const resultBlock = searchResults.length > 0
           ? `[SEARCH RESULTS for "${query}"]\n${searchResults
               .map(r => `- ${r.file_name} (id: ${r.file_id}): ${r.chunk_text.slice(0, 300)}`)
@@ -293,14 +308,20 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
       }
 
       // No tool call — done
+      totalAITokens += tokensUsed || 0;
       finalReply = reply;
-      billableTokens = (tokensUsed && tokensUsed > 0) ? tokensUsed : promptTokens + estimateTokens(finalReply);
+      billableTokens = (totalAITokens > 0)
+        ? totalAITokens + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0)
+        : promptTokens + estimateTokens(finalReply) + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0);
       break;
     }
 
     if (!finalReply) {
       finalReply = reply || '';
-      billableTokens = (tokensUsed && tokensUsed > 0) ? tokensUsed : promptTokens + estimateTokens(finalReply);
+      totalAITokens += tokensUsed || 0;
+      billableTokens = (totalAITokens > 0)
+        ? totalAITokens + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0)
+        : promptTokens + estimateTokens(finalReply) + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0);
     }
 
     // Send streamed response in chunks
@@ -346,7 +367,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
           role: 'user',
           content: message,
           model: modelId,
-          tokens_used: 0,
+          tokens_used: estimatedInputTokens,
         },
         {
           topic_id: resolvedTopicId,
@@ -397,6 +418,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
       responseTime: Date.now() - startTime,
       persistError: persistError ? 'Failed to save messages' : undefined,
     })}\n\n`);
+    console.log(`[Stream TokenTracking] AI=${totalAITokens} Embedding=${totalEmbeddingTokens} InputMsg=${estimatedInputTokens} Compress=${compressTokens} Summary=${historySummaryTokens} Total=${billableTokens}`);
 
     if (!res.writableEnded && !res.destroyed) {
       try { res.end(); } catch { }

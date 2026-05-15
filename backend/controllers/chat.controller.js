@@ -135,14 +135,21 @@ const sendMessage = async (req, res) => {
     */
     // ── 5. Maybe compress long queries with Gemini Flash ─────
     if (abortController.signal.aborted) throw { name: 'AbortError' };
-    const finalQuery = await maybeCompressQuery(compressedQuery, abortController.signal);
+    const compressResult = await maybeCompressQuery(compressedQuery, abortController.signal);
+    const finalQuery = typeof compressResult === 'string' ? compressResult : compressResult.query;
+    const compressTokens = typeof compressResult === 'string' ? 0 : (compressResult.tokensUsed || 0);
 
     // ── 5.5 Generate query embedding once to save tokens ──────
     let queryVector = null;
+    let totalEmbeddingTokens = 0;  // ← tracks ALL embedding API token costs
 
     if (ragEnabled) {
       if (abortController.signal.aborted) throw { name: 'AbortError' };
-      queryVector = await embedText(finalQuery, modelConfig.provider, 3, abortController.signal);
+      const embedResult = await embedText(finalQuery, modelConfig.provider, 3, abortController.signal);
+      if (embedResult) {
+        queryVector = embedResult.vector;
+        totalEmbeddingTokens += embedResult.tokensUsed;
+      }
 
       const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, 0.92, user?.id, topicId);
       if (semanticCachedReply) {
@@ -218,7 +225,7 @@ const sendMessage = async (req, res) => {
 
 
     // ── 8. Fetch conversation history context ────────────────
-    const { context: historyContext } = await buildContextMessages(
+    const { context: historyContext, summaryTokens: historySummaryTokens } = await buildContextMessages(
       finalQuery,
       isAnonymous ? null : topicId,
       {
@@ -264,6 +271,9 @@ const sendMessage = async (req, res) => {
     aiMessages.push({ role: 'user', content: userContent });
 
 
+    // Accumulate embedding tokens from all embedText calls
+    // Note: estimatedInputTokens covers the raw user message
+    let totalAITokens = 0;       // ← accumulates all dispatchToAI rounds
     const promptTokens = estimateMessagesTokens(aiMessages);
     if (user && promptTokens > user.per_query_limit) {
       return res.status(400).json({
@@ -281,8 +291,9 @@ const sendMessage = async (req, res) => {
       const result = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
       reply = result.text;
       tokensUsed = result.tokensUsed;
-      cacheCreationTokens = result.cacheCreationTokens || 0;
-      cacheReadTokens = result.cacheReadTokens || 0;
+      totalAITokens += tokensUsed || 0;  // ← accumulate ALL rounds
+      cacheCreationTokens += result.cacheCreationTokens || 0;
+      cacheReadTokens += result.cacheReadTokens || 0;
 
       if (abortController.signal.aborted) return;
 
@@ -292,7 +303,10 @@ const sendMessage = async (req, res) => {
         const query = searchMatch[1].trim();
         console.log(`[Tool] AI searching files: query="${query}"`);
 
-        const searchResults = await searchUserFilesRAG(query, user?.id, topicId, abortController.signal);
+        const searchResult = await searchUserFilesRAG(query, user?.id, topicId, abortController.signal);
+        const searchResults = searchResult.results || [];
+        totalEmbeddingTokens += searchResult.embedTokens || 0;  // ← use actual embedding tokens from API
+
         const resultBlock = searchResults.length > 0
           ? `[SEARCH RESULTS for "${query}"]\n${searchResults
               .map(r => `- ${r.file_name} (id: ${r.file_id}): ${r.chunk_text.slice(0, 300)}`)
@@ -334,10 +348,10 @@ const sendMessage = async (req, res) => {
       finalReply = reply || '';
     }
 
-    // Prefer API-reported tokens (accurate). Fall back to estimate only if API returns 0.
-    const billableTokens = (tokensUsed && tokensUsed > 0)
-      ? tokensUsed
-      : promptTokens + estimateTokens(finalReply);
+    // Prefer API-reported tokens (accurate). Fall back to estimate only if totalAITokens is 0.
+    const billableTokens = (totalAITokens > 0)
+      ? totalAITokens + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0)
+      : promptTokens + estimateTokens(finalReply) + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0);
 
     // Check if user aborted while AI was generating
     if (abortController.signal.aborted) return;
@@ -382,6 +396,7 @@ const sendMessage = async (req, res) => {
 
     // ── 11. Update user token usage (after successful persistence) ──
     if (user) {
+      console.log(`[TokenTracking] AI=${totalAITokens} Embedding=${totalEmbeddingTokens} InputMsg=${estimatedInputTokens} Total=${billableTokens}`);
       await supabase
         .from('users')
         .update({ used_tokens: user.used_tokens + billableTokens })

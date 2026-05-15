@@ -28,6 +28,10 @@ const callMistral = async (modelName, apiKey, messages, signal = null) => {
   return { text, tokensUsed };
 };
 
+/**
+ * embedWithMistral — generates embedding via Mistral API
+ * NOW RETURNS { vector, tokensUsed } instead of just the vector array
+ */
 const embedWithMistral = async (text, apiKey) => {
   const response = await axios.post(
     'https://api.mistral.ai/v1/embeddings',
@@ -44,11 +48,13 @@ const embedWithMistral = async (text, apiKey) => {
   );
 
   let vector = response.data.data[0].embedding; // 1024 dims
+  // Try to get actual token usage from API response
+  const tokensUsed = response.data.usage?.prompt_tokens || 0;
   // Pad to 1536 to match Supabase pgvector column
   if (vector.length < 1536) {
     vector = [...vector, ...new Array(1536 - vector.length).fill(0)];
   }
-  return vector;
+  return { vector, tokensUsed };
 };
 
 module.exports = { callMistral, embedWithMistral };

@@ -5,6 +5,20 @@
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
+/**
+ * Estimate tokens for a text string (same logic as tokenBudget.service.js)
+ * Used here to avoid circular dependency
+ */
+const estimateTokens = (text = '') => {
+  if (!text) return 0;
+  const str = String(text).trim();
+  if (!str) return 0;
+  const charEstimate = Math.ceil(str.length / 4);
+  const words = str.split(/\s+/).length;
+  const wordEstimate = Math.ceil(words * 1.3);
+  return Math.ceil((charEstimate + wordEstimate) / 2);
+};
+
 const SUMMARY_MODELS = [
   {
     provider: 'openrouter',
@@ -47,6 +61,15 @@ Conversation:
 ${text}`
 );
 
+/**
+ * Estimate token usage for a summary call: input prompt + expected output (~600 tokens)
+ */
+const estimateSummaryTokens = (text) => {
+  const inputTokens = estimateTokens(summaryPrompt(text));
+  const outputTokens = 600; // max 450 words ≈ 585 tokens, rounded up
+  return inputTokens + outputTokens;
+};
+
 const summarizeWithCerebras = async ({ model, apiKey, text }) => {
   const res = await fetch('https://api.cerebras.ai/v1/chat/completions', {
     method: 'POST',
@@ -64,7 +87,7 @@ const summarizeWithCerebras = async ({ model, apiKey, text }) => {
 
   if (!res.ok) throw new Error(`Cerebras summary failed: ${res.status} ${await res.text()}`);
   const data = await res.json();
-  return data.choices?.[0]?.message?.content?.trim();
+  return { summary: data.choices?.[0]?.message?.content?.trim(), tokensUsed: data.usage?.total_tokens || estimateSummaryTokens(text) };
 };
 
 const summarizeWithOpenRouter = async ({ model, apiKey, text }, signal = null) => {
@@ -84,7 +107,7 @@ const summarizeWithOpenRouter = async ({ model, apiKey, text }, signal = null) =
 
   if (!res.ok) throw new Error(`OpenRouter summary failed: ${res.status}`);
   const data = await res.json();
-  return data.choices?.[0]?.message?.content?.trim();
+  return { summary: data.choices?.[0]?.message?.content?.trim(), tokensUsed: data.usage?.total_tokens || estimateSummaryTokens(text) };
 };
 
 
@@ -102,7 +125,9 @@ const summarizeWithGemini = async ({ model, apiKey, text }, signal = null) => {
     })
   ]);
 
-  return result.response.text().trim();
+  const summary = result.response.text().trim();
+  const tokensUsed = result.response?.usageMetadata?.totalTokenCount || estimateSummaryTokens(text);
+  return { summary, tokensUsed };
 };
 
 const summarizeWithMistral = async ({ model, apiKey, text }, signal = null) => {
@@ -123,7 +148,7 @@ const summarizeWithMistral = async ({ model, apiKey, text }, signal = null) => {
 
   if (!res.ok) throw new Error(`Mistral summary failed: ${res.status} ${await res.text()}`);
   const data = await res.json();
-  return data.choices?.[0]?.message?.content?.trim();
+  return { summary: data.choices?.[0]?.message?.content?.trim(), tokensUsed: data.usage?.total_tokens || estimateSummaryTokens(text) };
 };
 
 const fallbackSummary = (text, signal = null) => {
@@ -139,25 +164,26 @@ const summarizeMemory = async (text, signal = null) => {
     if (!cfg.apiKey) continue;
 
     try {
-      let summary;
+      let result;
 
       if (cfg.provider === 'openrouter') {
-        summary = await summarizeWithOpenRouter({ ...cfg, text }, signal);
+        result = await summarizeWithOpenRouter({ ...cfg, text }, signal);
       } else if (cfg.provider === 'cerebras') {
-        summary = await summarizeWithCerebras({ ...cfg, text }, signal);
+        result = await summarizeWithCerebras({ ...cfg, text }, signal);
       } else if (cfg.provider === 'gemini') {
-        summary = await summarizeWithGemini({ ...cfg, text }, signal);
+        result = await summarizeWithGemini({ ...cfg, text }, signal);
       } else if (cfg.provider === 'mistral') {
-        summary = await summarizeWithMistral({ ...cfg, text }, signal);
+        result = await summarizeWithMistral({ ...cfg, text }, signal);
       }
 
-      if (summary) {
-        console.log(`[Summary] Used ${cfg.provider}/${cfg.model}`);
+      if (result?.summary) {
+        console.log(`[Summary] Used ${cfg.provider}/${cfg.model} (tokens: ${result.tokensUsed})`);
         return {
-          summary,
+          summary: result.summary,
           provider: cfg.provider,
           model: cfg.model,
           fallback: false,
+          tokensUsed: result.tokensUsed || estimateSummaryTokens(text),
         };
       }
     } catch (err) {
@@ -171,6 +197,7 @@ const summarizeMemory = async (text, signal = null) => {
     provider: 'local',
     model: 'truncate',
     fallback: true,
+    tokensUsed: 0,  // truncation costs nothing
   };
 };
 

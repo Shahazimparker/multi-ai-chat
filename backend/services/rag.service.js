@@ -8,7 +8,7 @@
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const supabase = require('../config/supabase');
-const { trimTextByTokens } = require('./tokenBudget.service');
+const { trimTextByTokens, estimateTokens } = require('./tokenBudget.service');
 
 const throwIfAborted = (signal) => {
   if (signal?.aborted) throw { name: 'AbortError' };
@@ -54,20 +54,25 @@ const setCachedEmbedding = (key, vector) => {
 };
 /**
  * embedText — creates vector embedding using the selected provider
+ * NOW RETURNS { vector, tokensUsed } instead of just the vector array
  * @param {string} text
  * @param {string} provider 'openrouter' 'mistral', 'gemini', or 'openai' (default: 'openrouter')
  * @param {number} retries
  * @param {AbortSignal} signal
+ * @returns {Object|null} { vector: number[], tokensUsed: number } or null on failure
  */
 const embedText = async (text, provider = 'openrouter', retries = 3, signal = null) => {
   // Immediate check if already aborted
   throwIfAborted(signal);
 
+  // Estimate tokens for this embedding call (used if cached or as fallback)
+  const estimatedTokens = estimateTokens(text);
+
   // Check cache first
   const cacheKey = getCacheKey(text, provider);
   const cachedVector = getCachedEmbedding(cacheKey);
   if (cachedVector) {
-    return cachedVector;
+    return { vector: cachedVector, tokensUsed: 0 }; // cached = no new tokens consumed
   }
 
   if (provider === 'openrouter') {
@@ -93,12 +98,14 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
       );
 
       let vector = response.data.data[0].embedding;
+      // Try to get actual tokens from API response, fall back to estimate
+      const actualTokens = response.data.usage?.prompt_tokens || estimatedTokens;
 
       if (vector.length < 1536) {
         vector = [...vector, ...new Array(1536 - vector.length).fill(0)];
       }
       setCachedEmbedding(cacheKey, vector);
-      return vector;
+      return { vector, tokensUsed: actualTokens };
     } catch (err) {
       if (err.name === 'AbortError' || err.name === 'CanceledError') throw err;
       console.error('[RAG] OpenRouter Embedding failed:', err.message);
@@ -112,9 +119,10 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
       return null;
     }
     try {
-      const vector = await embedWithMistral(text, process.env.MISTRAL_API_KEY);
-      setCachedEmbedding(cacheKey, vector);
-      return vector;
+      const result = await embedWithMistral(text, process.env.MISTRAL_API_KEY);
+      // embedWithMistral now returns { vector, tokensUsed }
+      setCachedEmbedding(cacheKey, result.vector);
+      return { vector: result.vector, tokensUsed: result.tokensUsed };
     } catch (err) {
       if (err.name === 'AbortError' || err.name === 'CanceledError') throw err;
       console.error('[RAG] Mistral Embedding failed:', err.message);
@@ -141,13 +149,15 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
       ]);
 
       let vector = result.embedding.values;
+      // Try to get actual tokens from Gemini response
+      const actualTokens = result.response?.usageMetadata?.totalTokenCount || estimatedTokens;
       // Pad with zeros to match Supabase 1536-dimension columns if necessary
       if (vector.length < 1536) {
         vector = [...vector, ...new Array(1536 - vector.length).fill(0)];
       }
       // Cache the embedding
       setCachedEmbedding(cacheKey, vector);
-      return vector;
+      return { vector, tokensUsed: actualTokens };
     } catch (err) {
       if (err.message?.includes('429') && retries > 0) {
         throwIfAborted(signal);
@@ -187,7 +197,10 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
         signal: signal
       }
     );
-    return response.data.data[0].embedding;
+    const vector = response.data.data[0].embedding;
+    const actualTokens = response.data.usage?.prompt_tokens || estimatedTokens;
+    setCachedEmbedding(cacheKey, vector);
+    return { vector, tokensUsed: actualTokens };
   } catch (err) {
     if (err.name === 'CanceledError' || err.name === 'AbortError') {
       throw err;
@@ -225,8 +238,9 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
  * @returns {Array}           [{title, content, similarity}]
  */
 const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = 'openrouter', signal = null) => {
-  const embedding = await embedText(query, provider, 3, signal);
-  if (!embedding) return [];
+  const embedResult = await embedText(query, provider, 3, signal);
+  if (!embedResult) return [];
+  const { vector: embedding, tokensUsed: embedTokens } = embedResult;
 
   // Race the Supabase RPC call against the abort signal
   const { data, error } = await Promise.race([
@@ -260,8 +274,16 @@ const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = '
  * @param {Object} options - { tokenBudget, topicId }
  */
 const buildRAGContext = async (query, provider = 'openrouter', signal = null, precomputedEmbedding = null, options = {}) => {
-  const embedding = precomputedEmbedding || await embedText(query, 'openrouter', 3, signal);
-  if (!embedding) return '';
+  let embedding;
+  let embedTokens = 0;
+  if (precomputedEmbedding) {
+    embedding = precomputedEmbedding;
+  } else {
+    const result = await embedText(query, 'openrouter', 3, signal);
+    if (!result) return '';
+    embedding = result.vector;
+    embedTokens = result.tokensUsed;
+  }
 
   const topicId = options.topicId;
   const userId = options.userId;

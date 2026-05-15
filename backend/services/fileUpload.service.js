@@ -277,6 +277,7 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
 
     const { embedText } = require('./rag.service');
     let ragRecord = null;
+    let totalEmbedTokens = 0;  // ← track embedding tokens for this upload
 
     if (ragEnabled) {
       // ── CHUNKING: Split full content for better embedding coverage ──
@@ -284,8 +285,11 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
       const chunkVectors = [];
 
       for (let i = 0; i < chunks.length; i++) {
-        const vector = await embedText(chunks[i], 'openrouter', 3, signal);
-        if (vector) chunkVectors.push(vector);
+        const result = await embedText(chunks[i], 'openrouter', 3, signal);
+        if (result) {
+          chunkVectors.push(result.vector);
+          totalEmbedTokens += result.tokensUsed;
+        }
         // If embedding fails for a chunk, push null to maintain index alignment
         else chunkVectors.push(null);
       }
@@ -374,9 +378,9 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
           });
       }
 
-      console.log(`[FileUpload] Stored in RAG: ${fileName} (hash: ${fileHash}, chunks: ${chunks.length})`);
+      console.log(`[FileUpload] Stored in RAG: ${fileName} (hash: ${fileHash}, chunks: ${chunks.length}, embedTokens: ${totalEmbedTokens})`);
     }
-    return ragRecord?.id || null;
+    return { ragId: ragRecord?.id || null, embedTokens: totalEmbedTokens };
   } catch (err) {
     console.error('[FileUpload] RAG storage failed:', err);
     throw err;
@@ -417,10 +421,10 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
       }
 
       // Send to LLM
-      const { llmAnalysis, tokensUsed } = await analyzeFileWithLLM(extractedText, entryName, innerType, modelId, signal);
+      const { llmAnalysis } = await analyzeFileWithLLM(extractedText, entryName, innerType, modelId, signal);
 
-      // Store in RAG
-      const ragId = await saveFileToRAG(
+      // Store in RAG — now returns { ragId, embedTokens }
+      const saveResult = await saveFileToRAG(
         `${fileName}/${entryName}`,
         innerType,
         extractedText,
@@ -435,8 +439,8 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
       results.push({
         fileName: entryName,
         fileType: innerType,
-        ragId,
-        tokensUsed,
+        ragId: saveResult.ragId,
+        tokensUsed: saveResult.embedTokens,  // ← actual embedding token cost
       });
     } catch (err) {
       console.error(`[FileUpload] Error processing ${entryName}:`, err.message);
@@ -488,7 +492,7 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
     }
 
     // 2. Send directly to LLM (no embedding!)
-    let llmAnalysis, tokensUsed;
+    let llmAnalysis, tokensUsed = 0;
     if (!ragEnabled) {
       const result = await analyzeFileWithLLM(extractedText, fileName, fileType, modelId, signal);
       llmAnalysis = result.llmAnalysis;
@@ -519,13 +523,13 @@ ${extractedText.slice(0, 1000)}
 Upload timestamp: ${new Date().toISOString()}
 
 File ready for queries.`;
-    tokensUsed = 0;
 
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // 3. Store in RAG
-    const ragId = await saveFileToRAG(fileName, fileType, extractedText, llmAnalysis, userId, topicId, signal, ragEnabled, 'openrouter');
-
+    // 3. Store in RAG — now returns { ragId, embedTokens }
+    const saveResult = await saveFileToRAG(fileName, fileType, extractedText, llmAnalysis, userId, topicId, signal, ragEnabled, 'openrouter');
+    const ragId = saveResult.ragId;
+    tokensUsed = saveResult.embedTokens;  // ← actual embedding token cost
 
     // 4. Cleanup temp file
     cleanupTempFile(filePath);
@@ -567,15 +571,17 @@ const cleanupTempFile = (filePath) => {
  */
 const searchUserFilesRAG = async (query, userId, topicId, signal = null, provider = 'openrouter') => {
   try {
-    if (!userId || !topicId) return [];
+    if (!userId || !topicId) return { results: [], embedTokens: 0 };
 
     // Generate embedding for the query
     const { embedText } = require('./rag.service');
-    const queryVector = await embedText(query, 'openrouter', 3, signal);
-    if (!queryVector || queryVector.length === 0) {
-      console.warn('[FileSearch] Invalid queryVector');
-      return [];
+    const embedResult = await embedText(query, 'openrouter', 3, signal);
+    if (!embedResult) {
+      console.warn('[FileSearch] Embedding failed');
+      return { results: [], embedTokens: 0 };
     }
+    const queryVector = embedResult.vector;
+    const embedTokens = embedResult.tokensUsed;
 
     // Use DB-side vector search via IVFFLAT index (search_uploaded_files RPC)
     const { data, error } = await supabase.rpc('search_uploaded_files', {
@@ -587,22 +593,23 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
 
     if (error) {
       console.error('[FileSearch] RPC error:', error);
-      return [];
+      return { results: [], embedTokens };
     }
     if (!data || data.length === 0) {
       console.warn('[FileSearch] No matching chunks found');
-      return [];
+      return { results: [], embedTokens };
     }
 
-    return data.map(r => ({
+    const results = data.map(r => ({
       file_id: r.file_id,
       file_name: r.file_name,
       chunk_text: trimTextByTokens(r.chunk_text, 2000),
       similarity: r.similarity,
     }));
+    return { results, embedTokens };
   } catch (err) {
     console.error('[FileSearch] Failed:', err);
-    return [];
+    return { results: [], embedTokens: 0 };
   }
 };
 

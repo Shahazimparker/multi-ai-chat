@@ -7,6 +7,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { requireAuth } = require('../middleware/auth');
+const supabase = require('../config/supabase');
 const { processUploadedFile, searchUserFilesRAG, getFileContent, deleteUploadedFile, getSupportedFileType } = require('../services/fileUpload.service');
 
 
@@ -112,6 +113,23 @@ router.post('/file', requireAuth, upload.single('file'), async (req, res) => {
       ragEnabled
     );
 
+    // ── Deduct embedding tokens used during file upload ──
+    if (result.tokensUsed > 0) {
+      const { data: user } = await supabase
+        .from('users')
+        .select('used_tokens')
+        .eq('id', req.user.id)
+        .single();
+
+      if (user) {
+        await supabase
+          .from('users')
+          .update({ used_tokens: user.used_tokens + result.tokensUsed })
+          .eq('id', req.user.id);
+        console.log(`[Upload] Deducted ${result.tokensUsed} tokens for file embedding`);
+      }
+    }
+
     res.json({
       success: true,
       ...result,
@@ -135,7 +153,8 @@ router.get('/search', requireAuth, async (req, res) => {
     const { query, topicId } = req.query; // ← ADD topicId
     if (!query) return res.status(400).json({ error: 'Query required' });
 
-    const results = await searchUserFilesRAG(query, req.user.id, topicId);
+    const searchResult = await searchUserFilesRAG(query, req.user.id, topicId);
+    const results = searchResult.results || [];
     res.json({
       query,
       results,
