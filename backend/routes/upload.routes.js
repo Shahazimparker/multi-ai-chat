@@ -30,14 +30,27 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB limit (increased from 50MB for large ZIPs)
 });
+
+// ── Timeout middleware for upload routes ──
+// Large ZIPs can take several minutes to extract + embed
+const UPLOAD_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const uploadTimeout = (req, res, next) => {
+  req.setTimeout(UPLOAD_TIMEOUT_MS, () => {
+    console.error('[Upload] Request timed out after', UPLOAD_TIMEOUT_MS, 'ms');
+    if (!res.headersSent) {
+      res.status(503).json({ error: 'Upload processing timed out. Try a smaller file or fewer files inside the ZIP.' });
+    }
+  });
+  next();
+};
 
 /**
  * POST /api/upload/file
  * Upload and process a file
  */
-router.post('/file', requireAuth, upload.single('file'), async (req, res) => {
+router.post('/file', requireAuth, uploadTimeout, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file provided' });
 

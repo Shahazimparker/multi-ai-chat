@@ -388,28 +388,71 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
 };
 
 /**
+ * Map over an array concurrently with a concurrency limit
+ */
+const mapConcurrent = async (items, concurrency, fn) => {
+  const results = [];
+  const executing = new Set();
+
+  for (const [index, item] of items.entries()) {
+    const promise = fn(item, index).then(result => ({ index, result }));
+    executing.add(promise);
+    promise.finally(() => executing.delete(promise));
+
+    if (executing.size >= concurrency) {
+      // Wait for at least one to finish
+      await Promise.race(executing);
+    }
+  }
+
+  // Wait for all remaining
+  const settled = await Promise.allSettled(executing);
+  for (const s of settled) {
+    if (s.status === 'fulfilled') results.push(s.value);
+  }
+
+  // Re-sort by original index
+  results.sort((a, b) => a.index - b.index);
+  return results.map(r => r.result);
+};
+
+/**
  * Process ZIP file - extract all supported files and analyze each
+ * Uses concurrent workers (default: 3) to speed up large ZIPs
  */
 const processZipFile = async (filePath, fileName, userId, topicId, modelId, signal, ragEnabled) => {
+  const CONCURRENCY = 3; // process 3 files at a time inside ZIP
   const zip = await JSZip.loadAsync(fs.readFileSync(filePath));
-  const results = [];
   const skipped = [];
 
-  for (const entry of Object.values(zip.files)) {
+  // Filter to processable entries first
+  const entries = Object.values(zip.files).filter(entry => {
     if (signal?.aborted) throw { name: 'AbortError' };
-    if (entry.dir) continue;
+    if (entry.dir) return false;
 
     const entryName = normalizeZipEntryName(entry.name);
     if (!isSafeZipEntryName(entryName)) {
       skipped.push(entry.name);
-      continue;
+      return false;
     }
 
     const innerType = getSupportedFileType(entryName);
     if (!innerType) {
       skipped.push(entryName);
-      continue;
+      return false;
     }
+
+    return true;
+  });
+
+  console.log(`[FileUpload] ZIP has ${entries.length} processable entries (concurrency=${CONCURRENCY})`);
+
+  // Process entries concurrently with bounded concurrency
+  const results = await mapConcurrent(entries, CONCURRENCY, async (entry) => {
+    if (signal?.aborted) throw { name: 'AbortError' };
+
+    const entryName = normalizeZipEntryName(entry.name);
+    const innerType = getSupportedFileType(entryName);
 
     try {
       const buffer = await entry.async('nodebuffer');
@@ -417,13 +460,11 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
 
       if (!extractedText || extractedText.length < 10) {
         skipped.push(entryName);
-        continue;
+        return null;
       }
 
-      // Send to LLM
       const { llmAnalysis } = await analyzeFileWithLLM(extractedText, entryName, innerType, modelId, signal);
 
-      // Store in RAG — now returns { ragId, embedTokens }
       const saveResult = await saveFileToRAG(
         `${fileName}/${entryName}`,
         innerType,
@@ -436,23 +477,26 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
         'openrouter'
       );
 
-      results.push({
+      return {
         fileName: entryName,
         fileType: innerType,
         ragId: saveResult.ragId,
-        tokensUsed: saveResult.embedTokens,  // ← actual embedding token cost
-      });
+        tokensUsed: saveResult.embedTokens,
+      };
     } catch (err) {
       console.error(`[FileUpload] Error processing ${entryName}:`, err.message);
       skipped.push(entryName);
+      return null;
     }
-  }
+  });
 
-  if (results.length === 0) {
+  const validResults = results.filter(Boolean);
+
+  if (validResults.length === 0) {
     throw new Error('ZIP did not contain any processable files');
   }
 
-  const summary = results
+  const summary = validResults
     .map(r => `• ${r.fileName} (${r.fileType})`)
     .join('\n')
     .slice(0, 4000);
@@ -460,11 +504,11 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
   return {
     fileName,
     fileType: 'zip',
-    processedFiles: results.length,
+    processedFiles: validResults.length,
     skippedFiles: skipped.length,
-    totalTokensUsed: results.reduce((sum, r) => sum + r.tokensUsed, 0),
-    extractedText: `ZIP "${fileName}" uploaded. ${results.length} file(s) parsed:\n${summary}`,
-    message: `✅ ZIP processed. ${results.length} files ready for queries.`
+    totalTokensUsed: validResults.reduce((sum, r) => sum + r.tokensUsed, 0),
+    extractedText: `ZIP "${fileName}" uploaded. ${validResults.length} file(s) parsed:\n${summary}`,
+    message: `✅ ZIP processed. ${validResults.length} files ready for queries.`
   };
 };
 
