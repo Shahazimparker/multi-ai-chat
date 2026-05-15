@@ -10,7 +10,7 @@ const callGroq = async (modelName, apiKey, messages, signal = null) => {
   const response = await client.chat.completions.create({
     model:       modelName,
     messages:    messages.map(m => ({ role: m.role, content: m.content })),
-    max_tokens:  16000,
+    max_tokens:  4000,
     temperature: 0.7,
   }, { signal });
 

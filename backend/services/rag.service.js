@@ -257,19 +257,33 @@ const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = '
  * @param {string} provider
  * @param {AbortSignal} signal
  * @param {Array} precomputedEmbedding
+ * @param {Object} options - { tokenBudget, topicId }
  */
 const buildRAGContext = async (query, provider = 'openrouter', signal = null, precomputedEmbedding = null, options = {}) => {
   const embedding = precomputedEmbedding || await embedText(query, 'openrouter', 3, signal);
   if (!embedding) return '';
 
+  const topicId = options.topicId;
+
   // Race the Supabase RPC call against the abort signal
+  // If topicId provided, search only that topic's files (uploaded_files_rag)
+  // Otherwise, fall back to global rag_documents
+  const rpcCall = topicId
+    ? supabase.rpc('match_topic_files', {
+        query_embedding: embedding,
+        p_topic_id: topicId,
+        match_threshold: 0.4,
+        match_count: 3,
+      })
+    : supabase.rpc('match_documents', {
+        query_embedding: embedding,
+        provider_param: provider,
+        match_threshold: 0.4,
+        match_count: 3,
+      });
+
   const { data: docs, error } = await Promise.race([
-    supabase.rpc('match_documents', {
-      query_embedding: embedding,
-      provider_param: provider,
-      match_threshold: 0.4,
-      match_count: 3,
-    }),
+    rpcCall,
     new Promise((_, reject) => {
       if (signal?.aborted) reject({ name: 'AbortError' });
       signal?.addEventListener('abort', () => reject({ name: 'AbortError' }), { once: true });

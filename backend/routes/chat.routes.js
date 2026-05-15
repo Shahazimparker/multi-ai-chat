@@ -175,7 +175,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
           'openrouter',
           abortController.signal,
           null,
-          { tokenBudget: promptBudget.ragTokens }
+          { tokenBudget: promptBudget.ragTokens, topicId }
         );
         console.log('[RAG] Context:', ragContext.slice(0, 100));
 
@@ -191,7 +191,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     const { context: historyContext, _debug } = await buildContextMessages(
       message,
       topicId,
-      { memoryMode, historyLimit, tokenBudget: promptBudget.historyTokens, userId: user?.id },
+      { memoryMode, historyLimit, userId: user?.id },
       abortController.signal
     );
 

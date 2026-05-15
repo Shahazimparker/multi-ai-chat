@@ -249,6 +249,35 @@ END;
 $$;
 
 -- ─────────────────────────────────────────────
+-- FUNCTION: match_topic_files (topic-scoped semantic search)
+-- ─────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION match_topic_files(
+  query_embedding vector(1536),
+  p_topic_id      UUID,
+  match_threshold FLOAT DEFAULT 0.4,
+  match_count     INT DEFAULT 3
+)
+RETURNS TABLE (
+  id UUID, title TEXT, content TEXT, similarity FLOAT
+)
+LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    uf.id,
+    uf.file_name AS title,
+    COALESCE(uf.llm_analysis, uf.original_content) AS content,
+    1 - (uf.embedding <=> query_embedding) AS similarity
+  FROM uploaded_files_rag uf
+  WHERE uf.topic_id = p_topic_id
+    AND uf.embedding IS NOT NULL
+    AND 1 - (uf.embedding <=> query_embedding) > match_threshold
+  ORDER BY similarity DESC
+  LIMIT match_count;
+END;
+$$;
+
+-- ─────────────────────────────────────────────
 -- FUNCTION: match_query_cache (semantic response cache)
 -- ─────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION match_query_cache(
