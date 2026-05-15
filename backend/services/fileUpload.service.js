@@ -14,26 +14,62 @@ const mammoth = require('mammoth');
 const supabase = require('../config/supabase');
 const { MODELS } = require('../config/models');
 const { dispatchToAI } = require('./ai/dispatcher.service');
-const { trimTextByTokens } = require('./tokenBudget.service');
+const { trimTextByTokens, estimateTokens } = require('./tokenBudget.service');
 const crypto = require('crypto');
 
 /**
- * chunkContent — split text into overlapping chunks for better embedding coverage
+ * chunkContent — split text into token-aware overlapping chunks
+ * Uses estimateTokens() so each chunk stays within embedding model limits
  * @param {string} text
- * @param {number} chunkSize  max chars per chunk (default 2000)
- * @param {number} overlap    char overlap between chunks (default 200)
+ * @param {number} maxTokens     max tokens per chunk (default 500 — safe for most embedding models)
+ * @param {number} overlapTokens token overlap between chunks (default 50)
  * @returns {Array<string>}
  */
-const chunkContent = (text, chunkSize = 2000, overlap = 200) => {
-  if (!text || text.length <= chunkSize) return [text];
+const chunkContent = (text, maxTokens = 500, overlapTokens = 50) => {
+  if (!text) return [];
+
+  // If entire text fits in one chunk, return as-is
+  if (estimateTokens(text) <= maxTokens) return [text];
+
   const chunks = [];
-  let i = 0;
-  while (i < text.length) {
-    const end = Math.min(i + chunkSize, text.length);
-    chunks.push(text.slice(i, end));
-    if (end === text.length) break;
-    i += chunkSize - overlap;
+  // Split into words, preserving whitespace for re-join
+  const words = text.split(/(\s+)/);
+  let startIdx = 0;
+
+  while (startIdx < words.length) {
+    let endIdx = startIdx;
+    let runningTokens = 0;
+
+    // Accumulate words until we hit maxTokens
+    while (endIdx < words.length) {
+      const wordTokens = estimateTokens(words[endIdx]);
+      if (runningTokens + wordTokens > maxTokens) break;
+      runningTokens += wordTokens;
+      endIdx++;
+    }
+
+    // If no progress, force at least one word to prevent infinite loop
+    if (endIdx === startIdx) {
+      endIdx = startIdx + 2; // push at least one word (with its trailing space)
+    }
+
+    // Build chunk from words[startIdx .. endIdx)
+    const chunk = words.slice(startIdx, endIdx).join('');
+    chunks.push(chunk);
+
+    if (endIdx >= words.length) break;
+
+    // Backtrack by overlapTokens worth of words for next chunk
+    let backtrackTokens = 0;
+    let backtrackIdx = endIdx;
+    while (backtrackIdx > startIdx) {
+      backtrackTokens += estimateTokens(words[backtrackIdx - 1]);
+      if (backtrackTokens > overlapTokens) break;
+      backtrackIdx--;
+    }
+    startIdx = Math.max(backtrackIdx, startIdx + 2); // ensure forward progress
   }
+
   return chunks;
 };
 
