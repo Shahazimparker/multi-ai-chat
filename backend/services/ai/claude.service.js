@@ -3,20 +3,25 @@ const Anthropic = require('@anthropic-ai/sdk');
 const callClaude = async (modelName, apiKey, messages, signal = null) => {
   const client = new Anthropic({ apiKey });
 
-  // SEPARATE static system prompt (cacheable)
-  const baseSystemPrompt = `You are a helpful AI assistant.
-You provide accurate, concise, and helpful responses.
-Always format code in code blocks when relevant.`;
+  // Extract system messages from the messages array
+  const systemMessages = messages.filter(m => m.role === 'system');
+  const chatMessages = messages.filter(m => m.role !== 'system');
+
+  // Build system parameter: first message (static) gets cache_control,
+  // subsequent messages (dynamic) do not — enables prompt caching
+  const system = systemMessages.length > 0
+    ? systemMessages.map((m, i) => ({
+        type: "text",
+        text: m.content,
+        ...(i === 0 ? { cache_control: { type: "ephemeral" } } : {}),
+      }))
+    : undefined;
 
   const response = await client.messages.create({
     model: modelName,
     max_tokens: 16000,
-    system: [{
-      type: "text",
-      text: baseSystemPrompt,  // ✅ Static - will cache
-      cache_control: { type: "ephemeral" }
-    }],
-    messages: messages,  // ✅ Dynamic content (user query + history)
+    ...(system ? { system } : {}),
+    messages: chatMessages,
   }, { signal });
 
   return {

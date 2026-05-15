@@ -17,10 +17,14 @@ const { calldeepseekAPI } = require('./deepseek.service');
 
 const supportsCache = (modelConfig) => {
   if (modelConfig.supportsCache === false) return false;
-  if (modelConfig.provider === 'claude') return true;
+  // Paid providers with consistent output — caching is safe
+  if (['claude', 'deepseek', 'mistral'].includes(modelConfig.provider)) return true;
   if (modelConfig.provider === 'openrouter') {
-    return modelConfig.model.includes('claude');
+    return modelConfig.model.includes('claude')
+        || modelConfig.model.includes('deepseek')
+        || modelConfig.model.includes('mistral');
   }
+  // Free providers (groq, gemini) — skip cache to keep fresh results
   return false;
 };
 

@@ -12,7 +12,7 @@ const MODELS = {
     apiKey: process.env.GROQ_API_KEY,
     model: 'llama-3.1-8b-instant',
     paid: false,
-    maxTokens: 16000,
+    maxTokens: 5999,
   },
   // ── Groq (Ultra-fast inference) ───────────────────────────
   'groq-llama': {
@@ -21,7 +21,7 @@ const MODELS = {
     apiKey: process.env.GROQ_API_KEY,
     model: 'llama-3.3-70b-versatile',
     paid: false,
-    maxTokens: 16000,
+    maxTokens: 5999,
   },
 
   // ── Google Gemini ──────────────────────────────────────────
@@ -31,7 +31,7 @@ const MODELS = {
     apiKey: process.env.GEMINI_API_KEY,
     model: 'gemini-2.5-flash',
     paid: false,
-    maxTokens: 16000,
+    maxTokens: 5999,
   },
   'gemini-pro': {
     label: 'Gemini Pro 2.5 (Free)',
@@ -39,7 +39,7 @@ const MODELS = {
     apiKey: process.env.GEMINI_API_KEY,
     model: 'gemini-2.5-pro',
     paid: false,
-    maxTokens: 16000,
+    maxTokens: 5999,
   },
 
   // ── Mistral AI ────────────────────────────────────────────
@@ -49,7 +49,7 @@ const MODELS = {
     apiKey: process.env.MISTRAL_API_KEY,
     model: 'mistral-small-latest',
     paid: false,
-    maxTokens: 16000,
+    maxTokens: 5999,
   },
   'mistral-medium': {
     label: 'Mistral Medium (Free)',
@@ -57,7 +57,7 @@ const MODELS = {
     apiKey: process.env.MISTRAL_API_KEY,
     model: 'mistral-medium-latest',
     paid: false,
-    maxTokens: 16000,
+    maxTokens: 5999,
   },
 
   // ── DeepSeek AI ────────────────────────────────────────────
@@ -67,7 +67,7 @@ const MODELS = {
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: 'deepseek-v4-flash',
     paid: true,
-    maxTokens: 16000,
+    maxTokens: 32000,
   },
   'deepseek-v4-pro': {
     label: 'deepseek-v4-pro (Paid)',
@@ -75,7 +75,7 @@ const MODELS = {
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: 'deepseek-v4-pro',
     paid: true,
-    maxTokens: 16000,
+    maxTokens: 32000,
   },
 
   // ── Anthropic Claude ──────────────────────────────────────
@@ -85,7 +85,7 @@ const MODELS = {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: 'claude-haiku-4-5-20251001',
     paid: true,
-    maxTokens: 16000,
+    maxTokens: 32000,
   },
   'claude-sonnet': {
     label: 'Claude Sonnet (Smart, Paid)',
@@ -93,7 +93,7 @@ const MODELS = {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: 'claude-sonnet-4-6',
     paid: true,
-    maxTokens: 16000,
+    maxTokens: 32000,
   },
   'claude-opus': {
     label: 'Claude Opus (Best, Paid)',
@@ -101,7 +101,7 @@ const MODELS = {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: 'claude-opus-4-6',
     paid: true,
-    maxTokens: 16000,
+    maxTokens: 32000,
   },
 
   // ── OpenRouter (Live model list) ──────────────────────────
@@ -112,6 +112,7 @@ const MODELS = {
     model: 'openrouter',
     paid: true,
     unified: true,
+    maxTokens: 32000,
     models: [],
   },
 };

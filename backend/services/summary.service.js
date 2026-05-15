@@ -37,9 +37,10 @@ const summaryPrompt = (text) => (
   `Summarize this previous conversation for chat memory.
 
 Rules:
-- Keep facts, model names, preferences, decisions, and unresolved questions.
-- Do not be generic.
-- Keep it under 280 words.
+- CRITICAL: Preserve ALL personal information about the user — their name, job/profession, skills, preferences, location, goals, and any personal context they shared.
+- Keep technical facts, model names, decisions, and unresolved questions.
+- Do NOT be generic. Include specific names, technologies, numbers, and details.
+- Keep it under 450 words.
 - Use compact bullet points.
 
 Conversation:
@@ -57,7 +58,7 @@ const summarizeWithCerebras = async ({ model, apiKey, text }) => {
       model,
       messages: [{ role: 'user', content: summaryPrompt(text) }],
       temperature: 0.2,
-      max_tokens: 700,
+      max_tokens: 1000,
     }),
   });
 
@@ -77,7 +78,7 @@ const summarizeWithOpenRouter = async ({ model, apiKey, text }, signal = null) =
       model,
       messages: [{ role: 'user', content: summaryPrompt(text) }],
       temperature: 0.2,
-      max_tokens: 700,
+      max_tokens: 1000,
     }),
   });
 
@@ -115,7 +116,7 @@ const summarizeWithMistral = async ({ model, apiKey, text }, signal = null) => {
       model,
       messages: [{ role: 'user', content: summaryPrompt(text) }],
       temperature: 0.2,
-      max_tokens: 700,
+      max_tokens: 1000,
       signal: signal,
     }),
   });

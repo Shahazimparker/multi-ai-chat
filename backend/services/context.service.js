@@ -80,7 +80,7 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
   }
 
   const memoryMode = options.memoryMode || 'summarized';
-  const requestedLimit = clamp(options.historyLimit || 10, 2, 20);
+  const requestedLimit = clamp(options.historyLimit || 15, 2, 25);
 
   // ✅ CHANGE: Import dynamic budget functions
   const {
@@ -116,7 +116,7 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
 
   const rawLimit = memoryMode === 'accurate'
     ? requestedLimit
-    : Math.max(requestedLimit, 15);
+    : Math.max(requestedLimit, 25);
 
   const recent = await getRecentMessages(topicId, rawLimit);
   if (recent.length === 0) return { context: [], isNewTopic: true };
@@ -134,7 +134,7 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
 
   if (latestSummary && messagesSinceSummary < 8) {
     olderSummaryBlock = `[OLDER CONVERSATION SUMMARY]\n${latestSummary.content}\n[END OLDER CONVERSATION SUMMARY]\n\n`;
-  } else if (olderMessages.length >= 12) {
+  } else if (olderMessages.length >= 8) {
     const olderText = formatMessages(olderMessages);
     const textToSummarize = latestSummary
       ? `Existing summary:\n${latestSummary.content}\n\nNewer conversation:\n${olderText}`

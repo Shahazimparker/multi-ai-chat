@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS query_cache (
   model           TEXT NOT NULL,
   query_embedding vector(1536),           -- optional semantic cache lookup
   hit_count       INTEGER DEFAULT 1,      -- how many times this was served from cache
+  user_id         UUID REFERENCES users(id) ON DELETE SET NULL,
+  topic_id        UUID REFERENCES topics(id) ON DELETE SET NULL,
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   last_hit_at     TIMESTAMPTZ DEFAULT NOW()
 );
@@ -284,7 +286,9 @@ CREATE OR REPLACE FUNCTION match_query_cache(
   query_embedding vector(1536),
   model_param     TEXT,
   match_threshold FLOAT DEFAULT 0.92,
-  match_count     INT DEFAULT 1
+  match_count     INT DEFAULT 1,
+  user_id_param   UUID DEFAULT NULL,
+  topic_id_param  UUID DEFAULT NULL
 )
 RETURNS TABLE (
   id UUID, query_text TEXT, response_text TEXT, hit_count INTEGER, similarity FLOAT
@@ -301,6 +305,8 @@ BEGIN
   FROM query_cache
   WHERE query_cache.model = model_param
     AND query_cache.query_embedding IS NOT NULL
+    AND (user_id_param IS NULL OR query_cache.user_id = user_id_param OR query_cache.user_id IS NULL)
+    AND (topic_id_param IS NULL OR query_cache.topic_id = topic_id_param OR query_cache.topic_id IS NULL)
     AND 1 - (query_cache.query_embedding <=> query_embedding) > match_threshold
   ORDER BY similarity DESC
   LIMIT match_count;

@@ -294,13 +294,13 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
 
       // No tool call — done
       finalReply = reply;
-      billableTokens = Math.max(tokensUsed || 0, promptTokens + estimateTokens(finalReply));
+      billableTokens = (tokensUsed && tokensUsed > 0) ? tokensUsed : promptTokens + estimateTokens(finalReply);
       break;
     }
 
     if (!finalReply) {
       finalReply = reply || '';
-      billableTokens = Math.max(tokensUsed || 0, promptTokens + estimateTokens(finalReply));
+      billableTokens = (tokensUsed && tokensUsed > 0) ? tokensUsed : promptTokens + estimateTokens(finalReply);
     }
 
     // Send streamed response in chunks

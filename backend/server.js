@@ -17,6 +17,15 @@ const adminRoutes   = require('./routes/admin.routes');
 const historyRoutes = require('./routes/history.routes');
 const uploadRoutes  = require('./routes/upload.routes');
 
+// ── Periodic cache cleanup ─────────────────────────────────
+const { cleanupStaleCache } = require('./services/cache.service');
+const CACHE_CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // 24h
+setInterval(() => {
+  cleanupStaleCache(30, 2); // delete entries >30d old with <2 hits
+}, CACHE_CLEANUP_INTERVAL);
+// Run once on startup too
+cleanupStaleCache(30, 2);
+
 const app  = express();
 const PORT = process.env.PORT || 5000;
 

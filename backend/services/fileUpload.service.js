@@ -1,18 +1,10 @@
 // FILE: backend/services/fileUpload.service.js
 // PURPOSE: Handle file uploads, extract text, send directly to LLM, store responses in RAG
-// CHANGES: 
+// CHANGES:
 //   1. NO embedding - direct LLM processing
 //   2. /tmp storage for Vercel (read-only handling)
 //   3. Store query+response pairs in RAG globally
 //   4. Next query - retrieve past file responses for THIS topic
-const calculateCosineSimilarity = (vecA, vecB) => {
-  if (!vecA || !vecB) return 0;
-  const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
-  const magA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
-  const magB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
-  return magA && magB ? dotProduct / (magA * magB) : 0;
-};
-
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -24,6 +16,26 @@ const { MODELS } = require('../config/models');
 const { dispatchToAI } = require('./ai/dispatcher.service');
 const { trimTextByTokens } = require('./tokenBudget.service');
 const crypto = require('crypto');
+
+/**
+ * chunkContent — split text into overlapping chunks for better embedding coverage
+ * @param {string} text
+ * @param {number} chunkSize  max chars per chunk (default 2000)
+ * @param {number} overlap    char overlap between chunks (default 200)
+ * @returns {Array<string>}
+ */
+const chunkContent = (text, chunkSize = 2000, overlap = 200) => {
+  if (!text || text.length <= chunkSize) return [text];
+  const chunks = [];
+  let i = 0;
+  while (i < text.length) {
+    const end = Math.min(i + chunkSize, text.length);
+    chunks.push(text.slice(i, end));
+    if (end === text.length) break;
+    i += chunkSize - overlap;
+  }
+  return chunks;
+};
 
 const detectLanguage = (fileName) => {
   const ext = fileName.split('.').pop().toLowerCase();
@@ -110,7 +122,7 @@ ensureUploadDir();
 
 const getSupportedFileType = (fileName) => {
   const ext = path.extname(fileName).slice(1).toLowerCase();
-  return SUPPORTED_FILE_TYPES[ext] || null;
+  return SUPPORTED_FILE_TYPES[ext] || 'other';
 };
 
 const normalizeZipEntryName = (entryName) => entryName.replace(/\\/g, '/');
@@ -198,6 +210,23 @@ const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, f
       return buffer.toString('utf-8');
     }
 
+    // 'other' — best-effort text extraction for unknown file types
+    if (fileType === 'other') {
+      // Try UTF-8; if binary, return placeholder
+      try {
+        const text = buffer.toString('utf-8');
+        // Check if it looks like a binary file (contains null bytes or high ratio of non-printable chars)
+        const printable = text.replace(/[\x20-\x7E\n\r\t]/g, '').length;
+        const nullBytes = text.indexOf('\0');
+        if (nullBytes !== -1 || printable > text.length * 0.5) {
+          return `[Binary file — content stored for reference. File size: ${(buffer.length / 1024).toFixed(1)} KB]`;
+        }
+        return text;
+      } catch {
+        return `[Binary file — content stored for reference. File size: ${(buffer.length / 1024).toFixed(1)} KB]`;
+      }
+    }
+
     throw new Error(`Unsupported file type: ${fileType}`);
   } catch (err) {
     console.error(`Text extraction failed for ${fileType}:`, err);
@@ -250,7 +279,19 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
     let ragRecord = null;
 
     if (ragEnabled) {
-      const fileVector = await embedText(sanitizedContent.slice(0, 2000), 'openrouter', 3, signal);
+      // ── CHUNKING: Split full content for better embedding coverage ──
+      const chunks = chunkContent(sanitizedContent, 2000, 200);
+      const chunkVectors = [];
+
+      for (let i = 0; i < chunks.length; i++) {
+        const vector = await embedText(chunks[i], 'openrouter', 3, signal);
+        if (vector) chunkVectors.push(vector);
+        // If embedding fails for a chunk, push null to maintain index alignment
+        else chunkVectors.push(null);
+      }
+
+      // Use first valid vector as the file-level embedding (backward compat)
+      const fileVector = chunkVectors.find(v => v !== null) || null;
 
       const { data, error: ragError } = await supabase
         .rpc('insert_rag_document', {
@@ -268,6 +309,45 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
 
       if (ragError) throw ragError;
       ragRecord = data;
+
+      // ── Store chunks in rag_chunks for granular search ──
+      if (chunks.length > 1) {
+        // Insert into uploaded_files (legacy table) for FK reference from rag_chunks
+        const { data: fileRecord, error: fileErr } = await supabase
+          .from('uploaded_files')
+          .insert({
+            user_id: userId,
+            topic_id: topicId,
+            file_name: fileName,
+            file_type: fileType,
+            content_text: sanitizedContent,
+            provider: 'openrouter',
+            embedding: fileVector,
+          })
+          .select('id')
+          .single();
+
+        if (!fileErr && fileRecord) {
+          // Insert each chunk into rag_chunks
+          const chunkRows = chunks.map((text, i) => ({
+            file_id: fileRecord.id,
+            chunk_text: text,
+            provider: 'openrouter',
+            embedding: chunkVectors[i] || fileVector,
+            chunk_index: i,
+          }));
+
+          const { error: chunkErr } = await supabase
+            .from('rag_chunks')
+            .insert(chunkRows);
+
+          if (chunkErr) {
+            console.warn(`[FileUpload] Failed to store chunks in rag_chunks: ${chunkErr.message}`);
+          } else {
+            console.log(`[FileUpload] Stored ${chunks.length} chunks in rag_chunks for: ${fileName}`);
+          }
+        }
+      }
 
       // Store in code_files if code (only when RAG is enabled)
       const codeExtensions = ['js', 'ts', 'py', 'java', 'cpp', 'go', 'rb'];
@@ -294,7 +374,7 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
           });
       }
 
-      console.log(`[FileUpload] Stored in RAG: ${fileName} (hash: ${fileHash})`);
+      console.log(`[FileUpload] Stored in RAG: ${fileName} (hash: ${fileHash}, chunks: ${chunks.length})`);
     }
     return ragRecord?.id || null;
   } catch (err) {
@@ -489,63 +569,37 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
   try {
     if (!userId || !topicId) return [];
 
-    // ✅ ADD: Generate embedding for query
+    // Generate embedding for the query
     const { embedText } = require('./rag.service');
-
     const queryVector = await embedText(query, 'openrouter', 3, signal);
     if (!queryVector || queryVector.length === 0) {
       console.warn('[FileSearch] Invalid queryVector');
       return [];
     }
 
-    // ✅ CHANGE: Use vector similarity search
-    const { data, error } = await supabase
-      .from('uploaded_files_rag')
-      .select('id, file_name, file_hash, llm_analysis, original_content, created_at, embedding')
-      .eq('user_id', userId)
-      .eq('topic_id', topicId)
-      .not('embedding', 'is', null)
-      .limit(5);
+    // Use DB-side vector search via IVFFLAT index (search_uploaded_files RPC)
+    const { data, error } = await supabase.rpc('search_uploaded_files', {
+      query_embedding: queryVector,
+      user_id_param: userId,
+      provider_param: provider,
+      match_count: 5,
+    });
 
     if (error) {
-      console.error('[FileSearch] error:', error);
+      console.error('[FileSearch] RPC error:', error);
       return [];
     }
     if (!data || data.length === 0) {
-      console.warn('[FileSearch] No documents found');
+      console.warn('[FileSearch] No matching chunks found');
       return [];
     }
-    const results = (data || [])
-      .filter(doc => doc.embedding)
-      .map(doc => {
-        let embedding = doc.embedding;
 
-        if (typeof embedding === 'string') {
-          try {
-            embedding = JSON.parse(embedding);
-          } catch {
-            console.warn('[FileSearch] Failed to parse embedding');
-            return null;
-          }
-        }
-        return {
-          ...doc,
-          similarity: calculateCosineSimilarity(queryVector, embedding)
-        };
-      })
-      .filter(doc => doc && doc.similarity > 0.3)
-      .sort((a, b) => b.similarity - a.similarity);
-
-
-    //const relevantText = r.original_content || r.llm_analysis;
-
-    return results.map(r => ({
-      file_id: r.id,
+    return data.map(r => ({
+      file_id: r.file_id,
       file_name: r.file_name,
-      chunk_text: trimTextByTokens(r.original_content || r.llm_analysis, 2000),
+      chunk_text: trimTextByTokens(r.chunk_text, 2000),
       similarity: r.similarity,
     }));
-
   } catch (err) {
     console.error('[FileSearch] Failed:', err);
     return [];

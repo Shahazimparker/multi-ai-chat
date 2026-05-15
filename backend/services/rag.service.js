@@ -264,6 +264,7 @@ const buildRAGContext = async (query, provider = 'openrouter', signal = null, pr
   if (!embedding) return '';
 
   const topicId = options.topicId;
+  const userId = options.userId;
 
   // Race the Supabase RPC call against the abort signal
   // If topicId provided, search only that topic's files (uploaded_files_rag)
@@ -290,11 +291,49 @@ const buildRAGContext = async (query, provider = 'openrouter', signal = null, pr
     })
   ]);
 
-  if ((error && error.name !== 'AbortError' && error.name !== 'CanceledError') || !docs || docs.length === 0) return ''; // Only log if not an abort
+  if ((error && error.name !== 'AbortError' && error.name !== 'CanceledError') || !docs || docs.length === 0) return '';
+
+  // ── Chunk-level enhancement: also search rag_chunks for granular matches ──
+  let allDocs = [...docs];
+  if (topicId && userId && embedding) {
+    try {
+      const { data: chunkResults } = await supabase.rpc('search_uploaded_files', {
+        query_embedding: embedding,
+        user_id_param: userId,
+        provider_param: provider,
+        match_count: 5,
+      });
+
+      if (chunkResults && chunkResults.length > 0) {
+        const seenTitles = new Set(allDocs.map(d => d.title));
+        for (const chunk of chunkResults) {
+          // Avoid duplicating files already returned by match_topic_files
+          if (!seenTitles.has(chunk.file_name)) {
+            allDocs.push({
+              id: chunk.file_id,
+              title: `${chunk.file_name} (chunk ${chunk.chunk_index + 1})`,
+              content: chunk.chunk_text,
+              similarity: chunk.similarity,
+            });
+            seenTitles.add(chunk.file_name);
+          }
+        }
+        // Re-sort by similarity
+        allDocs.sort((a, b) => b.similarity - a.similarity);
+        // Keep top 5
+        allDocs = allDocs.slice(0, 5);
+      }
+    } catch (chunkErr) {
+      // Non-critical: chunk search is an enhancement, fall back to file-level results
+      if (chunkErr.name !== 'AbortError' && chunkErr.name !== 'CanceledError') {
+        console.warn('[RAG] Chunk-level search failed, using file-level only:', chunkErr.message);
+      }
+    }
+  }
 
   const totalTokenBudget = options.tokenBudget || 650;
-  const perDocBudget = Math.max(120, Math.floor(totalTokenBudget / docs.length));
-  const contextBlock = docs
+  const perDocBudget = Math.max(120, Math.floor(totalTokenBudget / allDocs.length));
+  const contextBlock = allDocs
     .map((d, i) => `[Document ${i + 1}: ${d.title}]\n${trimTextByTokens(d.content, perDocBudget)}`)
     .join('\n\n');
 

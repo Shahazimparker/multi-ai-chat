@@ -144,7 +144,7 @@ const sendMessage = async (req, res) => {
       if (abortController.signal.aborted) throw { name: 'AbortError' };
       queryVector = await embedText(finalQuery, modelConfig.provider, 3, abortController.signal);
 
-      const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId);
+      const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, 0.92, user?.id, topicId);
       if (semanticCachedReply) {
         await logAnalytics({
           userId: user?.id,
@@ -184,7 +184,11 @@ const sendMessage = async (req, res) => {
           modelConfig.provider,
           abortController.signal,
           queryVector,
-          { tokenBudget: promptBudget.ragTokens }
+          {
+            tokenBudget: promptBudget.ragTokens,
+            topicId,
+            userId: user?.id,
+          }
         ),
         // HYBRID: Get ALL files for the topic (no limit, no similarity filter)
         listUserFiles(user?.id, topicId)
@@ -229,16 +233,21 @@ const sendMessage = async (req, res) => {
     // ── 9. Build final AI message payload ───────────────────
     const aiMessages = [];
 
-    // System prompt with RAG + file context
+    // System prompt — static (cacheable) + dynamic (per-request) separated for prompt caching
     const runtimeIdentity = `MODEL_IDENTITY: ${modelConfig.label} | provider=${effectiveModelConfig.provider} | model=${effectiveModelConfig.model}`;
     const identityDirective = isIdentityQuestion
       ? `\n\nIf the user asks what model/company you are, reply EXACTLY with:\n${runtimeIdentity}`
       : '';
-    const systemPrompt = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}${ragContext ? `\n\n${ragContext}` : ''}${fileContext ? `\n\n${fileContext}` : ''}`;
-    aiMessages.push({
-      role: 'system',
-      content: systemPrompt,
-    });
+    // Static part — cacheable across requests in the same topic
+    const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}\n\nRules:\n- Format ABAP, SQL, JSON, XML code in \`\`\` blocks with language label if the request is for programming/coding.\n- Use tables for structured data (configuration, field mappings) if asked for SQL or DB table data related query.\n- Use bullet points for better clarity.\n- When explaining errors, show the error first, then root cause, then fix.`;
+    aiMessages.push({ role: 'system', content: staticSystem });
+    // Dynamic parts — NOT cacheable (change per request)
+    if (ragContext) {
+      aiMessages.push({ role: 'system', content: `## Retrieved Context\n${ragContext}` });
+    }
+    if (fileContext) {
+      aiMessages.push({ role: 'system', content: `## File Context\n${fileContext}` });
+    }
 
     // History context (if same topic)
     if (historyContext && historyContext.length > 0) {
@@ -325,14 +334,17 @@ const sendMessage = async (req, res) => {
       finalReply = reply || '';
     }
 
-    const billableTokens = Math.max(tokensUsed || 0, promptTokens + estimateTokens(finalReply));
+    // Prefer API-reported tokens (accurate). Fall back to estimate only if API returns 0.
+    const billableTokens = (tokensUsed && tokensUsed > 0)
+      ? tokensUsed
+      : promptTokens + estimateTokens(finalReply);
 
     // Check if user aborted while AI was generating
     if (abortController.signal.aborted) return;
 
     // ── 10. Cache the response for future repeated queries ────
     if (!isIdentityQuestion) {
-      await setCachedResponse(finalQuery, modelId, finalReply, queryVector);
+      await setCachedResponse(finalQuery, modelId, finalReply, queryVector, user?.id, resolvedTopicId);
     }
 
     // ── 12. Save messages to DB (logged-in users only) ────────

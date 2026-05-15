@@ -62,20 +62,25 @@ const deleteTopic = async (req, res) => {
       .delete()
       .eq('topic_id', topicId);
 
+    // DELETE query_cache entries scoped to this topic
+    await supabase
+      .from('query_cache')
+      .delete()
+      .eq('topic_id', topicId);
+
     // DELETE messages
     await supabase
       .from('messages')
       .delete()
       .eq('topic_id', topicId);
 
-    // DELETE topic
+    // DELETE uploaded_files (chunk-level RAG) — cascades to rag_chunks
     await supabase
-      .from('topics')
+      .from('uploaded_files')
       .delete()
-      .eq('id', topicId)
-      .eq('user_id', user.id);
+      .eq('topic_id', topicId);
 
-    // DELETE uploaded_files_rag
+    // DELETE uploaded_files_rag (legacy file-level RAG)
     await supabase
       .from('uploaded_files_rag')
       .delete()
@@ -86,6 +91,13 @@ const deleteTopic = async (req, res) => {
       .from('code_files')
       .delete()
       .eq('topic_id', topicId);
+
+    // DELETE topic (last — FK references depend on it)
+    await supabase
+      .from('topics')
+      .delete()
+      .eq('id', topicId)
+      .eq('user_id', user.id);
 
     res.json({ success: true, message: 'Topic and related data deleted' });
   } catch (err) {

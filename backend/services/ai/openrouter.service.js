@@ -22,20 +22,19 @@ const callOpenRouter = async (modelName, apiKey, messages, signal = null) => {
     signal,
   };
 
-  // Claude models: use Anthropic-style system parameter for prompt caching
+  // Claude models: use Anthropic-style system parameter with prompt caching
   // Other models: prepend system as a system-role message in the messages array
   if (systemMessages.length > 0) {
-    const systemText = systemMessages.map(m => m.content).join('\n');
-
     if (isClaudeModel || isGPT4Turbo) {
-      // Anthropic-style system with cache control
-      baseConfig.system = [{
+      // Anthropic-style system — cache only the first (static) message
+      baseConfig.system = systemMessages.map((m, i) => ({
         type: "text",
-        text: systemText,
-        cache_control: { type: "ephemeral" }
-      }];
+        text: m.content,
+        ...(i === 0 ? { cache_control: { type: "ephemeral" } } : {}),
+      }));
     } else {
-      // OpenAI-compatible: prepend system message
+      // OpenAI-compatible: concatenate all system messages, prepend as one
+      const systemText = systemMessages.map(m => m.content).join('\n\n');
       baseConfig.messages = [
         { role: 'system', content: systemText },
         ...chatMessages,

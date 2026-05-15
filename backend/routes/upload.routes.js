@@ -30,17 +30,6 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = ['text/plain', 'text/csv', 'text/javascript', 'application/javascript', 'image/jpeg', 'image/png', 'application/pdf', 'application/zip', 'application/x-zip-compressed', 'application/x-rar-compressed', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
-
-    // Allow by extension too
-    const ext = file.originalname.split('.').pop().toLowerCase();
-    if (['csv', 'xlsx', 'doc', 'docx', 'zip', 'js', 'mjs', 'cjs', 'html', 'json', 'css', 'xml', 'yml', 'yaml', 'md', 'sql', 'sh', 'bat', 'php', 'rs', 'swift', 'kt', 'vue', 'svelte', 'rb', 'go', 'cpp', 'java', 'py', 'ts'].includes(ext) || allowedTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error(`File type not allowed: ${file.mimetype}`));
-    }
-  },
 });
 
 /**
