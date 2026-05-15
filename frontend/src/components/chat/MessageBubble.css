@@ -79,6 +79,37 @@
 
 .user-text { margin:0; }
 
+/* Copy button — top-right of bubble */
+.msg-bubble {
+  position: relative;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.7);
+  padding: 4px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s, opacity 0.15s;
+  opacity: 0;
+}
+
+.msg-bubble:hover .copy-btn {
+  opacity: 1;
+}
+
+.copy-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+
 /* Message footer */
 .msg-footer {
   display: flex;
@@ -95,13 +126,6 @@
   background:rgba(16,185,129,0.15); color:#34d399;
   border:1px solid rgba(16,185,129,0.2);
 }
-.copy-btn {
-  background:none; border:none; cursor:pointer;
-  color:rgba(255,255,255,0.25); padding:2px;
-  margin-left:auto;
-  transition:color 0.2s;
-}
-.copy-btn:hover { color:rgba(255,255,255,0.7); }
 .cursor {
   animation: blink 0.7s infinite;
   margin-left: 4px;

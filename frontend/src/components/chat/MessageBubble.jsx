@@ -13,6 +13,16 @@ import { Bot, User, Copy, Check, Zap } from 'lucide-react';
 import './MessageBubble.css';
 
 const MessageBubble = ({ message }) => {
+  const [copied, setCopied] = React.useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(message.content || '');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  };
+
   return (
     <div className={`message-row ${message.role}`}>
       <div className={`msg-avatar ${message.role}`}>
@@ -50,6 +60,11 @@ const MessageBubble = ({ message }) => {
         )}
         
         {message.streaming && <span className="cursor">|</span>}
+        
+        {/* Copy button — top-right of bubble, visible on hover */}
+        <button className="copy-btn" onClick={handleCopy} title="Copy message">
+          {copied ? <Check size={16} /> : <Copy size={16} />}
+        </button>
       </div>
 
       <div className="msg-info">
@@ -65,4 +80,4 @@ const MessageBubble = ({ message }) => {
   );
 };
 
-export default MessageBubble;
+export default React.memo(MessageBubble);

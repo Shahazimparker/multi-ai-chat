@@ -36,6 +36,8 @@ const ChatPage = () => {
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
   const abortControllerRef = useRef(null);
+  const messagesAreaRef = useRef(null);
+  const isUserAtBottom = useRef(true); // tracks if user is scrolled to bottom
   const [memoryMode, setMemoryMode] = useState('accurate');
   const [historyLimit, setHistoryLimit] = useState(8);
   const [ragEnabled, setRagEnabled] = useState(true);
@@ -49,9 +51,20 @@ const ChatPage = () => {
   const [llmError, setLlmError] = useState(null);
   const [uploadedFiles, setUploadedFiles] = useState([]);
 
-  // Auto-scroll to latest message
+  // Track if user is near the bottom of the messages area
+  const handleScroll = useCallback(() => {
+    const el = messagesAreaRef.current;
+    if (!el) return;
+    const threshold = 100; // px from bottom counts as "at bottom"
+    isUserAtBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  }, []);
+
+  // Auto-scroll only if user hasn't scrolled up
+  const isStreaming = messages.length > 0 && messages[messages.length - 1]?.streaming;
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isUserAtBottom.current) {
+      bottomRef.current?.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth' });
+    }
   }, [messages, loading]);
 
   // Auto-grow textarea
@@ -368,7 +381,7 @@ const ChatPage = () => {
         <TokenBar />
 
         {/* Messages area */}
-        <div className="messages-area">
+        <div className="messages-area" ref={messagesAreaRef} onScroll={handleScroll}>
 
           {messages.length === 0 ? (
             <div className="empty-state">
@@ -385,8 +398,8 @@ const ChatPage = () => {
             messages.map((msg, i) => <MessageBubble key={i} message={msg} />)
           )}
 
-          {/* Typing indicator */}
-          {loading && (
+          {/* Typing indicator — only show when no streaming message exists yet */}
+          {loading && !isStreaming && (
             <div className="message-row assistant">
               <div className="msg-avatar assistant"><Loader2 size={14} className="spin" /></div>
               <div className="msg-bubble assistant typing-indicator">
