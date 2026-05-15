@@ -145,6 +145,67 @@
   50% { background: rgba(0, 0, 0, 0.05); }
 }
 
+/* ── Table container with scroll & download button ────────── */
+.table-container {
+  margin: 10px 0;
+  width: 100%;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.table-scroll table {
+  margin: 0 !important;
+  min-width: 100%;
+}
+
+/* ── Download CSV button ──────────────────────────────────── */
+.dl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  margin-top: 6px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  letter-spacing: 0.3px;
+}
+
+.dl-btn:hover {
+  background: rgba(16, 185, 129, 0.3);
+  color: #6ee7b7;
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+/* ── CSV code block wrapper ───────────────────────────────── */
+.code-block-wrapper {
+  position: relative;
+  margin: 10px 0;
+}
+
+.code-block-wrapper .dl-csv-btn.code-dl-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  margin-top: 0;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.code-block-wrapper:hover .dl-csv-btn.code-dl-btn {
+  opacity: 1;
+}
+
 .btn-cancel {
   padding: 8px 16px;
   background: #ff4444;

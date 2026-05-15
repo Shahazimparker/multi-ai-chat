@@ -324,22 +324,84 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
         : promptTokens + estimateTokens(finalReply) + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0);
     }
 
-    // Send streamed response in chunks
-    const chunkSize = 10;
+    // Send streamed response in chunks — section-aware speed
+    // Text → slow (human-readable), Tables/Code blocks → fast
+    const contentLen = finalReply.length;
+    const isDataHeavy = contentLen > 300 &&
+      (finalReply.includes('|') || finalReply.includes('```'));
+
+    // Parse content into sections: normal text vs data blocks (tables, code)
+    const SECTIONS = [];
+    const dataBlockRE = /```[\s\S]*?```|(?:^\|.+\|\s*$(?:\n\|[-: |]+\|\s*$(?:\n\|.+\|\s*$)*))/gm;
+    let lastIdx = 0;
+    let match;
+
+    // Reset lastIndex
+    dataBlockRE.lastIndex = 0;
+
+    while ((match = dataBlockRE.exec(finalReply)) !== null) {
+      // Text before this block
+      if (match.index > lastIdx) {
+        SECTIONS.push({ type: 'text', content: finalReply.slice(lastIdx, match.index) });
+      }
+      SECTIONS.push({ type: 'data', content: match[0] });
+      lastIdx = match.index + match[0].length;
+    }
+    // Remaining text after last block
+    if (lastIdx < contentLen) {
+      SECTIONS.push({ type: 'text', content: finalReply.slice(lastIdx) });
+    }
+
+    // If no data blocks at all, treat everything as one text section
+    if (SECTIONS.length === 0) {
+      SECTIONS.push({ type: 'text', content: finalReply });
+    }
+
     let sentChars = 0;
 
-    while (sentChars < finalReply.length) {
+    for (const section of SECTIONS) {
       if (abortController.signal.aborted) break;
 
-      const chunk = finalReply.slice(sentChars, sentChars + chunkSize);
-      res.write(`data: ${JSON.stringify({
-        type: 'chunk',
-        text: chunk,
-        progress: Math.round((sentChars / finalReply.length) * 100)
-      })}\n\n`);
+      const isData = section.type === 'data';
+      // Data blocks (tables/code): large chunks, tiny delay
+      // Text: small chunks, variable delays
+      const chunkSize = isData
+        ? Math.max(15, Math.round(contentLen / 80))  // fast: big chunks
+        : 2 + Math.floor(Math.random() * 3);          // slow: 2-4 chars
+      const baseDelay = isData ? 5 : 50;
 
-      sentChars += chunkSize;
-      await new Promise(resolve => setTimeout(resolve, 10));
+      let sPos = 0;
+      const secLen = section.content.length;
+
+      while (sPos < secLen) {
+        if (abortController.signal.aborted) break;
+
+        const size = Math.min(chunkSize, secLen - sPos);
+        // Slightly vary chunk size for text
+        const actualSize = isData ? size : size + (Math.random() < 0.3 ? 1 : 0);
+        const chunk = section.content.slice(sPos, sPos + actualSize);
+
+        res.write(`data: ${JSON.stringify({
+          type: 'chunk',
+          text: chunk,
+          progress: Math.round((sentChars / contentLen) * 100)
+        })}\n\n`);
+
+        sPos += actualSize;
+        sentChars += actualSize;
+
+        if (isData) {
+          await new Promise(r => setTimeout(r, 5 + Math.random() * 8)); // 5-13ms
+        } else {
+          // Variable delay for text: pause after punctuation
+          const lastCh = chunk[chunk.length - 1];
+          let delay = baseDelay + Math.random() * 40; // 50-90ms default
+          if (lastCh === '\n') delay = 150 + Math.random() * 100;   // 150-250ms
+          else if ('.!?'.includes(lastCh)) delay = 120 + Math.random() * 80; // 120-200ms
+          else if (',;:'.includes(lastCh)) delay = 60 + Math.random() * 40;  // 60-100ms
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
     }
     // ✅ CREATE NEW TOPIC IF NEEDED (BEFORE persistence)
     if (!isAnonymous && !resolvedTopicId) {
