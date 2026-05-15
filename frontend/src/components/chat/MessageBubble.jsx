@@ -42,6 +42,37 @@ const downloadFile = (content, filename, mimeType) => {
   URL.revokeObjectURL(url);
 };
 
+// ── CodeBlock component (handles its own copy state) ─────────
+const CodeBlock = ({ code, language, csvContent, onDownloadCSV }) => {
+  const [copied, setCopied] = React.useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  };
+
+  return (
+    <div className="code-block-wrapper">
+      <SyntaxHighlighter style={vscDarkPlus} language={language} PreTag="div">
+        {code}
+      </SyntaxHighlighter>
+      <div className="code-block-actions">
+        <button className="code-action-btn" onClick={handleCopy} title="Copy code">
+          {copied ? <Check size={13} /> : <Copy size={13} />}
+        </button>
+        {csvContent && (
+          <button className="code-action-btn" onClick={onDownloadCSV} title="Download as CSV">
+            <Download size={13} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ── Component ────────────────────────────────────────────────
 
 const MessageBubble = ({ message }) => {
@@ -109,49 +140,28 @@ const MessageBubble = ({ message }) => {
         </div>
       );
     },
-    // Code block — add download for ```csv blocks
+    // Code block — copy button on every block + CSV download for ```csv
     code({ node, inline, className, children, ...props }) {
       const match = /language-(\w+)/.exec(className || '');
       const lang = match ? match[1] : null;
 
-      if (!inline && lang === 'csv') {
-        const idx = csvIdx.current++;
-        const content = csvCodeBlocks[idx];
-        return (
-          <div className="code-block-wrapper">
-            <SyntaxHighlighter
-              style={vscDarkPlus}
-              language="csv"
-              PreTag="div"
-              {...props}
-            >
-              {String(children).replace(/\n$/, '')}
-            </SyntaxHighlighter>
-            {content && (
-              <button
-                className="dl-btn dl-csv-btn code-dl-btn"
-                onClick={() => downloadFile(content, 'data.csv', 'text/csv;charset=utf-8')}
-                title="Download as CSV"
-              >
-                <Download size={12} />
-                CSV
-              </button>
-            )}
-          </div>
-        );
-      }
-
       if (!inline && match) {
-        return (
-          <SyntaxHighlighter
-            style={vscDarkPlus}
-            language={lang}
-            PreTag="div"
-            {...props}
-          >
-            {String(children).replace(/\n$/, '')}
-          </SyntaxHighlighter>
-        );
+        const codeText = String(children).replace(/\n$/, '');
+
+        if (lang === 'csv') {
+          const idx = csvIdx.current++;
+          const content = csvCodeBlocks[idx];
+          return (
+            <CodeBlock
+              code={codeText}
+              language="csv"
+              csvContent={content}
+              onDownloadCSV={() => downloadFile(content, 'data.csv', 'text/csv;charset=utf-8')}
+            />
+          );
+        }
+
+        return <CodeBlock code={codeText} language={lang} />;
       }
 
       return (
@@ -181,11 +191,13 @@ const MessageBubble = ({ message }) => {
         )}
         
         {message.streaming && <span className="cursor">|</span>}
-        
-        {/* Copy button — top-right of bubble, visible on hover */}
-        <button className="copy-btn" onClick={handleCopy} title="Copy message">
-          {copied ? <Check size={16} /> : <Copy size={16} />}
-        </button>
+
+        {/* Copy button — bottom of bubble, always visible */}
+        <div className="bubble-footer">
+          <button className="copy-btn" onClick={handleCopy} title="Copy entire message">
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+          </button>
+        </div>
       </div>
 
       <div className="msg-info">

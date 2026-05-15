@@ -79,34 +79,35 @@
 
 .user-text { margin:0; }
 
-/* Copy button — top-right of bubble */
+/* Copy button — bottom of bubble */
 .msg-bubble {
   position: relative;
 }
 
-.copy-btn {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 6px;
-  cursor: pointer;
-  color: rgba(255, 255, 255, 0.7);
-  padding: 4px 6px;
+.bubble-footer {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s, color 0.15s, opacity 0.15s;
-  opacity: 0;
+  justify-content: flex-end;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.msg-bubble:hover .copy-btn {
-  opacity: 1;
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.5);
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  transition: background 0.15s, color 0.15s;
 }
 
 .copy-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.12);
   color: #ffffff;
 }
 
@@ -186,24 +187,48 @@
   border-color: rgba(16, 185, 129, 0.4);
 }
 
-/* ── CSV code block wrapper ───────────────────────────────── */
+/* ── Code block wrapper ───────────────────────────────────── */
 .code-block-wrapper {
   position: relative;
   margin: 10px 0;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
-.code-block-wrapper .dl-csv-btn.code-dl-btn {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  margin-top: 0;
-  z-index: 2;
-  opacity: 0;
-  transition: opacity 0.15s;
+.code-block-wrapper pre {
+  margin: 0 !important;
+  border-radius: 8px 8px 0 0 !important;
 }
 
-.code-block-wrapper:hover .dl-csv-btn.code-dl-btn {
-  opacity: 1;
+/* ── Code block action buttons (Copy + CSV) ──────────────── */
+.code-block-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.4);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.code-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  font-size: 0.68rem;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  letter-spacing: 0.2px;
+}
+
+.code-action-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
 }
 
 .btn-cancel {
