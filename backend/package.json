@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "sync:biz-rag": "node --max-old-space-size=4096 --expose-gc scripts/syncBusinessRag.js",
     "lint": "eslint ."
   },
   "dependencies": {

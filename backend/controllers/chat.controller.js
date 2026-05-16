@@ -4,11 +4,12 @@
 //   1. Prompt compression    (remove filler words)
 //   2. Cache check           (return if repeated query)
 //   3. RAG context injection (relevant knowledge docs)
-//   4. History context       (last 10 msgs if same topic)
-//   5. AI dispatch           (call correct AI provider)
-//   6. Token tracking        (update user quota)
-//   7. Save to DB            (persist for logged-in users)
-//   8. Analytics logging     (all queries tracked)
+//   4. Business DB query     (live data from ERP tables)
+//   5. History context       (last 10 msgs if same topic)
+//   6. AI dispatch           (call correct AI provider)
+//   7. Token tracking        (update user quota)
+//   8. Save to DB            (persist for logged-in users)
+//   9. Analytics logging     (all queries tracked)
 // ============================================================
 
 const supabase = require('../config/supabase');
@@ -20,6 +21,7 @@ const { buildRAGContext, embedText } = require('../services/rag.service');
 const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
 const { searchUserFilesRAG, getFileContent, listUserFiles } = require('../services/fileUpload.service');
 const { logAnalytics } = require('../services/analytics.service');
+const { queryBusinessDB, buildSchemaContext, isConnected } = require('../services/businessDb.service');
 
 const {
   createPromptBudget,
@@ -38,6 +40,28 @@ const {
  * Body: { modelId, message, topicId? }
  * Auth: Optional (anonymous users allowed but no history saved)
  */
+// ── Track business DB connection status (checked once per server start) ──
+let bizDbConnected = null;
+let bizDbSchemaText = '';
+
+const initBusinessDB = async () => {
+  if (bizDbConnected !== null) return;
+  try {
+    bizDbConnected = await isConnected();
+    if (bizDbConnected) {
+      bizDbSchemaText = await buildSchemaContext();
+      console.log('[BizDB] ✅ Business database connected');
+    } else {
+      console.log('[BizDB] ⚠️ Business database not configured (set BIZ_SUPABASE_URL and BIZ_SUPABASE_SERVICE_KEY in .env)');
+    }
+  } catch (err) {
+    bizDbConnected = false;
+    console.warn('[BizDB] ❌ Failed to connect:', err.message);
+  }
+};
+// Init on module load
+initBusinessDB();
+
 const sendMessage = async (req, res) => {
   const startTime = Date.now();
   const {
@@ -49,6 +73,7 @@ const sendMessage = async (req, res) => {
     memoryMode = 'summarized',
     historyLimit = 5,
     ragEnabled = false,
+    dbOnly = false,
   } = req.body;
 
   // ── 0. Setup Abort Controller for request cancellation ──
@@ -246,7 +271,19 @@ const sendMessage = async (req, res) => {
       ? `\n\nIf the user asks what model/company you are, reply EXACTLY with:\n${runtimeIdentity}`
       : '';
     // Static part — cacheable across requests in the same topic
-    const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}\n\nRules:\n- Format ABAP, SQL, JSON, XML code in \`\`\` blocks with language label if the request is for programming/coding.\n- Use tables for structured data (configuration, field mappings) if asked for SQL or DB table data related query.\n- Use bullet points for better clarity.\n- When explaining errors, show the error first, then root cause, then fix.`;
+    const baseBizRules = bizDbConnected && bizDbSchemaText
+      ? `\n\n## Business Database Access\nYou have read-only access to a business database via [QUERY_DB] tool.\n\n${bizDbSchemaText}`
+      : '';
+
+    const dbOnlyRules = baseBizRules + `\n\n🔒 ONLY DB MODE (ACTIVE):\n- For ANY business question — ALWAYS use [QUERY_DB] to get LIVE data.\n- You CANNOT use your training data for business facts, numbers, or answers.\n- There is NO RAG/cache. Every query is live.\n- If [QUERY_DB] returns empty — say "No data found in database."\n- NEVER fabricate or guess data. Only present what the DB returns.\n- NEVER call external APIs for business data.\n- Format results as tables for structured data.`;
+
+    const relaxedBizRules = baseBizRules + `\n\n📋 RULES:\n- When the user asks about business data — query the DB using [QUERY_DB].\n- You may use your training knowledge alongside DB results.\n- If [QUERY_DB] returns empty, say "No data found in database."\n- NEVER fabricate data that should come from the DB.\n- NEVER call external APIs for business data.\n- Format results as tables for structured data.`;
+
+    const bizDbDirective = bizDbConnected && bizDbSchemaText
+      ? (dbOnly ? dbOnlyRules : relaxedBizRules)
+      : '';
+
+    const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}${bizDbDirective}\n\nRules:\n- Format ABAP, SQL, JSON, XML code in \`\`\` blocks with language label if the request is for programming/coding.\n- Use tables for structured data (configuration, field mappings) if asked for SQL or DB table data related query.\n- Use bullet points for better clarity.\n- When explaining errors, show the error first, then root cause, then fix.`;
     aiMessages.push({ role: 'system', content: staticSystem });
     // Dynamic parts — NOT cacheable (change per request)
     if (ragContext) {
@@ -285,8 +322,8 @@ const sendMessage = async (req, res) => {
     let reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0;
     let finalReply = '';
 
-    // Tool-call loop: AI can search files or request full content
-    const MAX_TOOL_ROUNDS = 3;
+    // Tool-call loop: AI can search files, request full content, or query business DB
+    const MAX_TOOL_ROUNDS = 5; // increased to accommodate DB queries
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const result = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
       reply = result.text;
@@ -337,6 +374,45 @@ const sendMessage = async (req, res) => {
         aiMessages.push({ role: 'assistant', content: reply.replace(getFileMatch[0], '').trim() || `[Requesting file: ${fileData.file_name}]` });
         aiMessages.push({ role: 'user', content: contentBlock });
         continue;
+      }
+
+      // Check for QUERY_DB tool call
+      const queryDbMatch = reply.match(/\[QUERY_DB\]\s*([\s\S]*?)\s*\[\/QUERY_DB\]/);
+      if (queryDbMatch && bizDbConnected) {
+        const sql = queryDbMatch[1].trim();
+        console.log(`[Tool] AI querying business DB:\n${sql}`);
+
+        try {
+          const dbResults = await queryBusinessDB(sql);
+          const resultCount = Array.isArray(dbResults) ? dbResults.length : 0;
+
+          let resultBlock;
+          if (resultCount === 0) {
+            resultBlock = `[QUERY DB RESULTS]\nNo results found for the query.\n[END RESULTS]\n\nThe data might not exist in the database. Ask the user to clarify or check if they meant something else.`;
+          } else {
+            const preview = JSON.stringify(dbResults.slice(0, 20), null, 2);
+            const truncated = resultCount > 20 ? `\n(Showing 20 of ${resultCount} results)` : '';
+            resultBlock = `[QUERY DB RESULTS - ${resultCount} rows]${truncated}\n\`\`\`json\n${preview}\n\`\`\`\n[END RESULTS]\n\nBased on these results, answer the user's question. Use tables for structured data.`;
+          }
+
+          aiMessages.push({
+            role: 'assistant',
+            content: reply.replace(queryDbMatch[0], '').trim() || `[Querying business database...]`
+          });
+          aiMessages.push({ role: 'user', content: resultBlock });
+          continue;
+        } catch (dbErr) {
+          console.error(`[Tool] DB query failed: ${dbErr.message}`);
+          aiMessages.push({
+            role: 'assistant',
+            content: reply.replace(queryDbMatch[0], '').trim() || `[Attempting to query database...]`
+          });
+          aiMessages.push({
+            role: 'user',
+            content: `[QUERY DB ERROR]\n${dbErr.message}\n[END ERROR]\n\nPlease fix your SQL query and try again. Make sure table and column names are correct. Use DESCRIBE_TABLES if you need to check the schema.`
+          });
+          continue;
+        }
       }
 
       // No tool call — done

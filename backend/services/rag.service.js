@@ -52,6 +52,10 @@ const getCachedEmbedding = (key) => {
 const setCachedEmbedding = (key, vector) => {
   embeddingCache.set(key, { vector, timestamp: Date.now() });
 };
+
+const clearEmbeddingCache = () => {
+  embeddingCache.clear();
+};
 /**
  * embedText — creates vector embedding using the selected provider
  * NOW RETURNS { vector, tokensUsed } instead of just the vector array
@@ -362,4 +366,4 @@ const buildRAGContext = async (query, provider = 'openrouter', signal = null, pr
   return `[KNOWLEDGE BASE CONTEXT]\n${contextBlock}\n[END KNOWLEDGE BASE]\n\nUse the above context if relevant to answer the question.`;
 };
 
-module.exports = { buildRAGContext, embedText, searchRelevantDocs };
+module.exports = { buildRAGContext, embedText, searchRelevantDocs, clearEmbeddingCache };

@@ -41,6 +41,7 @@ const ChatPage = () => {
   const [memoryMode, setMemoryMode] = useState('accurate');
   const [historyLimit, setHistoryLimit] = useState(8);
   const [ragEnabled, setRagEnabled] = useState(true);
+  const [dbOnly, setDbOnly] = useState(false);
   const [showAdvancedMemory, setShowAdvancedMemory] = useState(false);
   const [unifiedProvider, setUnifiedProvider] = useState(null);
   const [providerModelId, setProviderModelId] = useState(null);
@@ -210,6 +211,7 @@ const ChatPage = () => {
           memoryMode,
           historyLimit: Number(historyLimit),
           ragEnabled,
+          dbOnly,
         }),
         signal: controller.signal,
       });
@@ -513,7 +515,15 @@ const ChatPage = () => {
                     checked={ragEnabled}
                     onChange={e => setRagEnabled(e.target.checked)}
                   />
-                  RAG on for Accurate+ by default
+                  RAG on
+                </label>
+                <label className="memory-toggle-control">
+                  <input
+                    type="checkbox"
+                    checked={dbOnly}
+                    onChange={e => setDbOnly(e.target.checked)}
+                  />
+                  🔒 Only DB
                 </label>
               </>
             )}
