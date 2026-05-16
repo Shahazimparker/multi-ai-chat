@@ -4,6 +4,7 @@
 //          No login required, no history saved to DB.
 //          All messages cleared on tab/browser close.
 //          Uses streaming SSE for real-time responses.
+//          Added retry on network error.
 // ============================================================
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -22,6 +23,7 @@ const AnonymousPage = () => {
   const bottomRef = useRef(null);
   const taRef     = useRef(null);
   const abortRef  = useRef(null);
+  const [failedMessage, setFailedMessage] = useState(null);
 
   // Load from sessionStorage (persists within tab, gone on close)
   const [messages, setMessages] = useState(() => {
@@ -64,16 +66,12 @@ const AnonymousPage = () => {
     setLoading(false);
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || loading || !model) return;
+  const performSend = async (userMsg) => {
     if (tokensUsed >= MAX_TOKENS) {
       setError(`Token limit reached (${MAX_TOKENS}). Start a new session to continue.`);
       return;
     }
-    const userMsg = input.trim();
-    setInput('');
     setError('');
-    if (taRef.current) taRef.current.style.height = 'auto';
 
     // Build history from current messages (excluding any streaming assistant)
     const history = messages
@@ -156,6 +154,7 @@ const AnonymousPage = () => {
         return updated;
       });
       if (metadata.tokensUsed) setTokensUsed(prev => prev + metadata.tokensUsed);
+      setFailedMessage(null); // clear on success
     } catch (err) {
       if (err.name === 'AbortError') {
         setMessages(prev => {
@@ -171,10 +170,28 @@ const AnonymousPage = () => {
       const msg = err.message || 'Request failed';
       setError(msg);
       setMessages(prev => [...prev, { role: 'assistant', content: `❌ ${msg}` }]);
+      // keep failedMessage so retry can use it
     } finally {
       setLoading(false);
       abortRef.current = null;
     }
+  };
+
+  const handleSend = async () => {
+    if (!input.trim() || loading || !model) return;
+    const userMsg = input.trim();
+    setInput('');
+    if (taRef.current) taRef.current.style.height = 'auto';
+    setFailedMessage(userMsg);
+    await performSend(userMsg);
+  };
+
+  const handleRetry = async () => {
+    if (!failedMessage || loading || !model) return;
+    const msgText = failedMessage;
+    setFailedMessage(null);
+    setError('');
+    await performSend(msgText);
   };
 
   const handleKeyDown = (e) => {
@@ -237,7 +254,16 @@ const AnonymousPage = () => {
 
       {/* Input */}
       <div className="anon-input-area">
-        {error && <div className="anon-error">{error}</div>}
+        {error && (
+          <div className="anon-error">
+            <span>{error}</span>
+            {failedMessage && !loading && (
+              <button className="retry-btn" onClick={handleRetry}>
+                ↻ Retry
+              </button>
+            )}
+          </div>
+        )}
         <div className="anon-input-box">
           <textarea
             ref={taRef}

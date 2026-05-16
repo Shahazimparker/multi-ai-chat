@@ -90,6 +90,29 @@
   background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.3);
   color:#fca5a5; border-radius:10px; padding:8px 12px;
   font-size:0.8rem; margin-bottom:10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.anon-error .retry-btn {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 0.76rem;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.anon-error .retry-btn:hover {
+  background: rgba(239, 68, 68, 0.35);
+  border-color: rgba(239, 68, 68, 0.6);
 }
 .anon-input-box {
   display:flex; align-items:flex-end; gap:10px;

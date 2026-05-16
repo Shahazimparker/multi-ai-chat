@@ -126,7 +126,7 @@ const ChatPage = () => {
     let finalMessage = String(msgText).trim();
     const fileToUpload = file;
 
-    setFailedMessage(finalMessage);
+    setFailedMessage({ text: finalMessage, file: fileToUpload, image });
     setPendingFile(null);
 
     const controller = new AbortController();
@@ -267,7 +267,7 @@ const ChatPage = () => {
       });
 
       setPendingImage(null);
-      setFailedMessage(null);
+      setFailedMessage(null); // clear failed data on success
 
       if (metadata.topicId && !activeTopic) {
         setActiveTopic({ id: metadata.topicId });
@@ -292,6 +292,7 @@ const ChatPage = () => {
       const msg = err.response?.data?.error || err.message || 'Something went wrong.';
       setError(msg);
       setMessages(prev => [...prev, { role: 'assistant', content: `❌ Error: ${msg}` }]);
+      // failedMessage kept so retry can use it
     } finally {
       setLoading(false);
       abortControllerRef.current = null;
@@ -326,6 +327,14 @@ const ChatPage = () => {
     // Process queue after send completes
 
   }, [input, pendingFile, pendingImage, loading, sendMessage]);
+
+  const handleRetry = useCallback(() => {
+    if (!failedMessage) return;
+    const { text, file, image } = failedMessage;
+    setFailedMessage(null);
+    setError('');
+    sendMessage(text, file, image);
+  }, [failedMessage, sendMessage]);
 
   const handleStop = useCallback(() => {
     // Abort current AI request
@@ -439,7 +448,16 @@ const ChatPage = () => {
 
         {/* Input area */}
         <div className="input-area">
-          {error && <div className="chat-error">{error}</div>}
+          {error && (
+            <div className="chat-error">
+              <span>{error}</span>
+              {failedMessage && !loading && (
+                <button className="retry-btn" onClick={handleRetry}>
+                  ↻ Retry
+                </button>
+              )}
+            </div>
+          )}
 
           <div className="memory-controls">
             <button
@@ -589,7 +607,7 @@ const ChatPage = () => {
               <button onClick={() => setLlmError(null)}>Cancel</button>
               <button
                 onClick={() => {
-                  if (failedMessage) setInput(failedMessage);
+                  if (failedMessage) setInput(failedMessage.text);
                   setLlmError(null);
                 }}
               >
