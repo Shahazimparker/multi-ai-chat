@@ -135,14 +135,29 @@ const ChatPage = () => {
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setError('');
 
-    const optimisticMsg = finalMessage || (fileToUpload ? `Attached: ${fileToUpload.name}` : '');
-    setMessages(prev => [...prev, { role: 'user', content: optimisticMsg }]);
+    const fileName = fileToUpload?.name;
+    // If both text and file exist, show both
+    const userMsgContent = fileName
+      ? (finalMessage ? `${finalMessage}\n📎 ${fileName}` : `📎 ${fileName}`)
+      : finalMessage;
+    setMessages(prev => [...prev, { role: 'user', content: userMsgContent }]);
     setLoading(true);
 
     try {
       let topicIdToUse = activeTopic?.id || null;
 
       if (fileToUpload) {
+        // Show uploading status — preserve text if user typed something
+        setMessages(prev => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last && last.role === 'user') {
+            const textPart = finalMessage ? `${finalMessage}\n` : '';
+            updated[updated.length - 1] = { ...last, content: `${textPart}📎 ⏳ Uploading \`${fileName}\`...` };
+          }
+          return updated;
+        });
+
         const formData = new FormData();
         formData.append('file', fileToUpload);
         formData.append('modelId', model.id);
@@ -155,6 +170,17 @@ const ChatPage = () => {
         });
 
         setUploadedFiles(prev => [...prev, uploadRes.data]);
+
+        // Update user message to show upload complete — preserve text
+        setMessages(prev => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last && last.role === 'user') {
+            const textPart = finalMessage ? `${finalMessage}\n` : '';
+            updated[updated.length - 1] = { ...last, content: `${textPart}📎 ✅ \`${fileName}\` uploaded` };
+          }
+          return updated;
+        });
 
         // HYBRID: Don't inject file content into message — AI sees file names via listUserFiles
         // and uses SEARCH_FILES / GET_FILE tools to access content on demand

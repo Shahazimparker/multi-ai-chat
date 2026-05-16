@@ -363,39 +363,42 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
       if (abortController.signal.aborted) break;
 
       const isData = section.type === 'data';
-      // Data blocks (tables/code): large chunks, tiny delay
-      // Text: small chunks, variable delays
-      const chunkSize = isData
-        ? Math.max(15, Math.round(contentLen / 80))  // fast: big chunks
-        : 2 + Math.floor(Math.random() * 3);          // slow: 2-4 chars
-      const baseDelay = isData ? 5 : 50;
 
-      let sPos = 0;
-      const secLen = section.content.length;
-
-      while (sPos < secLen) {
-        if (abortController.signal.aborted) break;
-
-        const size = Math.min(chunkSize, secLen - sPos);
-        // Slightly vary chunk size for text
-        const actualSize = isData ? size : size + (Math.random() < 0.3 ? 1 : 0);
-        const chunk = section.content.slice(sPos, sPos + actualSize);
-
+      if (isData) {
+        // 📦 Data blocks (tables/code fences) → instantly in one shot
         res.write(`data: ${JSON.stringify({
           type: 'chunk',
-          text: chunk,
-          progress: Math.round((sentChars / contentLen) * 100)
+          text: section.content,
+          progress: Math.round(((sentChars + section.content.length) / contentLen) * 100)
         })}\n\n`);
+        sentChars += section.content.length;
+        // Brief pause between sections so text→data boundary is perceptible
+        await new Promise(r => setTimeout(r, 20));
+      } else {
+        // 💬 Text → slow, human-readable typing
+        const chunkSize = 2 + Math.floor(Math.random() * 3); // 2-4 chars
+        let sPos = 0;
+        const secLen = section.content.length;
 
-        sPos += actualSize;
-        sentChars += actualSize;
+        while (sPos < secLen) {
+          if (abortController.signal.aborted) break;
 
-        if (isData) {
-          await new Promise(r => setTimeout(r, 5 + Math.random() * 8)); // 5-13ms
-        } else {
-          // Variable delay for text: pause after punctuation
+          const size = Math.min(chunkSize, secLen - sPos);
+          const actualSize = size + (Math.random() < 0.3 ? 1 : 0);
+          const chunk = section.content.slice(sPos, sPos + actualSize);
+
+          res.write(`data: ${JSON.stringify({
+            type: 'chunk',
+            text: chunk,
+            progress: Math.round((sentChars / contentLen) * 100)
+          })}\n\n`);
+
+          sPos += actualSize;
+          sentChars += actualSize;
+
+          // Variable delay: pause after punctuation
           const lastCh = chunk[chunk.length - 1];
-          let delay = baseDelay + Math.random() * 40; // 50-90ms default
+          let delay = 50 + Math.random() * 40; // 50-90ms default
           if (lastCh === '\n') delay = 150 + Math.random() * 100;   // 150-250ms
           else if ('.!?'.includes(lastCh)) delay = 120 + Math.random() * 80; // 120-200ms
           else if (',;:'.includes(lastCh)) delay = 60 + Math.random() * 40;  // 60-100ms
