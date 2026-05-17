@@ -77,6 +77,30 @@ router.get('/provider-models/:provider', async (req, res) => {
 
 // POST /api/chat/message
 router.post('/message', chatLimiter, optionalAuth, tokenCheck, sendMessage);
+
+// ── Business DB connection state (shared with stream handler) ──
+let bizDbConnected = null;
+let bizDbSchemaText = '';         // full schema (all columns) — used when dbOnly=true
+let bizDbMinimalSchemaText = '';  // minimal schema (TABLE GUIDE only) — used when dbOnly=false
+
+const initBusinessDB = async () => {
+  if (bizDbConnected !== null) return;
+  try {
+    const { isConnected, buildSchemaContext, buildMinimalSchemaContext } = require('../services/businessDb.service');
+    bizDbConnected = await isConnected();
+    if (bizDbConnected) {
+      bizDbSchemaText = await buildSchemaContext();
+      bizDbMinimalSchemaText = await buildMinimalSchemaContext();
+      console.log('[BizDB-Stream] ✅ Business database connected');
+    } else {
+      console.log('[BizDB-Stream] ⚠️ Business database not configured');
+    }
+  } catch (err) {
+    bizDbConnected = false;
+    console.warn('[BizDB-Stream] ❌ Failed to connect:', err.message);
+  }
+};
+initBusinessDB();
 /**
  * POST /api/chat/stream
  * Streaming response using Server-Sent Events
@@ -94,6 +118,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     memoryMode = 'summarized',
     historyLimit = 5,
     ragEnabled = false,
+    dbOnly = false,
     history, // client-provided conversation history (used for anonymous sessions)
   } = req.body;
 
@@ -120,6 +145,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     const { buildRAGContext, embedText } = require('../services/rag.service');
     const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
     const { searchUserFilesRAG, getFileContent, listUserFiles } = require('../services/fileUpload.service');
+    const { queryBusinessDB, buildSchemaContext, buildMinimalSchemaContext, getTableSchema, isConnected } = require('../services/businessDb.service');
     const {
       createPromptBudget,
       trimTextByTokens,
@@ -229,8 +255,21 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
       : '';
 
 
+    // ── Business DB schema injection — hybrid approach ──
+    // dbOnly=true  → full schema (all columns) for direct SQL writing
+    // dbOnly=false → minimal schema (TABLE GUIDE only) + GET_SCHEMA tool for on-demand columns
+    const selectedSchema = dbOnly ? bizDbSchemaText : bizDbMinimalSchemaText;
+    const baseBizRules = bizDbConnected && selectedSchema
+      ? `\n\n## Business Database Access\nYou have read-only access to a business database via [QUERY_DB] tool.\n\n${selectedSchema}`
+      : '';
+    const dbOnlyRules = baseBizRules + `\n\n🔒 ONLY DB MODE (ACTIVE):\n- For ANY business question — ALWAYS use [QUERY_DB] to get LIVE data.\n- You CANNOT use your training data for business facts, numbers, or answers.\n- There is NO RAG/cache. Every query is live.\n- If [QUERY_DB] returns empty — say "No data found in database."\n- NEVER fabricate or guess data. Only present what the DB returns.\n- NEVER call external APIs for business data.\n- Format results as tables for structured data.`;
+    const relaxedBizRules = baseBizRules + `\n\n📋 RULES:\n- When the user asks about business data — query the DB using [QUERY_DB].\n- You may use your training knowledge alongside DB results.\n- If [QUERY_DB] returns empty, say "No data found in database."\n- NEVER fabricate data that should come from the DB.\n- NEVER call external APIs for business data.\n- Format results as tables for structured data.`;
+    const bizDbDirective = bizDbConnected && selectedSchema
+      ? (dbOnly ? dbOnlyRules : relaxedBizRules)
+      : '';
+
     // Build AI messages
-    const systemPrompt = `You are a helpful AI assistant.${ragContext ? '\n\n[CONTEXT FROM DOCUMENTS]\n' + ragContext : ''}${fileContext ? '\n\n' + fileContext : ''}`;
+    const systemPrompt = `You are a helpful AI assistant.${ragContext ? '\n\n[CONTEXT FROM DOCUMENTS]\n' + ragContext : ''}${fileContext ? '\n\n' + fileContext : ''}${bizDbDirective}`;
     const aiMessages = [
       { role: 'system', content: systemPrompt },
     ];
@@ -305,6 +344,60 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
         aiMessages.push({ role: 'assistant', content: reply.replace(getFileMatch[0], '').trim() || `[Requesting file: ${fileData.file_name}]` });
         aiMessages.push({ role: 'user', content: contentBlock });
         continue;
+      }
+
+      // Check for GET_SCHEMA tool call — AI requests column schema for specific tables
+      const getSchemaMatch = reply.match(/\[GET_SCHEMA:([^\]]+)\]/);
+      if (getSchemaMatch && bizDbConnected) {
+        const tableNames = getSchemaMatch[1].split(',').map(s => s.trim());
+        console.log(`[Stream Tool] AI requesting schema for: ${tableNames.join(', ')}`);
+
+        const schemaText = await getTableSchema(tableNames);
+        aiMessages.push({
+          role: 'assistant',
+          content: reply.replace(getSchemaMatch[0], '').trim() || `[Getting schema for ${tableNames.join(', ')}...]`
+        });
+        aiMessages.push({
+          role: 'user',
+          content: schemaText + '\n\nNow write your SQL query using the exact column names shown above.'
+        });
+        continue;
+      }
+
+      // Check for QUERY_DB tool call
+      const queryDbMatch = reply.match(/\[QUERY_DB\]\s*([\s\S]*?)\s*\[\/QUERY_DB\]/);
+      if (queryDbMatch && bizDbConnected) {
+        const sql = queryDbMatch[1].trim();
+        console.log(`[Stream Tool] AI querying business DB:\n${sql}`);
+
+        try {
+          const dbResults = await queryBusinessDB(sql);
+          const resultCount = Array.isArray(dbResults) ? dbResults.length : 0;
+
+          let resultBlock;
+          if (resultCount === 0) {
+            resultBlock = `[QUERY DB RESULTS]\nNo results found for the query.\n[END RESULTS]\n\nThe data might not exist in the database. Ask the user to clarify or check if they meant something else.`;
+          } else {
+            const preview = JSON.stringify(dbResults.slice(0, 20), null, 2);
+            const truncated = resultCount > 20 ? `\n(Showing 20 of ${resultCount} results)` : '';
+            resultBlock = `[QUERY DB RESULTS - ${resultCount} rows]${truncated}\n\`\`\`json\n${preview}\n\`\`\`\n[END RESULTS]\n\nBased on these results, answer the user's question. Use tables for structured data.`;
+          }
+
+          aiMessages.push({
+            role: 'assistant',
+            content: reply.replace(queryDbMatch[0], '').trim() || `[Querying business database...]`
+          });
+          aiMessages.push({ role: 'user', content: resultBlock });
+          continue;
+        } catch (dbErr) {
+          console.error(`[Stream Tool] DB query failed: ${dbErr.message}`);
+          aiMessages.push({
+            role: 'assistant',
+            content: reply.replace(queryDbMatch[0], '').trim() || `[Attempting to query database...]`
+          });
+          aiMessages.push({ role: 'user', content: `[QUERY DB ERROR]\n${dbErr.message}\n[END ERROR]\n\nTell the user there was an error querying the database.` });
+          continue;
+        }
       }
 
       // No tool call — done

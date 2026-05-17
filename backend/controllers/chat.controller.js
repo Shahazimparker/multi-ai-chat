@@ -21,7 +21,7 @@ const { buildRAGContext, embedText } = require('../services/rag.service');
 const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
 const { searchUserFilesRAG, getFileContent, listUserFiles } = require('../services/fileUpload.service');
 const { logAnalytics } = require('../services/analytics.service');
-const { queryBusinessDB, buildSchemaContext, isConnected } = require('../services/businessDb.service');
+const { queryBusinessDB, buildSchemaContext, buildMinimalSchemaContext, getTableSchema, isConnected } = require('../services/businessDb.service');
 
 const {
   createPromptBudget,
@@ -42,7 +42,8 @@ const {
  */
 // ── Track business DB connection status (checked once per server start) ──
 let bizDbConnected = null;
-let bizDbSchemaText = '';
+let bizDbSchemaText = '';         // full schema (all columns) — used when dbOnly=true
+let bizDbMinimalSchemaText = '';  // minimal schema (TABLE GUIDE only) — used when dbOnly=false
 
 const initBusinessDB = async () => {
   if (bizDbConnected !== null) return;
@@ -50,6 +51,7 @@ const initBusinessDB = async () => {
     bizDbConnected = await isConnected();
     if (bizDbConnected) {
       bizDbSchemaText = await buildSchemaContext();
+      bizDbMinimalSchemaText = await buildMinimalSchemaContext();
       console.log('[BizDB] ✅ Business database connected');
     } else {
       console.log('[BizDB] ⚠️ Business database not configured (set BIZ_SUPABASE_URL and BIZ_SUPABASE_SERVICE_KEY in .env)');
@@ -271,15 +273,18 @@ const sendMessage = async (req, res) => {
       ? `\n\nIf the user asks what model/company you are, reply EXACTLY with:\n${runtimeIdentity}`
       : '';
     // Static part — cacheable across requests in the same topic
-    const baseBizRules = bizDbConnected && bizDbSchemaText
-      ? `\n\n## Business Database Access\nYou have read-only access to a business database via [QUERY_DB] tool.\n\n${bizDbSchemaText}`
+    // dbOnly=true  → full schema (all columns) for direct SQL writing
+    // dbOnly=false → minimal schema (TABLE GUIDE only) + GET_SCHEMA tool for on-demand columns
+    const selectedSchema = dbOnly ? bizDbSchemaText : bizDbMinimalSchemaText;
+    const baseBizRules = bizDbConnected && selectedSchema
+      ? `\n\n## Business Database Access\nYou have read-only access to a business database via [QUERY_DB] tool.\n\n${selectedSchema}`
       : '';
 
     const dbOnlyRules = baseBizRules + `\n\n🔒 ONLY DB MODE (ACTIVE):\n- For ANY business question — ALWAYS use [QUERY_DB] to get LIVE data.\n- You CANNOT use your training data for business facts, numbers, or answers.\n- There is NO RAG/cache. Every query is live.\n- If [QUERY_DB] returns empty — say "No data found in database."\n- NEVER fabricate or guess data. Only present what the DB returns.\n- NEVER call external APIs for business data.\n- Format results as tables for structured data.`;
 
     const relaxedBizRules = baseBizRules + `\n\n📋 RULES:\n- When the user asks about business data — query the DB using [QUERY_DB].\n- You may use your training knowledge alongside DB results.\n- If [QUERY_DB] returns empty, say "No data found in database."\n- NEVER fabricate data that should come from the DB.\n- NEVER call external APIs for business data.\n- Format results as tables for structured data.`;
 
-    const bizDbDirective = bizDbConnected && bizDbSchemaText
+    const bizDbDirective = bizDbConnected && selectedSchema
       ? (dbOnly ? dbOnlyRules : relaxedBizRules)
       : '';
 
@@ -373,6 +378,24 @@ const sendMessage = async (req, res) => {
 
         aiMessages.push({ role: 'assistant', content: reply.replace(getFileMatch[0], '').trim() || `[Requesting file: ${fileData.file_name}]` });
         aiMessages.push({ role: 'user', content: contentBlock });
+        continue;
+      }
+
+      // Check for GET_SCHEMA tool call — AI requests column schema for specific tables
+      const getSchemaMatch = reply.match(/\[GET_SCHEMA:([^\]]+)\]/);
+      if (getSchemaMatch && bizDbConnected) {
+        const tableNames = getSchemaMatch[1].split(',').map(s => s.trim());
+        console.log(`[Tool] AI requesting schema for: ${tableNames.join(', ')}`);
+
+        const schemaText = await getTableSchema(tableNames);
+        aiMessages.push({
+          role: 'assistant',
+          content: reply.replace(getSchemaMatch[0], '').trim() || `[Getting schema for ${tableNames.join(', ')}...]`
+        });
+        aiMessages.push({
+          role: 'user',
+          content: schemaText + '\n\nNow write your SQL query using the exact column names shown above.'
+        });
         continue;
       }
 

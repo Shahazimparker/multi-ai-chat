@@ -14,6 +14,42 @@ let lastFetched = 0;
 const SCHEMA_CACHE_TTL = 10 * 60 * 1000; // 10 min
 
 /**
+ * Load foreign key relationships from information_schema
+ * Returns map: { 'tableName.columnName': { ref_table, ref_column } }
+ */
+const loadForeignKeyMap = async () => {
+  const fkSQL = `
+    SELECT
+      kcu.table_name,
+      kcu.column_name,
+      ccu.table_name AS foreign_table_name,
+      ccu.column_name AS foreign_column_name
+    FROM information_schema.table_constraints AS tc
+    JOIN information_schema.key_column_usage AS kcu
+      ON tc.constraint_name = kcu.constraint_name
+      AND tc.table_schema = kcu.table_schema
+    JOIN information_schema.constraint_column_usage AS ccu
+      ON ccu.constraint_name = tc.constraint_name
+      AND ccu.table_schema = tc.table_schema
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+      AND tc.table_schema = 'public'
+  `;
+  try {
+    const rows = await executeRawSQL(fkSQL);
+    if (!Array.isArray(rows)) return {};
+    const map = {};
+    for (const row of rows) {
+      const key = `${row.table_name}.${row.column_name}`;
+      map[key] = { ref_table: row.foreign_table_name, ref_column: row.foreign_column_name };
+    }
+    return map;
+  } catch (err) {
+    console.warn('[BizDB] FK introspection failed:', err.message);
+    return {};
+  }
+};
+
+/**
  * Execute raw SQL via RPC (the only way to query information_schema)
  * Falls back gracefully if RPC function doesn't exist yet
  */
@@ -30,10 +66,13 @@ const executeRawSQL = async (sql) => {
     throw new Error('Only read-only queries are allowed');
   }
 
-  console.log(`[BizDB] Executing SQL (${sql.trim().split('\n')[0].slice(0, 80)}...)`);
+  // Strip trailing semicolons — Supabase RPC doesn't accept them
+  const cleanSql = sql.replace(/;\s*$/, '').trim();
+
+  console.log(`[BizDB] Executing SQL (${cleanSql.split('\n')[0].slice(0, 80)}...)`);
 
   const { data, error } = await bizSupabase.rpc('execute_biz_query', {
-    query_text: sql,
+    query_text: cleanSql,
   });
 
   if (error) {
@@ -86,6 +125,18 @@ const getTableSchemas = async (forceRefresh = false) => {
       }
       
       schemaCache = Array.isArray(tables) ? tables : [];
+
+      // Annotate columns with FK references
+      const fkMap = await loadForeignKeyMap();
+      for (const t of schemaCache) {
+        if (Array.isArray(t.columns)) {
+          for (const c of t.columns) {
+            const fk = fkMap[`${t.table_name}.${c.column_name}`];
+            if (fk) c.foreign_key = fk;
+          }
+        }
+      }
+
       lastFetched = now;
       return schemaCache;
     }
@@ -136,6 +187,17 @@ const getTableSchemas = async (forceRefresh = false) => {
       }
     }
 
+    // Annotate columns with FK references
+    const fkMap = await loadForeignKeyMap();
+    for (const t of schemas) {
+      if (Array.isArray(t.columns)) {
+        for (const c of t.columns) {
+          const fk = fkMap[`${t.table_name}.${c.column_name}`];
+          if (fk) c.foreign_key = fk;
+        }
+      }
+    }
+
     schemaCache = schemas;
     lastFetched = now;
     return schemas;
@@ -148,6 +210,68 @@ const getTableSchemas = async (forceRefresh = false) => {
 };
 
 /**
+ * Semantic descriptions for each ERP table to help AI map questions to correct tables
+ */
+const TABLE_DESCRIPTIONS = {
+  companies: 'Company master data — codes, names, country, currency. Use for company-level info.',
+  plants: 'Manufacturing/distribution plants belonging to companies.',
+  storage_locations: 'Warehouse/storage locations within plants.',
+  cost_centers: 'Cost centers for expense tracking and controlling (CO module).',
+  gl_accounts: 'General ledger chart of accounts (FI module).',
+  vendors: 'Supplier/vendor master data.',
+  customers: 'Customer master data — use for customer info, accounts.',
+  journal_entries: 'FI journal entries (accounting documents) header.',
+  journal_entry_items: 'Line items for each journal entry (debit/credit).',
+  invoices: 'Accounts receivable/payable invoice headers.',
+  invoice_items: 'Line items on invoices.',
+  bank_accounts: 'Company bank accounts for payments/receipts.',
+  cost_elements: 'Cost element master (CO module) — categories of costs.',
+  internal_orders: 'Internal orders for short-term cost monitoring.',
+  cost_center_allocation: 'Cost allocations between cost centers.',
+  profit_center: 'Profit centers for profitability analysis.',
+  materials: 'Material/product master data — codes, descriptions, types.',
+  material_plant_data: 'Plant-specific material data (shelf life, storage).',
+  material_storage_location: 'Material quantities by storage location.',
+  purchase_requisitions: 'Purchase requisition (indent) headers.',
+  purchase_requisition_items: 'Line items in purchase requisitions.',
+  purchase_orders: 'Purchase order headers sent to vendors.',
+  purchase_order_items: 'Line items in purchase orders.',
+  goods_receipts: 'Goods receipt document headers.',
+  goods_receipt_items: 'Line items in goods receipts.',
+  stock_movements: 'All inventory movement transactions (goods issue/receipt/transfer).',
+  sales_orders: 'Sales order headers from customers.',
+  sales_order_items: 'Line items in sales orders.',
+  delivery_orders: 'Outbound delivery document headers.',
+  delivery_items: 'Line items in outbound deliveries.',
+  billing_documents: 'Billing/invoice document headers to customers.',
+  billing_document_items: 'Line items in billing documents.',
+  bills_of_material: 'BOM headers — product structure/routing.',
+  bom_items: 'Component items in each BOM.',
+  work_centers: 'Production work centers / machines.',
+  routings: 'Production routing headers (sequence of operations).',
+  routing_operations: 'Individual operations in production routing.',
+  production_orders: 'Production order headers.',
+  production_order_operations: 'Operations within production orders.',
+  production_confirmations: 'Production confirmation (actual labor/machine time booked).',
+  employees: 'Employee master data — personal info, type, active status, employment dates.',
+  positions: 'Job positions/roles in the organization.',
+  employee_assignments: 'Employee-to-position assignments history.',
+  salaries: 'Employee salary records (basic, allowances, deductions).',
+  payroll_runs: 'Payroll processing batch headers.',
+  payroll_details: 'Payroll calculation details per employee per run.',
+  leave_types: 'Leave categories (sick, vacation, personal, etc.).',
+  leave_requests: 'Employee leave applications and approvals.',
+  contacts: 'CRM contact persons at customer/vendor companies.',
+  opportunities: 'CRM sales opportunities / pipeline.',
+  activities: 'CRM activities — calls, meetings, tasks, emails.',
+  campaigns: 'Marketing campaign tracking.',
+  supplier_scorecards: 'Vendor performance evaluation scores.',
+  supplier_contracts: 'Long-term contracts/agreements with vendors.',
+  supplier_quotations: 'Vendor quotations for materials/services.',
+  supplier_quotation_items: 'Line items in supplier quotations.',
+};
+
+/**
  * Build a human-readable schema description for the AI system prompt
  */
 const buildSchemaContext = async () => {
@@ -156,14 +280,31 @@ const buildSchemaContext = async () => {
     return '';
   }
 
+  // Table guide: helps AI understand what each table is for
+  const guideLines = schemas
+    .filter(t => TABLE_DESCRIPTIONS[t.table_name])
+    .map(t => `  - ${t.table_name}: ${TABLE_DESCRIPTIONS[t.table_name]}`);
+
+  const guideBlock = guideLines.length > 0
+    ? `\n\n[TABLE GUIDE — what each table contains]\n${guideLines.join('\n')}\n[END GUIDE]`
+    : '';
+
   const lines = schemas.map(table => {
     const cols = (table.columns || [])
-      .map(c => `  - ${c.column_name} (${c.data_type}${c.is_nullable === 'NO' ? ', NOT NULL' : ''}${c.max_length ? `, max ${c.max_length}` : ''})`)
+      .map(c => {
+        let line = `  - ${c.column_name} (${c.data_type}${c.is_nullable === 'NO' ? ', NOT NULL' : ''}${c.max_length ? `, max ${c.max_length}` : ''}`;
+        if (c.foreign_key) {
+          line += `) → REFERENCES ${c.foreign_key.ref_table}(${c.foreign_key.ref_column})`;
+        } else {
+          line += ')';
+        }
+        return line;
+      })
       .join('\n');
     return `TABLE: ${table.table_name}\n${cols}`;
   });
 
-  return `[BUSINESS DATABASE SCHEMA]\n${lines.join('\n\n')}\n[END SCHEMA]\n\n` +
+  return `[BUSINESS DATABASE SCHEMA]\n${lines.join('\n\n')}\n[END SCHEMA]${guideBlock}\n\n` +
     `You have read-only access to this database. To query it, respond with:\n` +
     `[QUERY_DB]\n<SQL_QUERY>\n[/QUERY_DB]\n\n` +
     `Rules:\n` +
@@ -172,7 +313,75 @@ const buildSchemaContext = async () => {
     `- Use column names exactly as shown above\n` +
     `- Limit results with LIMIT when appropriate\n` +
     `- Do NOT use transactions, DDL, DML, or EXPLAIN\n` +
-    `- For date queries, use ISO format (YYYY-MM-DD)`;
+    `- Do NOT use semicolons (;) at the end of SQL queries\n` +
+    `- For date queries, use ISO format (YYYY-MM-DD)\n` +
+    `- Use the TABLE GUIDE above to pick the RIGHT table for the user's question`;
+};
+
+/**
+ * Build a minimal schema context — TABLE GUIDE only, no full column listing.
+ * AI uses GET_SCHEMA tool to fetch columns on-demand for only the tables it needs.
+ */
+const buildMinimalSchemaContext = async () => {
+  const schemas = await getTableSchemas();
+  if (!schemas || schemas.length === 0) {
+    return '';
+  }
+
+  const guideLines = schemas
+    .filter(t => TABLE_DESCRIPTIONS[t.table_name])
+    .map(t => `  - ${t.table_name}: ${TABLE_DESCRIPTIONS[t.table_name]}`);
+
+  const guideBlock = guideLines.length > 0
+    ? `\n\n[TABLE GUIDE — what each table contains]\n${guideLines.join('\n')}\n[END GUIDE]`
+    : '';
+
+  return `[BUSINESS DATABASE — TABLES OVERVIEW]${guideBlock}\n\n` +
+    `You have read-only access to this database. To query it:\n` +
+    `1. First get column schema: [GET_SCHEMA:table1, table2, ...]\n` +
+    `2. Then query: [QUERY_DB]\n   <SQL_QUERY>\n   [/QUERY_DB]\n\n` +
+    `Rules:\n` +
+    `- ALWAYS use GET_SCHEMA first to see exact column names before writing SQL\n` +
+    `- Only SELECT queries allowed (read-only)\n` +
+    `- Use table names exactly as shown in TABLE GUIDE\n` +
+    `- Use column names exactly as returned by GET_SCHEMA\n` +
+    `- Limit results with LIMIT when appropriate\n` +
+    `- Do NOT use transactions, DDL, DML, or EXPLAIN\n` +
+    `- Do NOT use semicolons (;) at the end of SQL queries\n` +
+    `- For date queries, use ISO format (YYYY-MM-DD)\n` +
+    `- Use the TABLE GUIDE above to pick the RIGHT table for the user's question`;
+};
+
+/**
+ * Get column schema for one or more specific tables
+ * @param {string|string[]} tableNames - Table name or array of table names
+ * @returns {string} Formatted schema text for the requested tables
+ */
+const getTableSchema = async (tableNames) => {
+  const schemas = await getTableSchemas();
+  const names = Array.isArray(tableNames) ? tableNames : [tableNames];
+
+  const filtered = schemas.filter(t => names.includes(t.table_name));
+  if (filtered.length === 0) {
+    return `[GET_SCHEMA RESULT]\nNo tables found matching: ${names.join(', ')}\n[END RESULT]`;
+  }
+
+  const lines = filtered.map(table => {
+    const cols = (table.columns || [])
+      .map(c => {
+        let line = `  - ${c.column_name} (${c.data_type}${c.is_nullable === 'NO' ? ', NOT NULL' : ''}${c.max_length ? `, max ${c.max_length}` : ''}`;
+        if (c.foreign_key) {
+          line += `) → REFERENCES ${c.foreign_key.ref_table}(${c.foreign_key.ref_column})`;
+        } else {
+          line += ')';
+        }
+        return line;
+      })
+      .join('\n');
+    return `TABLE: ${table.table_name}\n${cols}`;
+  });
+
+  return `[SCHEMA FOR: ${names.join(', ')}]\n${lines.join('\n\n')}\n[END SCHEMA]`;
 };
 
 /**
@@ -232,6 +441,8 @@ const isConnected = async () => {
 module.exports = {
   getTableSchemas,
   buildSchemaContext,
+  buildMinimalSchemaContext,
+  getTableSchema,
   queryBusinessDB,
   executeQuery,
   executeRawSQL,
