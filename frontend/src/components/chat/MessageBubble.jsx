@@ -10,10 +10,20 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Bot, User, Copy, Check, Zap, Download } from 'lucide-react';
+import { Bot, User, Copy, Check, Zap, Download, Clock } from 'lucide-react';
 import './MessageBubble.css';
 
 // ── Helpers ──────────────────────────────────────────────────
+
+/** Format ISO timestamp to readable time */
+const formatTime = (iso) => {
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch { return ''; }
+};
+
 
 /** Convert a markdown table string → CSV text */
 const mdTableToCSV = (tableMd) => {
@@ -192,8 +202,12 @@ const MessageBubble = ({ message }) => {
         
         {message.streaming && <span className="cursor">|</span>}
 
-        {/* Copy button — bottom of bubble, always visible */}
+        {/* Copy button + timestamp — bottom of bubble */}
         <div className="bubble-footer">
+          <span className="msg-timestamp">
+            <Clock size={11} />
+            {message.created_at && formatTime(message.created_at)}
+          </span>
           <button className="copy-btn" onClick={handleCopy} title="Copy entire message">
             {copied ? <Check size={14} /> : <Copy size={14} />}
           </button>

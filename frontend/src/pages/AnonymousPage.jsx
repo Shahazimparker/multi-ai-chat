@@ -66,7 +66,7 @@ const AnonymousPage = () => {
     setLoading(false);
   };
 
-  const performSend = async (userMsg) => {
+  const performSend = async (userMsg, isRetry = false) => {
     if (tokensUsed >= MAX_TOKENS) {
       setError(`Token limit reached (${MAX_TOKENS}). Start a new session to continue.`);
       return;
@@ -78,7 +78,9 @@ const AnonymousPage = () => {
       .filter(m => m.content && !m.streaming)
       .map(m => ({ role: m.role, content: m.content }));
 
-    setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+    if (!isRetry) {
+      setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+    }
     setLoading(true);
 
     const controller = new AbortController();
@@ -192,7 +194,9 @@ const AnonymousPage = () => {
     const msgText = failedMessage;
     setFailedMessage(null);
     setError('');
-    await performSend(msgText);
+    // Remove the last failed assistant message before re-sending
+    setMessages(prev => prev[prev.length - 1]?.role === 'assistant' ? prev.slice(0, -1) : prev);
+    await performSend(msgText, true);
   };
 
   const handleKeyDown = (e) => {

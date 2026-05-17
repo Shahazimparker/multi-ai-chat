@@ -438,6 +438,42 @@ const isConnected = async () => {
   }
 };
 
+// ── Lazy singleton: initialised once, shared across consumers ──
+let _bizDbConnected = null;
+let _bizDbSchemaText = '';
+let _bizDbMinimalSchemaText = '';
+let _initPromise = null;
+
+/**
+ * Initialise the business DB connection state (idempotent — safe to call multiple times)
+ * @returns {{ connected: boolean, schemaText: string, minimalSchemaText: string }}
+ */
+const initBusinessDB = async () => {
+  if (_bizDbConnected !== null) {
+    return { connected: _bizDbConnected, schemaText: _bizDbSchemaText, minimalSchemaText: _bizDbMinimalSchemaText };
+  }
+  if (_initPromise) {
+    return _initPromise;
+  }
+  _initPromise = (async () => {
+    try {
+      _bizDbConnected = await isConnected();
+      if (_bizDbConnected) {
+        _bizDbSchemaText = await buildSchemaContext();
+        _bizDbMinimalSchemaText = await buildMinimalSchemaContext();
+        console.log('[BizDB] ✅ Business database connected');
+      } else {
+        console.log('[BizDB] ⚠️ Business database not configured');
+      }
+    } catch (err) {
+      _bizDbConnected = false;
+      console.warn('[BizDB] ❌ Failed to connect:', err.message);
+    }
+    return { connected: _bizDbConnected, schemaText: _bizDbSchemaText, minimalSchemaText: _bizDbMinimalSchemaText };
+  })();
+  return _initPromise;
+};
+
 module.exports = {
   getTableSchemas,
   buildSchemaContext,
@@ -448,4 +484,5 @@ module.exports = {
   executeRawSQL,
   getTableRowCount,
   isConnected,
+  initBusinessDB,
 };

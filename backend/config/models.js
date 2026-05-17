@@ -67,7 +67,7 @@ const MODELS = {
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: 'deepseek-v4-flash',
     paid: true,
-    maxTokens: 32000,
+    maxTokens: 64000,  // Increased for complex SAP/ERP scenarios with multiple contexts
   },
   'deepseek-v4-pro': {
     label: 'deepseek-v4-pro (Paid)',
@@ -75,7 +75,7 @@ const MODELS = {
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: 'deepseek-v4-pro',
     paid: true,
-    maxTokens: 32000,
+    maxTokens: 64000,  // Increased for complex SAP/ERP scenarios with multiple contexts
   },
 
   // ── Anthropic Claude ──────────────────────────────────────
@@ -85,7 +85,7 @@ const MODELS = {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: 'claude-haiku-4-5-20251001',
     paid: true,
-    maxTokens: 32000,
+    maxTokens: 100000,  // Claude supports 100K context for complex ERP scenarios
   },
   'claude-sonnet': {
     label: 'Claude Sonnet (Smart, Paid)',
@@ -93,7 +93,7 @@ const MODELS = {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: 'claude-sonnet-4-6',
     paid: true,
-    maxTokens: 32000,
+    maxTokens: 200000,  // Claude Sonnet supports 200K context
   },
   'claude-opus': {
     label: 'Claude Opus (Best, Paid)',
@@ -101,7 +101,7 @@ const MODELS = {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: 'claude-opus-4-6',
     paid: true,
-    maxTokens: 32000,
+    maxTokens: 200000,  // Claude Opus supports 200K context
   },
 
   // ── OpenRouter (Live model list) ──────────────────────────
@@ -112,7 +112,7 @@ const MODELS = {
     model: 'openrouter',
     paid: true,
     unified: true,
-    maxTokens: 32000,
+    maxTokens: 128000,  // OpenRouter meta-llama models support up to 128K
     models: [],
   },
 };

@@ -70,15 +70,17 @@ const createPromptBudget = (modelConfig = {}) => {
   const reservedOutputTokens = Math.min(4000, Math.max(800, Math.floor(modelLimit * 0.35)));
   const maxPromptTokens = Math.max(1200, modelLimit - reservedOutputTokens);
 
-  // HYBRID APPROACH: fileTokens for 200 file names (~20 tokens each = ~4000 tokens)
-  // For 16K model: maxPromptTokens ≈ 12000, 4000/12000 ≈ 33%
+  // BUDGET ALLOCATION: Total 100% (toolLoopTokens reserves for agent/dispatcher overhead)
+  // For 16K model: maxPromptTokens ≈ 12000
   return {
     maxPromptTokens,
-    systemTokens: Math.floor(maxPromptTokens * 0.20),
-    historyTokens: Math.floor(maxPromptTokens * 0.25),
-    ragTokens: Math.floor(maxPromptTokens * 0.25),       // bumped from 18% for multi-chunk docs
-    fileTokens: Math.floor(maxPromptTokens * 0.33),      // ↑ 200 file names × ~20 tokens ≈ 4000 tokens
-    queryTokens: Math.floor(maxPromptTokens * 0.18),
+    toolLoopTokens: Math.floor(maxPromptTokens * 0.12),   // Agent decisions, token tracking, RAG scoring
+    systemTokens: Math.floor(maxPromptTokens * 0.18),
+    historyTokens: Math.floor(maxPromptTokens * 0.22),
+    ragTokens: Math.floor(maxPromptTokens * 0.20),
+    fileTokens: Math.floor(maxPromptTokens * 0.20),       // Reduced from 33% (was overcounting)
+    queryTokens: Math.floor(maxPromptTokens * 0.08),
+    // Total: 100%
   };
 };
 
@@ -194,36 +196,40 @@ const createDynamicPromptBudget = (turnCount, complexityScore, modelConfig = {})
   const reservedOutputTokens = 2000;
   const maxPromptTokens = modelLimit - reservedOutputTokens; // 6000
 
+  // Reserve tool-loop budget first (12% for agent overhead)
+  const toolLoopTokens = Math.floor(maxPromptTokens * 0.12);
+  const availableTokens = maxPromptTokens - toolLoopTokens;
+
   // INCREASED: Larger history budget so summary + latest messages fit
   // comfortably, preventing smartTrimContextBlock from dropping the summary
   // (which causes topic deviation in long complex chats).
-  let historyTokens = 2500; // Default (was 1200)
+  let historyTokens = Math.floor(availableTokens * 0.36); // Default ~1584 (was 2500)
 
   // New topic - keep it lean
   if (turnCount < 3) {
-    historyTokens = 1000; // was 500
+    historyTokens = Math.floor(availableTokens * 0.18); // ~792 (was 1000)
   }
   // Complex topic (SAP, code, technical) — needs full context
   else if (complexityScore > 7) {
-    historyTokens = 4000; // was 2000
+    historyTokens = Math.floor(availableTokens * 0.58); // ~2552 (was 4000)
   }
   // Long conversation — needs full context
   else if (turnCount > 15) {
-    historyTokens = 4000; // was 2000
+    historyTokens = Math.floor(availableTokens * 0.58); // ~2552 (was 4000)
   }
   // Medium complexity
   else if (complexityScore > 5) {
-    historyTokens = 2800; // was 1500
+    historyTokens = Math.floor(availableTokens * 0.40); // ~1760 (was 2800)
   }
 
-  // HYBRID APPROACH: fileTokens for 200 file names (~20 tokens each = ~4000 tokens)
   return {
     maxPromptTokens,
-    systemTokens: Math.floor(maxPromptTokens * 0.20),
+    toolLoopTokens,                                       // Agent decisions, token tracking
+    systemTokens: Math.floor(availableTokens * 0.20),
     historyTokens,                                        // ← DYNAMIC!
-    ragTokens: Math.floor(maxPromptTokens * 0.25),       // bumped from 20% for multi-chunk docs
-    fileTokens: Math.floor(maxPromptTokens * 0.33),       // ↑ 200 file names × ~20 tokens ≈ 4000 tokens
-    queryTokens: Math.floor(maxPromptTokens * 0.20),
+    ragTokens: Math.floor(availableTokens * 0.25),
+    fileTokens: Math.floor(availableTokens * 0.19),
+    queryTokens: Math.floor(availableTokens * 0.11),
     // Debug info
     _debug: {
       turnCount,

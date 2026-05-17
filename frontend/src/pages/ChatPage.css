@@ -606,4 +606,24 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
   white-space: nowrap;
+  flex: 1;
+}
+
+.queue-popover-remove {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: rgba(239, 68, 68, 0.5);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 2px 4px;
+  border-radius: 4px;
+  line-height: 1;
+  transition: color 0.12s, background 0.12s;
+  margin-left: 4px;
+}
+
+.queue-popover-remove:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.15);
 }

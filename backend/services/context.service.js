@@ -5,7 +5,6 @@
 
 const supabase = require('../config/supabase');
 const { summarizeMemory } = require('./summary.service');
-const { smartTrimContextBlock } = require('./tokenBudget.service');
 
 
 const clamp = (value, min, max) => {
@@ -31,6 +30,30 @@ const formatMessages = (messages) => {
   return messages
     .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
     .join('\n');
+};
+
+const toRoleMessage = (message) => ({
+  role: message.role === 'assistant' ? 'assistant' : 'user',
+  content: String(message.content || ''),
+});
+
+const buildRoleAwareContext = ({ memoryMode, olderSummary, latestMessages }) => {
+  const context = [{
+    role: 'system',
+    content: memoryMode === 'accurate'
+      ? 'Continue the same conversation. Use the summary and recent turns below as prior context. Prefer the most recent turns if there is any conflict.'
+      : 'Continue the same conversation. Use the prior summary and recent turns below as memory for the next reply.',
+  }];
+
+  if (olderSummary) {
+    context.push({
+      role: 'assistant',
+      content: `[Conversation summary]\n${olderSummary}`,
+    });
+  }
+
+  context.push(...latestMessages.map(toRoleMessage));
+  return context;
 };
 
 const getLatestSummary = async (topicId) => {
@@ -87,7 +110,6 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
     createDynamicPromptBudget,
     calculateComplexityScore,
     getTopicTurnCount,
-    smartTrimContextBlock,
   } = require('./tokenBudget.service');
 
   // ✅ NEW: Calculate complexity score
@@ -121,13 +143,11 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
   const recent = await getRecentMessages(topicId, rawLimit);
   if (recent.length === 0) return { context: [], isNewTopic: true };
 
-  let memoryText = '';
-
   const latestRawCount = requestedLimit;
   const olderMessages = recent.slice(0, Math.max(0, recent.length - latestRawCount));
   const latestMessages = recent.slice(-latestRawCount);
 
-  let olderSummaryBlock = '';
+  let olderSummaryText = '';
 
   const latestSummary = await getLatestSummary(topicId);
   const messagesSinceSummary = await countMessagesAfter(topicId, latestSummary?.created_at);
@@ -135,7 +155,7 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
   let summaryTokens = 0;  // ← track summary LLM tokens
 
   if (latestSummary && messagesSinceSummary < 8) {
-    olderSummaryBlock = `[OLDER CONVERSATION SUMMARY]\n${latestSummary.content}\n[END OLDER CONVERSATION SUMMARY]\n\n`;
+    olderSummaryText = latestSummary.content;
   } else if (olderMessages.length >= 8) {
     const olderText = formatMessages(olderMessages);
     const textToSummarize = latestSummary
@@ -145,37 +165,29 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
     const { summary, provider, model } = summaryResult;
     summaryTokens = summaryResult.tokensUsed || 0;  // ← capture token usage
     await saveTopicSummary({ topicId, userId, summary, provider, model });
-
-    olderSummaryBlock = `[OLDER CONVERSATION SUMMARY]
-${summary}
-[SUMMARY SOURCE: ${provider}/${model}]
-[END OLDER CONVERSATION SUMMARY]
-
-`;
+    olderSummaryText = `${summary}\n[Summary source: ${provider}/${model}]`;
   }
 
-  if (memoryMode === 'accurate') {
-    memoryText = `You are continuing the same chat topic. Use both the older summary and the latest raw conversation below to answer the user's next message. If the user's message is short or vague, infer it from this context.
-
-${olderSummaryBlock}[LATEST RAW CONVERSATION]
-${formatMessages(latestMessages)}
-[END LATEST RAW CONVERSATION]`;
-  } else {
-    memoryText = `You are continuing the same chat topic. Use the memory below to answer the user's next message. If the user's message is short or vague, infer it from this context.
-
-${olderSummaryBlock}[LATEST RAW CONVERSATION]
-${formatMessages(latestMessages)}
-[END LATEST RAW CONVERSATION]`;
+  const latestContextMessages = [];
+  let runningTokens = 0;
+  for (let i = latestMessages.length - 1; i >= 0; i--) {
+    const message = toRoleMessage(latestMessages[i]);
+    const estimatedTokens = Math.ceil(String(message.content || '').length / 4) + 4;
+    if (latestContextMessages.length > 0 && runningTokens + estimatedTokens > tokenBudget * 0.6) {
+      break;
+    }
+    latestContextMessages.unshift(message);
+    runningTokens += estimatedTokens;
   }
 
-  // ✅ CHANGE: Use smartTrimContextBlock instead of trimContextBlock
-  memoryText = smartTrimContextBlock(memoryText, tokenBudget);
+  const context = buildRoleAwareContext({
+    memoryMode,
+    olderSummary: olderSummaryText,
+    latestMessages: latestContextMessages.length > 0 ? latestContextMessages : latestMessages,
+  });
 
   return {
-    context: [{
-      role: 'user',
-      content: String(memoryText),
-    }],
+    context,
     isNewTopic: false,
     summaryTokens,  // ← expose summary token usage to caller
     _debug: {

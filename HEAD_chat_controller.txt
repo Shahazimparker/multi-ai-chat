@@ -16,12 +16,12 @@ const supabase = require('../config/supabase');
 const { MODELS } = require('../config/models');
 const { dispatchToAI } = require('../services/ai/dispatcher.service');
 const { compressPrompt } = require('../services/compress.service');
-const { getSemanticCachedResponse, setCachedResponse } = require('../services/cache.service');
+const { getCachedResponse, getSemanticCachedResponse, setCachedResponse } = require('../services/cache.service');
 const { buildRAGContext, embedText } = require('../services/rag.service');
 const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
 const { searchUserFilesRAG, getFileContent, listUserFiles } = require('../services/fileUpload.service');
 const { logAnalytics } = require('../services/analytics.service');
-const { queryBusinessDB, buildSchemaContext, buildMinimalSchemaContext, getTableSchema, isConnected, initBusinessDB } = require('../services/businessDb.service');
+const { queryBusinessDB, buildSchemaContext, buildMinimalSchemaContext, getTableSchema, isConnected } = require('../services/businessDb.service');
 
 const {
   createPromptBudget,
@@ -30,6 +30,7 @@ const {
   getTopicTurnCount,
   estimateMessagesTokens,
   estimateTokens,
+  fitMessagesToBudget,
   trimTextByTokens,
 } = require('../services/tokenBudget.service');
 
@@ -39,35 +40,29 @@ const {
  * Body: { modelId, message, topicId? }
  * Auth: Optional (anonymous users allowed but no history saved)
  */
-// ── Business DB connection status — managed by businessDb.service.js ──
+// ── Track business DB connection status (checked once per server start) ──
 let bizDbConnected = null;
-let bizDbSchemaText = '';
-let bizDbMinimalSchemaText = '';
+let bizDbSchemaText = '';         // full schema (all columns) — used when dbOnly=true
+let bizDbMinimalSchemaText = '';  // minimal schema (TABLE GUIDE only) — used when dbOnly=false
 
-const reserveToolLoopBudget = (promptBudget, reserveRatio = 0.15) => {
-  const toolReserveTokens = Math.min(1400, Math.max(300, Math.floor(promptBudget.maxPromptTokens * reserveRatio)));
-  const availableContextTokens = Math.max(900, promptBudget.maxPromptTokens - toolReserveTokens);
-  const scale = Math.min(1, availableContextTokens / promptBudget.maxPromptTokens);
-
-  return {
-    ...promptBudget,
-    toolReserveTokens,
-    contextBudgetTokens: availableContextTokens,
-    systemTokens: Math.max(100, Math.floor(promptBudget.systemTokens * scale)),
-    historyTokens: Math.max(200, Math.floor(promptBudget.historyTokens * scale)),
-    ragTokens: Math.max(200, Math.floor(promptBudget.ragTokens * scale)),
-    fileTokens: Math.max(150, Math.floor(promptBudget.fileTokens * scale)),
-    queryTokens: Math.max(120, Math.floor(promptBudget.queryTokens * scale)),
-  };
+const initBusinessDB = async () => {
+  if (bizDbConnected !== null) return;
+  try {
+    bizDbConnected = await isConnected();
+    if (bizDbConnected) {
+      bizDbSchemaText = await buildSchemaContext();
+      bizDbMinimalSchemaText = await buildMinimalSchemaContext();
+      console.log('[BizDB] ✅ Business database connected');
+    } else {
+      console.log('[BizDB] ⚠️ Business database not configured (set BIZ_SUPABASE_URL and BIZ_SUPABASE_SERVICE_KEY in .env)');
+    }
+  } catch (err) {
+    bizDbConnected = false;
+    console.warn('[BizDB] ❌ Failed to connect:', err.message);
+  }
 };
-
-// Init on module load (shared singleton — safe to call multiple times)
-(async () => {
-  const state = await initBusinessDB();
-  bizDbConnected = state.connected;
-  bizDbSchemaText = state.schemaText;
-  bizDbMinimalSchemaText = state.minimalSchemaText;
-})();
+// Init on module load
+initBusinessDB();
 
 const sendMessage = async (req, res) => {
   const startTime = Date.now();
@@ -96,7 +91,6 @@ const sendMessage = async (req, res) => {
 
   const user = req.user;        // null for anonymous
   const isAnonymous = !user;
-  let resolvedTopicId = topicId;
 
   try {
     // ── 1. Validate model ────────────────────────────────────
@@ -133,7 +127,6 @@ const sendMessage = async (req, res) => {
         queryTokens: Math.floor(promptBudget.queryTokens * scale),
       };
     }
-    promptBudget = reserveToolLoopBudget(promptBudget);
     const estimatedInputTokens = estimateTokens(message);
     if (user && estimatedInputTokens > user.per_query_limit) {
       return res.status(400).json({
@@ -281,13 +274,13 @@ const sendMessage = async (req, res) => {
       : '';
     // Static part — cacheable across requests in the same topic
     // dbOnly=true  → full schema (all columns) for direct SQL writing
-    // dbOnly=false → NO database information at all
-    const selectedSchema = dbOnly ? bizDbSchemaText : '';
+    // dbOnly=false → minimal schema (TABLE GUIDE only) + GET_SCHEMA tool for on-demand columns
+    const selectedSchema = dbOnly ? bizDbSchemaText : bizDbMinimalSchemaText;
     const baseBizRules = bizDbConnected && selectedSchema
       ? `\n\n## Business Database Access\nYou have read-only access to a business database via [QUERY_DB] tool.\n\n${selectedSchema}`
       : '';
 
-    const dbOnlyRules = baseBizRules + `\n\n🔒 ONLY DB MODE (ACTIVE):\n- For ANY business question — ALWAYS use [QUERY_DB] to get LIVE data.\n- You CANNOT use your training data for business facts, numbers, or answers.\n- There is NO RAG/cache. Every query is live.\n- If [QUERY_DB] returns empty — say "No data found in database."\n- NEVER fabricate or guess data. Only present what the DB returns.\n- NEVER call external APIs for business data.\n- NEVER show the SQL query text to the user — only present the formatted results.\n- Always run the query to the database with concise and proper syntax — never show placeholder or sample data before querying.\n- Format results as tables for structured data.`;
+    const dbOnlyRules = baseBizRules + `\n\n🔒 ONLY DB MODE (ACTIVE):\n- For ANY business question — ALWAYS use [QUERY_DB] to get LIVE data.\n- You CANNOT use your training data for business facts, numbers, or answers.\n- There is NO RAG/cache. Every query is live.\n- If [QUERY_DB] returns empty — say "No data found in database."\n- NEVER fabricate or guess data. Only present what the DB returns.\n- NEVER call external APIs for business data.\n- Format results as tables for structured data.`;
 
     const relaxedBizRules = baseBizRules + `\n\n📋 RULES:\n- When the user asks about business data — query the DB using [QUERY_DB].\n- You may use your training knowledge alongside DB results.\n- If [QUERY_DB] returns empty, say "No data found in database."\n- NEVER fabricate data that should come from the DB.\n- NEVER call external APIs for business data.\n- Format results as tables for structured data.`;
 
@@ -295,7 +288,7 @@ const sendMessage = async (req, res) => {
       ? (dbOnly ? dbOnlyRules : relaxedBizRules)
       : '';
 
-    const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}${bizDbDirective}\n\nRules:\n- Format ABAP, SQL, JSON, XML code in \`\`\` blocks with language label ONLY if the user explicitly asks for code/SQL.\n- Use tables for structured data (configuration, field mappings) when presenting DB results.\n- Use bullet points for better clarity.\n- When explaining errors, show the error first, then root cause, then fix.`;
+    const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}${bizDbDirective}\n\nRules:\n- Format ABAP, SQL, JSON, XML code in \`\`\` blocks with language label if the request is for programming/coding.\n- Use tables for structured data (configuration, field mappings) if asked for SQL or DB table data related query.\n- Use bullet points for better clarity.\n- When explaining errors, show the error first, then root cause, then fix.`;
     aiMessages.push({ role: 'system', content: staticSystem });
     // Dynamic parts — NOT cacheable (change per request)
     if (ragContext) {
@@ -331,10 +324,8 @@ const sendMessage = async (req, res) => {
     }
 
     // ── 9. Call AI ───────────────────────────────────────────
-    let reply, tokensUsed;
+    let reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0;
     let finalReply = '';
-    let dbQueried = false;
-    let lastDbResultBlock = '';
 
     // Tool-call loop: AI can search files, request full content, or query business DB
     const MAX_TOOL_ROUNDS = 5; // increased to accommodate DB queries
@@ -343,6 +334,9 @@ const sendMessage = async (req, res) => {
       reply = result.text;
       tokensUsed = result.tokensUsed;
       totalAITokens += tokensUsed || 0;  // ← accumulate ALL rounds
+      cacheCreationTokens += result.cacheCreationTokens || 0;
+      cacheReadTokens += result.cacheReadTokens || 0;
+
       if (abortController.signal.aborted) return;
 
       // Check for SEARCH_FILES tool call
@@ -388,11 +382,7 @@ const sendMessage = async (req, res) => {
       }
 
       // Check for GET_SCHEMA tool call — AI requests column schema for specific tables
-      // Supports both formats: [GET_SCHEMA:tables] and <GET_SCHEMA>tables</GET_SCHEMA>
-      let getSchemaMatch = reply.match(/\[GET_SCHEMA:([^\]]+)\]/);
-      if (!getSchemaMatch) {
-        getSchemaMatch = reply.match(/<GET_SCHEMA>([^<]+)<\/GET_SCHEMA>/);
-      }
+      const getSchemaMatch = reply.match(/\[GET_SCHEMA:([^\]]+)\]/);
       if (getSchemaMatch && bizDbConnected) {
         const tableNames = getSchemaMatch[1].split(',').map(s => s.trim());
         console.log(`[Tool] AI requesting schema for: ${tableNames.join(', ')}`);
@@ -410,15 +400,7 @@ const sendMessage = async (req, res) => {
       }
 
       // Check for QUERY_DB tool call
-      // Flexible matcher — handles all known AI formats:
-      //   [QUERY_DB]sql[/QUERY_DB]
-      //   [QUERY_DB] <SQL_QUERY>sql</SQL_QUERY>
-      //   [QUERY_DB] <SQL_QUERY>sql</QUERY_DB>
-      //   <QUERY_DB>sql</QUERY_DB>
-      let queryDbMatch = reply.match(/\[QUERY_DB\]\s*(?:<SQL_QUERY>\s*)?([\s\S]*?)\s*(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/);
-      if (!queryDbMatch) {
-        queryDbMatch = reply.match(/<QUERY_DB>\s*(?:<SQL_QUERY>\s*)?([\s\S]*?)\s*<\/QUERY_DB>/);
-      }
+      const queryDbMatch = reply.match(/\[QUERY_DB\]\s*([\s\S]*?)\s*\[\/QUERY_DB\]/);
       if (queryDbMatch && bizDbConnected) {
         const sql = queryDbMatch[1].trim();
         console.log(`[Tool] AI querying business DB:\n${sql}`);
@@ -435,8 +417,6 @@ const sendMessage = async (req, res) => {
             const truncated = resultCount > 20 ? `\n(Showing 20 of ${resultCount} results)` : '';
             resultBlock = `[QUERY DB RESULTS - ${resultCount} rows]${truncated}\n\`\`\`json\n${preview}\n\`\`\`\n[END RESULTS]\n\nBased on these results, answer the user's question. Use tables for structured data.`;
           }
-          dbQueried = true;
-          lastDbResultBlock = resultBlock;
 
           aiMessages.push({
             role: 'assistant',
@@ -458,13 +438,6 @@ const sendMessage = async (req, res) => {
         }
       }
 
-      // dbOnly enforcement: force AI to query DB before answering
-      if (dbOnly && !dbQueried && !reply.includes('[QUERY_DB]') && !reply.includes('<QUERY_DB>')) {
-        aiMessages.push({ role: 'assistant', content: reply });
-        aiMessages.push({ role: 'user', content: '[SYSTEM] You answered without querying the database. In dbOnly mode, you MUST query the database before answering. Write [QUERY_DB] with your SQL query now.' });
-        continue;
-      }
-
       // No tool call — done
       finalReply = reply;
       break;
@@ -472,11 +445,6 @@ const sendMessage = async (req, res) => {
 
     if (!finalReply) {
       finalReply = reply || '';
-    }
-
-    // Fallback: if AI exhausted rounds without producing a final answer, use last DB result
-    if (dbQueried && lastDbResultBlock && (!finalReply || finalReply.length < 20)) {
-      finalReply = `📊 **Database Results:**\n\n${lastDbResultBlock.replace(/\[QUERY DB RESULTS[^\]]*\]/g, '').replace(/\[END RESULTS\][\s\S]*$/, '').replace(/```json\n?/g, '```').trim()}\n\n*AI ran out of tool rounds. Raw results shown above.*`;
     }
 
     // Prefer API-reported tokens (accurate). Fall back to estimate only if totalAITokens is 0.
@@ -493,6 +461,7 @@ const sendMessage = async (req, res) => {
     }
 
     // ── 12. Save messages to DB (logged-in users only) ────────
+    let resolvedTopicId = topicId;
     if (!isAnonymous) {
       // Create new topic if none provided
       if (!resolvedTopicId) {
@@ -539,17 +508,6 @@ const sendMessage = async (req, res) => {
       isAnonymous, cacheHit: false, responseTimeMs: Date.now() - startTime,
     });
 
-    // Safety net: strip tool call syntax from final reply in dbOnly mode
-    if (bizDbConnected && dbOnly && finalReply) {
-      finalReply = finalReply
-        .replace(/\[QUERY_DB\][\s\S]*?(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/g, '')
-        .replace(/<QUERY_DB>[\s\S]*?<\/QUERY_DB>/g, '')
-        .replace(/\[GET_SCHEMA:[^\]]+\]/g, '')
-        .replace(/<GET_SCHEMA>[^<]+<\/GET_SCHEMA>/g, '')
-        .replace(/```sql[\s\S]*?```/g, '')
-        .trim();
-    }
-
     // ── 14. Return response ───────────────────────────────────
     res.json({
       reply: finalReply,
@@ -577,10 +535,7 @@ const sendMessage = async (req, res) => {
     let errorType = 'unknown';
     let userMessage = 'The selected LLM is temporarily unavailable.';
 
-    if (/413|too large|request too large/i.test(messageText)) {
-      errorType = 'request_too_large';
-      userMessage = 'This model does not support such a large request. Please select another model with a higher token limit and try again.';
-    } else if (/quota|insufficient|credit|billing|exceeded/i.test(messageText)) {
+    if (/quota|insufficient|credit|billing|exceeded/i.test(messageText)) {
       errorType = 'quota_exhausted';
       userMessage = 'The selected LLM token quota is exhausted.';
     } else if (/rate limit|429|too many/i.test(messageText)) {

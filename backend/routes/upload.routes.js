@@ -64,8 +64,6 @@ router.post('/file', requireAuth, uploadTimeout, upload.single('file'), async (r
 
     const { topicId, modelId } = req.body;
     const fileName = req.file.originalname;
-    const filePath = req.file.path;
-
     // Determine file type
     const ext = fileName.split('.').pop().toLowerCase();
     const fileTypeMap = {

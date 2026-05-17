@@ -1,0 +1,1144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ERP Schema – Entity Relationship Diagram</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f1117;
+    --surface: #161b27;
+    --surface2: #1e2535;
+    --border: #2a3347;
+    --text: #e2e8f4;
+    --muted: #6b7a99;
+    --accent: #4f8ef7;
+    --accent2: #38d9a9;
+    --accent3: #f7934f;
+    --accent4: #c084fc;
+    --accent5: #fb7185;
+    --accent6: #facc15;
+    --accent7: #34d399;
+    --accent8: #60a5fa;
+    --accent9: #f472b6;
+  }
+
+  body {
+    font-family: 'IBM Plex Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  header {
+    padding: 28px 32px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-end;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+
+  .header-title h1 {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+    color: var(--text);
+  }
+  .header-title p {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 3px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .stats {
+    display: flex;
+    gap: 20px;
+    margin-left: auto;
+    flex-wrap: wrap;
+  }
+  .stat {
+    text-align: right;
+  }
+  .stat-num {
+    font-size: 20px;
+    font-weight: 600;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--accent);
+  }
+  .stat-label {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .tab-row {
+    display: flex;
+    gap: 6px;
+    padding: 16px 32px;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--border);
+    scrollbar-width: none;
+  }
+  .tab-row::-webkit-scrollbar { display: none; }
+
+  .tab {
+    flex-shrink: 0;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .tab:hover { background: var(--surface2); color: var(--text); }
+  .tab.active { background: var(--surface2); color: var(--text); border-color: var(--accent); }
+  .tab .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+  }
+
+  .legend-row {
+    display: flex;
+    gap: 16px;
+    padding: 10px 32px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .leg-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--muted);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .leg-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+  }
+
+  #diagram-area {
+    padding: 24px 32px;
+    overflow: auto;
+    min-height: 400px;
+  }
+
+  #diagram-area .mermaid {
+    display: flex;
+    justify-content: center;
+  }
+
+  #diagram-area svg {
+    max-width: 100%;
+    height: auto;
+    background: transparent !important;
+  }
+
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 60px;
+    color: var(--muted);
+    font-size: 13px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .loading::before {
+    content: '';
+    width: 16px; height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .info-bar {
+    padding: 8px 32px 0;
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .info-tag {
+    font-size: 11px;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 8px;
+  }
+  .info-tag span { color: var(--accent2); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-title">
+    <h1>ERP Database Schema</h1>
+    <p>erp_db · supabase · uuid primary keys</p>
+  </div>
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-num">52</div>
+      <div class="stat-label">Tables</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">9</div>
+      <div class="stat-label">Modules</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">70+</div>
+      <div class="stat-label">Relationships</div>
+    </div>
+  </div>
+</header>
+
+<div class="tab-row">
+  <button class="tab active" data-module="all" onclick="switchTab(this)"><span class="dot" style="background:#4f8ef7"></span>All modules</button>
+  <button class="tab" data-module="master" onclick="switchTab(this)"><span class="dot" style="background:#38d9a9"></span>Master data</button>
+  <button class="tab" data-module="fi" onclick="switchTab(this)"><span class="dot" style="background:#f7934f"></span>FI – Finance</button>
+  <button class="tab" data-module="co" onclick="switchTab(this)"><span class="dot" style="background:#c084fc"></span>CO – Controlling</button>
+  <button class="tab" data-module="mm" onclick="switchTab(this)"><span class="dot" style="background:#fb7185"></span>MM – Materials</button>
+  <button class="tab" data-module="sd" onclick="switchTab(this)"><span class="dot" style="background:#facc15"></span>SD – Sales</button>
+  <button class="tab" data-module="pp" onclick="switchTab(this)"><span class="dot" style="background:#34d399"></span>PP – Production</button>
+  <button class="tab" data-module="hr" onclick="switchTab(this)"><span class="dot" style="background:#60a5fa"></span>HR</button>
+  <button class="tab" data-module="crm" onclick="switchTab(this)"><span class="dot" style="background:#f472b6"></span>CRM</button>
+  <button class="tab" data-module="srm" onclick="switchTab(this)"><span class="dot" style="background:#a78bfa"></span>SRM</button>
+</div>
+
+<div class="legend-row">
+  <div class="leg-item"><span class="leg-dot" style="background:#4f8ef7"></span>one-to-many  ||--o{</div>
+  <div class="leg-item"><span class="leg-dot" style="background:#38d9a9"></span>one-to-one  ||--||</div>
+  <div class="leg-item"><span class="leg-dot" style="background:#f7934f"></span>optional FK  }o--o|</div>
+  <div class="leg-item"><span class="leg-dot" style="background:#c084fc"></span>PK  uuid primary key</div>
+  <div class="leg-item"><span class="leg-dot" style="background:#fb7185"></span>FK  foreign key reference</div>
+</div>
+
+<div class="info-bar" id="info-bar">
+  <div class="info-tag">tables: <span id="tbl-count">52</span></div>
+  <div class="info-tag">module: <span id="mod-name">all modules</span></div>
+</div>
+
+<div id="diagram-area">
+  <div class="loading" id="loading-msg">Rendering diagram…</div>
+  <div id="mermaid-target"></div>
+</div>
+
+<script>
+const diagrams = {
+  master: {
+    name: 'master data', tables: 4,
+    src: `erDiagram
+    COMPANIES {
+      uuid id PK
+      varchar company_code
+      varchar company_name
+      varchar country
+      varchar currency
+      varchar tax_id
+    }
+    PLANTS {
+      uuid id PK
+      uuid company_id FK
+      varchar plant_code
+      varchar plant_name
+      varchar plant_type
+      varchar location
+    }
+    STORAGE_LOCATIONS {
+      uuid id PK
+      uuid plant_id FK
+      varchar sloc_code
+      varchar sloc_name
+      varchar warehouse_type
+    }
+    COST_CENTERS {
+      uuid id PK
+      uuid company_id FK
+      varchar cost_center_code
+      varchar cost_center_name
+      varchar department
+      varchar responsible_person
+    }
+    COMPANIES ||--o{ PLANTS : "has plants"
+    COMPANIES ||--o{ COST_CENTERS : "has cost centers"
+    PLANTS ||--o{ STORAGE_LOCATIONS : "has locations"`
+  },
+
+  fi: {
+    name: 'FI – Financial Accounting', tables: 8,
+    src: `erDiagram
+    COMPANIES {
+      uuid id PK
+      varchar company_code
+      varchar currency
+    }
+    GL_ACCOUNTS {
+      uuid id PK
+      uuid company_id FK
+      varchar account_number
+      varchar account_name
+      varchar account_type
+      varchar account_group
+    }
+    VENDORS {
+      uuid id PK
+      uuid company_id FK
+      varchar vendor_code
+      varchar vendor_name
+      varchar payment_terms
+      varchar vendor_type
+    }
+    CUSTOMERS {
+      uuid id PK
+      uuid company_id FK
+      varchar customer_code
+      varchar customer_name
+      decimal credit_limit
+      varchar payment_terms
+    }
+    JOURNAL_ENTRIES {
+      uuid id PK
+      uuid company_id FK
+      varchar document_number
+      date posting_date
+      varchar document_type
+      varchar status
+    }
+    JOURNAL_ENTRY_ITEMS {
+      uuid id PK
+      uuid journal_entry_id FK
+      uuid gl_account_id FK
+      decimal debit_amount
+      decimal credit_amount
+    }
+    INVOICES {
+      uuid id PK
+      uuid company_id FK
+      varchar invoice_number
+      varchar invoice_type
+      decimal amount
+      varchar status
+      date due_date
+    }
+    INVOICE_ITEMS {
+      uuid id PK
+      uuid invoice_id FK
+      uuid gl_account_id FK
+      decimal quantity
+      decimal unit_price
+      decimal line_amount
+    }
+    BANK_ACCOUNTS {
+      uuid id PK
+      uuid company_id FK
+      varchar bank_name
+      varchar account_number
+      decimal balance
+    }
+    COMPANIES ||--o{ GL_ACCOUNTS : "chart of accounts"
+    COMPANIES ||--o{ VENDORS : "vendor master"
+    COMPANIES ||--o{ CUSTOMERS : "customer master"
+    COMPANIES ||--o{ JOURNAL_ENTRIES : "postings"
+    COMPANIES ||--o{ INVOICES : "invoices"
+    COMPANIES ||--o{ BANK_ACCOUNTS : "bank accounts"
+    JOURNAL_ENTRIES ||--o{ JOURNAL_ENTRY_ITEMS : "line items"
+    JOURNAL_ENTRY_ITEMS }o--|| GL_ACCOUNTS : "posts to"
+    INVOICES ||--o{ INVOICE_ITEMS : "line items"
+    INVOICE_ITEMS }o--o| GL_ACCOUNTS : "mapped to"
+    INVOICES }o--o| VENDORS : "purchase invoice"
+    INVOICES }o--o| CUSTOMERS : "sales invoice"`
+  },
+
+  co: {
+    name: 'CO – Controlling', tables: 4,
+    src: `erDiagram
+    COMPANIES {
+      uuid id PK
+      varchar company_code
+    }
+    COST_CENTERS {
+      uuid id PK
+      uuid company_id FK
+      varchar cost_center_code
+      varchar cost_center_name
+      varchar department
+    }
+    COST_ELEMENTS {
+      uuid id PK
+      uuid company_id FK
+      varchar cost_element_code
+      varchar cost_element_name
+      varchar cost_element_type
+    }
+    INTERNAL_ORDERS {
+      uuid id PK
+      uuid company_id FK
+      uuid cost_center_id FK
+      varchar order_number
+      varchar order_type
+      decimal budget_amount
+      decimal actual_cost
+      varchar status
+    }
+    COST_CENTER_ALLOCATION {
+      uuid id PK
+      uuid from_cost_center_id FK
+      uuid to_cost_center_id FK
+      decimal allocation_percentage
+      date valid_from
+      date valid_to
+    }
+    PROFIT_CENTER {
+      uuid id PK
+      uuid company_id FK
+      varchar prctr_code
+      varchar prctr_name
+      varchar currency
+    }
+    COMPANIES ||--o{ COST_ELEMENTS : "cost elements"
+    COMPANIES ||--o{ INTERNAL_ORDERS : "internal orders"
+    COMPANIES ||--o{ PROFIT_CENTER : "profit centers"
+    COST_CENTERS ||--o{ INTERNAL_ORDERS : "assigned to"
+    COST_CENTERS ||--o{ COST_CENTER_ALLOCATION : "allocates from"
+    COST_CENTERS ||--o{ COST_CENTER_ALLOCATION : "receives to"`
+  },
+
+  mm: {
+    name: 'MM – Materials Management', tables: 10,
+    src: `erDiagram
+    MATERIALS {
+      uuid id PK
+      varchar material_code
+      varchar material_name
+      varchar material_type
+      decimal standard_price
+      varchar unit_of_measure
+    }
+    MATERIAL_PLANT_DATA {
+      uuid id PK
+      uuid material_id FK
+      uuid plant_id FK
+      decimal reorder_point
+      decimal safety_stock
+      varchar procurement_type
+      int lead_time_days
+    }
+    MATERIAL_STORAGE_LOCATION {
+      uuid id PK
+      uuid material_id FK
+      uuid storage_location_id FK
+      decimal quantity_on_hand
+      decimal reserved_quantity
+      decimal available_quantity
+    }
+    PURCHASE_REQUISITIONS {
+      uuid id PK
+      uuid company_id FK
+      varchar requisition_number
+      date requisition_date
+      varchar status
+    }
+    PURCHASE_REQUISITION_ITEMS {
+      uuid id PK
+      uuid purchase_requisition_id FK
+      uuid material_id FK
+      decimal quantity
+      decimal unit_price
+    }
+    PURCHASE_ORDERS {
+      uuid id PK
+      uuid company_id FK
+      uuid plant_id FK
+      uuid vendor_id FK
+      varchar po_number
+      decimal total_amount
+      varchar status
+    }
+    PURCHASE_ORDER_ITEMS {
+      uuid id PK
+      uuid purchase_order_id FK
+      uuid material_id FK
+      decimal quantity_ordered
+      decimal quantity_received
+      decimal unit_price
+    }
+    GOODS_RECEIPTS {
+      uuid id PK
+      uuid company_id FK
+      uuid purchase_order_id FK
+      uuid vendor_id FK
+      varchar gr_number
+      date gr_date
+    }
+    GOODS_RECEIPT_ITEMS {
+      uuid id PK
+      uuid goods_receipt_id FK
+      uuid material_id FK
+      uuid storage_location_id FK
+      decimal quantity
+    }
+    STOCK_MOVEMENTS {
+      uuid id PK
+      uuid material_id FK
+      uuid plant_id FK
+      varchar movement_type
+      decimal quantity
+      date movement_date
+    }
+    MATERIALS ||--o{ MATERIAL_PLANT_DATA : "plant data"
+    MATERIALS ||--o{ MATERIAL_STORAGE_LOCATION : "stock levels"
+    MATERIALS ||--o{ STOCK_MOVEMENTS : "movements"
+    PURCHASE_REQUISITIONS ||--o{ PURCHASE_REQUISITION_ITEMS : "line items"
+    PURCHASE_REQUISITION_ITEMS }o--|| MATERIALS : "requests"
+    PURCHASE_ORDERS ||--o{ PURCHASE_ORDER_ITEMS : "line items"
+    PURCHASE_ORDER_ITEMS }o--|| MATERIALS : "orders"
+    PURCHASE_ORDERS ||--o{ GOODS_RECEIPTS : "goods receipt"
+    GOODS_RECEIPTS ||--o{ GOODS_RECEIPT_ITEMS : "line items"
+    GOODS_RECEIPT_ITEMS }o--|| MATERIALS : "received"`
+  },
+
+  sd: {
+    name: 'SD – Sales & Distribution', tables: 7,
+    src: `erDiagram
+    CUSTOMERS {
+      uuid id PK
+      varchar customer_code
+      varchar customer_name
+      decimal credit_limit
+    }
+    SALES_ORDERS {
+      uuid id PK
+      uuid company_id FK
+      uuid plant_id FK
+      uuid customer_id FK
+      varchar sales_order_number
+      decimal total_amount
+      varchar status
+    }
+    SALES_ORDER_ITEMS {
+      uuid id PK
+      uuid sales_order_id FK
+      uuid material_id FK
+      decimal quantity_ordered
+      decimal quantity_delivered
+      decimal unit_price
+    }
+    DELIVERY_ORDERS {
+      uuid id PK
+      uuid sales_order_id FK
+      uuid customer_id FK
+      varchar delivery_number
+      date delivery_date
+      varchar status
+    }
+    DELIVERY_ITEMS {
+      uuid id PK
+      uuid delivery_id FK
+      uuid material_id FK
+      decimal quantity_delivered
+    }
+    BILLING_DOCUMENTS {
+      uuid id PK
+      uuid company_id FK
+      uuid sales_order_id FK
+      uuid customer_id FK
+      varchar invoice_number
+      decimal total_amount
+      varchar status
+    }
+    BILLING_DOCUMENT_ITEMS {
+      uuid id PK
+      uuid billing_document_id FK
+      uuid material_id FK
+      decimal quantity
+      decimal unit_price
+      decimal tax_amount
+    }
+    CUSTOMERS ||--o{ SALES_ORDERS : "places"
+    SALES_ORDERS ||--o{ SALES_ORDER_ITEMS : "line items"
+    SALES_ORDERS ||--o{ DELIVERY_ORDERS : "fulfilled by"
+    SALES_ORDERS ||--o{ BILLING_DOCUMENTS : "billed as"
+    DELIVERY_ORDERS ||--o{ DELIVERY_ITEMS : "line items"
+    BILLING_DOCUMENTS ||--o{ BILLING_DOCUMENT_ITEMS : "line items"
+    CUSTOMERS ||--o{ DELIVERY_ORDERS : "delivered to"
+    CUSTOMERS ||--o{ BILLING_DOCUMENTS : "billed to"`
+  },
+
+  pp: {
+    name: 'PP – Production Planning', tables: 8,
+    src: `erDiagram
+    MATERIALS {
+      uuid id PK
+      varchar material_code
+      varchar material_name
+      varchar material_type
+    }
+    BILLS_OF_MATERIAL {
+      uuid id PK
+      uuid material_id FK
+      uuid plant_id FK
+      varchar bom_version
+      varchar bom_type
+      varchar status
+    }
+    BOM_ITEMS {
+      uuid id PK
+      uuid bom_id FK
+      uuid component_material_id FK
+      decimal quantity
+      varchar unit_of_measure
+    }
+    WORK_CENTERS {
+      uuid id PK
+      uuid company_id FK
+      uuid plant_id FK
+      uuid cost_center_id FK
+      varchar work_center_code
+      varchar work_center_type
+    }
+    ROUTINGS {
+      uuid id PK
+      uuid material_id FK
+      uuid plant_id FK
+      varchar routing_number
+      varchar status
+    }
+    ROUTING_OPERATIONS {
+      uuid id PK
+      uuid routing_id FK
+      uuid work_center_id FK
+      int operation_sequence
+      int duration_minutes
+    }
+    PRODUCTION_ORDERS {
+      uuid id PK
+      uuid material_id FK
+      uuid bom_id FK
+      uuid routing_id FK
+      varchar production_order_number
+      decimal order_quantity
+      varchar status
+    }
+    PRODUCTION_ORDER_OPERATIONS {
+      uuid id PK
+      uuid production_order_id FK
+      uuid work_center_id FK
+      int operation_sequence
+      varchar operation_status
+    }
+    PRODUCTION_CONFIRMATIONS {
+      uuid id PK
+      uuid production_order_id FK
+      date confirmation_date
+      decimal quantity_produced
+      decimal scrap_quantity
+    }
+    MATERIALS ||--o{ BILLS_OF_MATERIAL : "assembled from"
+    BILLS_OF_MATERIAL ||--o{ BOM_ITEMS : "components"
+    BOM_ITEMS }o--|| MATERIALS : "component is"
+    MATERIALS ||--o{ ROUTINGS : "routed via"
+    ROUTINGS ||--o{ ROUTING_OPERATIONS : "operations"
+    ROUTING_OPERATIONS }o--|| WORK_CENTERS : "at work center"
+    MATERIALS ||--o{ PRODUCTION_ORDERS : "produced by"
+    PRODUCTION_ORDERS }o--o| BILLS_OF_MATERIAL : "uses BOM"
+    PRODUCTION_ORDERS }o--o| ROUTINGS : "uses routing"
+    PRODUCTION_ORDERS ||--o{ PRODUCTION_ORDER_OPERATIONS : "operations"
+    PRODUCTION_ORDER_OPERATIONS }o--|| WORK_CENTERS : "at"
+    PRODUCTION_ORDERS ||--o{ PRODUCTION_CONFIRMATIONS : "confirmed by"`
+  },
+
+  hr: {
+    name: 'HR – Human Resources', tables: 8,
+    src: `erDiagram
+    EMPLOYEES {
+      uuid id PK
+      uuid company_id FK
+      varchar employee_id
+      varchar first_name
+      varchar last_name
+      varchar employee_type
+      date employment_date
+      boolean is_active
+    }
+    POSITIONS {
+      uuid id PK
+      uuid company_id FK
+      uuid reporting_to_position_id FK
+      varchar position_code
+      varchar position_name
+      varchar department
+      varchar job_grade
+    }
+    EMPLOYEE_ASSIGNMENTS {
+      uuid id PK
+      uuid employee_id FK
+      uuid position_id FK
+      uuid cost_center_id FK
+      date assignment_date
+      boolean is_current
+    }
+    SALARIES {
+      uuid id PK
+      uuid employee_id FK
+      decimal basic_salary
+      decimal allowances
+      decimal deductions
+      decimal net_salary
+    }
+    PAYROLL_RUNS {
+      uuid id PK
+      uuid company_id FK
+      varchar payroll_period
+      date payroll_date
+      varchar status
+    }
+    PAYROLL_DETAILS {
+      uuid id PK
+      uuid payroll_run_id FK
+      uuid employee_id FK
+      decimal gross_pay
+      decimal net_pay
+    }
+    LEAVE_TYPES {
+      uuid id PK
+      uuid company_id FK
+      varchar leave_type_code
+      varchar leave_type_name
+      decimal annual_entitlement
+    }
+    LEAVE_REQUESTS {
+      uuid id PK
+      uuid employee_id FK
+      uuid leave_type_id FK
+      uuid approved_by_employee_id FK
+      date from_date
+      date to_date
+      varchar status
+    }
+    EMPLOYEES ||--o{ EMPLOYEE_ASSIGNMENTS : "assigned to"
+    POSITIONS ||--o{ EMPLOYEE_ASSIGNMENTS : "filled by"
+    POSITIONS ||--o| POSITIONS : "reports to"
+    EMPLOYEES ||--o{ SALARIES : "has salary"
+    PAYROLL_RUNS ||--o{ PAYROLL_DETAILS : "payroll lines"
+    EMPLOYEES ||--o{ PAYROLL_DETAILS : "paid in"
+    EMPLOYEES ||--o{ LEAVE_REQUESTS : "requests"
+    LEAVE_TYPES ||--o{ LEAVE_REQUESTS : "leave type"
+    EMPLOYEES ||--o| LEAVE_REQUESTS : "approved by"`
+  },
+
+  crm: {
+    name: 'CRM – Customer Relationship Mgmt', tables: 4,
+    src: `erDiagram
+    CUSTOMERS {
+      uuid id PK
+      varchar customer_code
+      varchar customer_name
+    }
+    CONTACTS {
+      uuid id PK
+      uuid company_id FK
+      uuid customer_id FK
+      varchar first_name
+      varchar last_name
+      varchar email
+      varchar phone_number
+      boolean is_primary_contact
+    }
+    OPPORTUNITIES {
+      uuid id PK
+      uuid company_id FK
+      uuid customer_id FK
+      uuid assigned_to_employee_id FK
+      varchar opportunity_number
+      decimal expected_value
+      decimal probability_percentage
+      varchar stage
+      varchar status
+    }
+    ACTIVITIES {
+      uuid id PK
+      uuid company_id FK
+      uuid customer_id FK
+      uuid opportunity_id FK
+      uuid assigned_to_employee_id FK
+      varchar activity_type
+      varchar subject
+      varchar status
+    }
+    CAMPAIGNS {
+      uuid id PK
+      uuid company_id FK
+      varchar campaign_name
+      varchar campaign_type
+      decimal budget
+      varchar status
+    }
+    CUSTOMERS ||--o{ CONTACTS : "has contacts"
+    CUSTOMERS ||--o{ OPPORTUNITIES : "has opportunities"
+    CUSTOMERS ||--o{ ACTIVITIES : "has activities"
+    OPPORTUNITIES ||--o{ ACTIVITIES : "related activities"`
+  },
+
+  srm: {
+    name: 'SRM – Supplier Relationship Mgmt', tables: 4,
+    src: `erDiagram
+    VENDORS {
+      uuid id PK
+      varchar vendor_code
+      varchar vendor_name
+      varchar vendor_type
+      varchar payment_terms
+    }
+    SUPPLIER_SCORECARDS {
+      uuid id PK
+      uuid vendor_id FK
+      date evaluation_period_from
+      date evaluation_period_to
+      decimal quality_score
+      decimal delivery_score
+      decimal cost_score
+      decimal overall_score
+      varchar performance_rating
+    }
+    SUPPLIER_CONTRACTS {
+      uuid id PK
+      uuid vendor_id FK
+      varchar contract_number
+      varchar contract_type
+      decimal contract_value
+      date start_date
+      date end_date
+      varchar status
+    }
+    SUPPLIER_QUOTATIONS {
+      uuid id PK
+      uuid vendor_id FK
+      varchar quotation_number
+      date quotation_date
+      decimal total_amount
+      varchar status
+    }
+    SUPPLIER_QUOTATION_ITEMS {
+      uuid id PK
+      uuid quotation_id FK
+      uuid material_id FK
+      decimal quantity
+      decimal unit_price
+      decimal line_amount
+    }
+    VENDORS ||--o{ SUPPLIER_SCORECARDS : "evaluated by"
+    VENDORS ||--o{ SUPPLIER_CONTRACTS : "has contracts"
+    VENDORS ||--o{ SUPPLIER_QUOTATIONS : "submits quotations"
+    SUPPLIER_QUOTATIONS ||--o{ SUPPLIER_QUOTATION_ITEMS : "line items"`
+  },
+
+  all: {
+    name: 'all modules', tables: 52,
+    src: `erDiagram
+    COMPANIES {
+      uuid id PK
+      varchar company_code
+      varchar country
+      varchar currency
+    }
+    PLANTS {
+      uuid id PK
+      uuid company_id FK
+      varchar plant_code
+      varchar plant_type
+    }
+    STORAGE_LOCATIONS {
+      uuid id PK
+      uuid plant_id FK
+      varchar sloc_code
+    }
+    COST_CENTERS {
+      uuid id PK
+      uuid company_id FK
+      varchar cost_center_code
+      varchar department
+    }
+    GL_ACCOUNTS {
+      uuid id PK
+      uuid company_id FK
+      varchar account_number
+      varchar account_type
+    }
+    VENDORS {
+      uuid id PK
+      uuid company_id FK
+      varchar vendor_code
+      varchar vendor_name
+    }
+    CUSTOMERS {
+      uuid id PK
+      uuid company_id FK
+      varchar customer_code
+      varchar customer_name
+    }
+    JOURNAL_ENTRIES {
+      uuid id PK
+      uuid company_id FK
+      varchar document_number
+      varchar status
+    }
+    JOURNAL_ENTRY_ITEMS {
+      uuid id PK
+      uuid journal_entry_id FK
+      uuid gl_account_id FK
+      decimal debit_amount
+    }
+    INVOICES {
+      uuid id PK
+      uuid company_id FK
+      varchar invoice_type
+      varchar status
+    }
+    BANK_ACCOUNTS {
+      uuid id PK
+      uuid company_id FK
+      decimal balance
+    }
+    MATERIALS {
+      uuid id PK
+      varchar material_code
+      varchar material_type
+    }
+    MATERIAL_PLANT_DATA {
+      uuid id PK
+      uuid material_id FK
+      uuid plant_id FK
+    }
+    PURCHASE_ORDERS {
+      uuid id PK
+      uuid company_id FK
+      uuid vendor_id FK
+      varchar status
+    }
+    PURCHASE_ORDER_ITEMS {
+      uuid id PK
+      uuid purchase_order_id FK
+      uuid material_id FK
+    }
+    GOODS_RECEIPTS {
+      uuid id PK
+      uuid company_id FK
+      uuid purchase_order_id FK
+    }
+    SALES_ORDERS {
+      uuid id PK
+      uuid company_id FK
+      uuid customer_id FK
+      varchar status
+    }
+    SALES_ORDER_ITEMS {
+      uuid id PK
+      uuid sales_order_id FK
+      uuid material_id FK
+    }
+    DELIVERY_ORDERS {
+      uuid id PK
+      uuid sales_order_id FK
+      varchar status
+    }
+    BILLING_DOCUMENTS {
+      uuid id PK
+      uuid company_id FK
+      uuid customer_id FK
+    }
+    BILLS_OF_MATERIAL {
+      uuid id PK
+      uuid material_id FK
+      uuid plant_id FK
+    }
+    BOM_ITEMS {
+      uuid id PK
+      uuid bom_id FK
+      uuid component_material_id FK
+    }
+    PRODUCTION_ORDERS {
+      uuid id PK
+      uuid material_id FK
+      varchar status
+    }
+    EMPLOYEES {
+      uuid id PK
+      uuid company_id FK
+      varchar employee_id
+      boolean is_active
+    }
+    POSITIONS {
+      uuid id PK
+      uuid company_id FK
+      varchar position_code
+    }
+    PAYROLL_RUNS {
+      uuid id PK
+      uuid company_id FK
+      varchar payroll_period
+    }
+    LEAVE_REQUESTS {
+      uuid id PK
+      uuid employee_id FK
+      varchar status
+    }
+    OPPORTUNITIES {
+      uuid id PK
+      uuid company_id FK
+      uuid customer_id FK
+      varchar status
+    }
+    CONTACTS {
+      uuid id PK
+      uuid customer_id FK
+      varchar email
+    }
+    SUPPLIER_SCORECARDS {
+      uuid id PK
+      uuid vendor_id FK
+      decimal overall_score
+    }
+    SUPPLIER_CONTRACTS {
+      uuid id PK
+      uuid vendor_id FK
+      varchar status
+    }
+    SUPPLIER_QUOTATIONS {
+      uuid id PK
+      uuid vendor_id FK
+      varchar status
+    }
+    COMPANIES ||--o{ PLANTS : "has"
+    COMPANIES ||--o{ COST_CENTERS : "has"
+    COMPANIES ||--o{ GL_ACCOUNTS : "FI"
+    COMPANIES ||--o{ VENDORS : "FI"
+    COMPANIES ||--o{ CUSTOMERS : "FI"
+    COMPANIES ||--o{ JOURNAL_ENTRIES : "FI"
+    COMPANIES ||--o{ INVOICES : "FI"
+    COMPANIES ||--o{ BANK_ACCOUNTS : "FI"
+    COMPANIES ||--o{ PURCHASE_ORDERS : "MM"
+    COMPANIES ||--o{ SALES_ORDERS : "SD"
+    COMPANIES ||--o{ EMPLOYEES : "HR"
+    COMPANIES ||--o{ PAYROLL_RUNS : "HR"
+    COMPANIES ||--o{ OPPORTUNITIES : "CRM"
+    PLANTS ||--o{ STORAGE_LOCATIONS : "has"
+    PLANTS ||--o{ MATERIAL_PLANT_DATA : "stocks"
+    PLANTS ||--o{ PURCHASE_ORDERS : "ships to"
+    PLANTS ||--o{ SALES_ORDERS : "ships from"
+    PLANTS ||--o{ BILLS_OF_MATERIAL : "PP"
+    JOURNAL_ENTRIES ||--o{ JOURNAL_ENTRY_ITEMS : "lines"
+    JOURNAL_ENTRY_ITEMS }o--|| GL_ACCOUNTS : "posts to"
+    INVOICES }o--o| VENDORS : "from vendor"
+    INVOICES }o--o| CUSTOMERS : "to customer"
+    MATERIALS ||--o{ MATERIAL_PLANT_DATA : "stocked"
+    MATERIALS ||--o{ PURCHASE_ORDER_ITEMS : "ordered"
+    MATERIALS ||--o{ SALES_ORDER_ITEMS : "sold"
+    MATERIALS ||--o{ BILLS_OF_MATERIAL : "PP"
+    MATERIALS ||--o{ PRODUCTION_ORDERS : "produced"
+    PURCHASE_ORDERS ||--o{ PURCHASE_ORDER_ITEMS : "lines"
+    PURCHASE_ORDERS ||--o{ GOODS_RECEIPTS : "received"
+    VENDORS ||--o{ PURCHASE_ORDERS : "fulfils"
+    VENDORS ||--o{ SUPPLIER_SCORECARDS : "SRM"
+    VENDORS ||--o{ SUPPLIER_CONTRACTS : "SRM"
+    VENDORS ||--o{ SUPPLIER_QUOTATIONS : "SRM"
+    CUSTOMERS ||--o{ SALES_ORDERS : "places"
+    CUSTOMERS ||--o{ BILLING_DOCUMENTS : "billed to"
+    CUSTOMERS ||--o{ OPPORTUNITIES : "CRM"
+    CUSTOMERS ||--o{ CONTACTS : "CRM"
+    SALES_ORDERS ||--o{ SALES_ORDER_ITEMS : "lines"
+    SALES_ORDERS ||--o{ DELIVERY_ORDERS : "delivery"
+    SALES_ORDERS ||--o{ BILLING_DOCUMENTS : "billing"
+    BILLS_OF_MATERIAL ||--o{ BOM_ITEMS : "components"
+    EMPLOYEES ||--o{ LEAVE_REQUESTS : "requests"
+    PAYROLL_RUNS ||--o{ EMPLOYEES : "pays"`
+  }
+};
+
+let currentModule = 'all';
+
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'dark',
+  fontFamily: 'IBM Plex Sans, sans-serif',
+  themeVariables: {
+    darkMode: true,
+    fontSize: '13px',
+    fontFamily: 'IBM Plex Sans, sans-serif',
+    lineColor: '#4f8ef7',
+    textColor: '#e2e8f4',
+    primaryColor: '#1e2535',
+    primaryBorderColor: '#2a3347',
+    primaryTextColor: '#e2e8f4',
+    secondaryColor: '#161b27',
+    tertiaryColor: '#0f1117',
+    edgeLabelBackground: '#161b27',
+    attributeBackgroundColorOdd: '#1a2030',
+    attributeBackgroundColorEven: '#161b27',
+  },
+  er: {
+    diagramPadding: 30,
+    layoutDirection: 'TB',
+    minEntityWidth: 120,
+    minEntityHeight: 40,
+    entityPadding: 14,
+    useMaxWidth: false
+  }
+});
+
+async function renderDiagram(key) {
+  const target = document.getElementById('mermaid-target');
+  const loading = document.getElementById('loading-msg');
+  const info = diagrams[key];
+
+  loading.style.display = 'flex';
+  target.innerHTML = '';
+
+  document.getElementById('tbl-count').textContent = info.tables;
+  document.getElementById('mod-name').textContent = info.name;
+
+  try {
+    const uid = 'erd_' + key + '_' + Date.now();
+    const { svg } = await mermaid.render(uid, info.src);
+    loading.style.display = 'none';
+    target.innerHTML = svg;
+
+    const svgEl = target.querySelector('svg');
+    if (svgEl) {
+      svgEl.style.maxWidth = '100%';
+      svgEl.style.height = 'auto';
+      svgEl.removeAttribute('height');
+    }
+  } catch(err) {
+    loading.style.display = 'none';
+    target.innerHTML = `<div style="padding:40px;color:#fb7185;font-family:IBM Plex Mono,monospace;font-size:12px">Render error: ${err.message}</div>`;
+  }
+}
+
+function switchTab(btn) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  currentModule = btn.dataset.module;
+  renderDiagram(currentModule);
+}
+
+renderDiagram('all');
+</script>
+</body>
+</html>

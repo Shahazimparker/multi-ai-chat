@@ -7,7 +7,6 @@ const express = require('express');
 const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const { sendMessage } = require('../controllers/chat.controller');
-const { requireAuth } = require('../middleware/auth');
 const { tokenCheck } = require('../middleware/tokenCheck');
 const { MODELS } = require('../config/models');
 const { getProviderModels } = require('../services/modelCatalog.service');
@@ -78,29 +77,36 @@ router.get('/provider-models/:provider', async (req, res) => {
 // POST /api/chat/message
 router.post('/message', chatLimiter, optionalAuth, tokenCheck, sendMessage);
 
-// ── Business DB connection state (shared with stream handler) ──
+// ── Business DB connection state — managed by businessDb.service.js ──
 let bizDbConnected = null;
-let bizDbSchemaText = '';         // full schema (all columns) — used when dbOnly=true
-let bizDbMinimalSchemaText = '';  // minimal schema (TABLE GUIDE only) — used when dbOnly=false
+let bizDbSchemaText = '';
+let bizDbMinimalSchemaText = '';
 
-const initBusinessDB = async () => {
-  if (bizDbConnected !== null) return;
-  try {
-    const { isConnected, buildSchemaContext, buildMinimalSchemaContext } = require('../services/businessDb.service');
-    bizDbConnected = await isConnected();
-    if (bizDbConnected) {
-      bizDbSchemaText = await buildSchemaContext();
-      bizDbMinimalSchemaText = await buildMinimalSchemaContext();
-      console.log('[BizDB-Stream] ✅ Business database connected');
-    } else {
-      console.log('[BizDB-Stream] ⚠️ Business database not configured');
-    }
-  } catch (err) {
-    bizDbConnected = false;
-    console.warn('[BizDB-Stream] ❌ Failed to connect:', err.message);
-  }
+const reserveToolLoopBudget = (promptBudget, reserveRatio = 0.15) => {
+  const toolReserveTokens = Math.min(1400, Math.max(300, Math.floor(promptBudget.maxPromptTokens * reserveRatio)));
+  const availableContextTokens = Math.max(900, promptBudget.maxPromptTokens - toolReserveTokens);
+  const scale = Math.min(1, availableContextTokens / promptBudget.maxPromptTokens);
+
+  return {
+    ...promptBudget,
+    toolReserveTokens,
+    contextBudgetTokens: availableContextTokens,
+    systemTokens: Math.max(100, Math.floor(promptBudget.systemTokens * scale)),
+    historyTokens: Math.max(200, Math.floor(promptBudget.historyTokens * scale)),
+    ragTokens: Math.max(200, Math.floor(promptBudget.ragTokens * scale)),
+    fileTokens: Math.max(150, Math.floor(promptBudget.fileTokens * scale)),
+    queryTokens: Math.max(120, Math.floor(promptBudget.queryTokens * scale)),
+  };
 };
-initBusinessDB();
+
+// Init on module load (shared singleton — safe to call multiple times)
+const { initBusinessDB } = require('../services/businessDb.service');
+(async () => {
+  const state = await initBusinessDB();
+  bizDbConnected = state.connected;
+  bizDbSchemaText = state.schemaText;
+  bizDbMinimalSchemaText = state.minimalSchemaText;
+})();
 /**
  * POST /api/chat/stream
  * Streaming response using Server-Sent Events
@@ -140,15 +146,13 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     // Import all the same services as chat endpoint
     const { MODELS } = require('../config/models');
     const { dispatchToAI } = require('../services/ai/dispatcher.service');
-    const { compressPrompt } = require('../services/compress.service');
     const { getCachedResponse } = require('../services/cache.service');
     const { buildRAGContext, embedText } = require('../services/rag.service');
     const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
     const { searchUserFilesRAG, getFileContent, listUserFiles } = require('../services/fileUpload.service');
-    const { queryBusinessDB, buildSchemaContext, buildMinimalSchemaContext, getTableSchema, isConnected } = require('../services/businessDb.service');
+    const { queryBusinessDB, getTableSchema } = require('../services/businessDb.service');
     const {
       createPromptBudget,
-      trimTextByTokens,
       estimateTokens,
       estimateMessagesTokens,
     } = require('../services/tokenBudget.service');
@@ -179,7 +183,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
 
     // Build context (same as regular endpoint)
     const estimatedInputTokens = estimateTokens(message);
-    const promptBudget = createPromptBudget(modelConfig);
+    const promptBudget = reserveToolLoopBudget(createPromptBudget(modelConfig));
 
     let ragContext = '';
     let fileResults = [];
@@ -187,7 +191,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
 
     if (ragEnabled) {
       // Check if user has uploaded files for this topic
-      const { count, error: countError } = await supabase
+      const { count } = await supabase
         .from('uploaded_files_rag')
         .select('id', { count: 'exact' })
         .eq('user_id', user?.id)
@@ -255,14 +259,14 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
       : '';
 
 
-    // ── Business DB schema injection — hybrid approach ──
+    // ── Business DB schema injection ──
     // dbOnly=true  → full schema (all columns) for direct SQL writing
-    // dbOnly=false → minimal schema (TABLE GUIDE only) + GET_SCHEMA tool for on-demand columns
-    const selectedSchema = dbOnly ? bizDbSchemaText : bizDbMinimalSchemaText;
+    // dbOnly=false → NO database information at all
+    const selectedSchema = dbOnly ? bizDbSchemaText : '';
     const baseBizRules = bizDbConnected && selectedSchema
       ? `\n\n## Business Database Access\nYou have read-only access to a business database via [QUERY_DB] tool.\n\n${selectedSchema}`
       : '';
-    const dbOnlyRules = baseBizRules + `\n\n🔒 ONLY DB MODE (ACTIVE):\n- For ANY business question — ALWAYS use [QUERY_DB] to get LIVE data.\n- You CANNOT use your training data for business facts, numbers, or answers.\n- There is NO RAG/cache. Every query is live.\n- If [QUERY_DB] returns empty — say "No data found in database."\n- NEVER fabricate or guess data. Only present what the DB returns.\n- NEVER call external APIs for business data.\n- Format results as tables for structured data.`;
+    const dbOnlyRules = baseBizRules + `\n\n🔒 ONLY DB MODE (ACTIVE):\n- For ANY business question — ALWAYS use [QUERY_DB] to get LIVE data.\n- You CANNOT use your training data for business facts, numbers, or answers.\n- There is NO RAG/cache. Every query is live.\n- If [QUERY_DB] returns empty — say "No data found in database."\n- NEVER fabricate or guess data. Only present what the DB returns.\n- NEVER call external APIs for business data.\n- NEVER show the SQL query text to the user — only present the formatted results.\n- Format results as tables for structured data.`;
     const relaxedBizRules = baseBizRules + `\n\n📋 RULES:\n- When the user asks about business data — query the DB using [QUERY_DB].\n- You may use your training knowledge alongside DB results.\n- If [QUERY_DB] returns empty, say "No data found in database."\n- NEVER fabricate data that should come from the DB.\n- NEVER call external APIs for business data.\n- Format results as tables for structured data.`;
     const bizDbDirective = bizDbConnected && selectedSchema
       ? (dbOnly ? dbOnlyRules : relaxedBizRules)
@@ -294,14 +298,17 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     let reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0;
     let finalReply = '';
     let billableTokens = 0;
+    let dbQueried = false;
+    let lastDbResultBlock = ''; // track last DB result for fallback
 
-    const MAX_TOOL_ROUNDS = 3;
+    const MAX_TOOL_ROUNDS = 6;
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const result = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
       reply = result.text;
       tokensUsed = result.tokensUsed;
-      cacheCreationTokens = result.cacheCreationTokens || 0;
-      cacheReadTokens = result.cacheReadTokens || 0;
+      totalAITokens += tokensUsed || 0;
+      cacheCreationTokens += result.cacheCreationTokens || 0;
+      cacheReadTokens += result.cacheReadTokens || 0;
 
       if (abortController.signal.aborted) return;
 
@@ -347,7 +354,11 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
       }
 
       // Check for GET_SCHEMA tool call — AI requests column schema for specific tables
-      const getSchemaMatch = reply.match(/\[GET_SCHEMA:([^\]]+)\]/);
+      // Supports both formats: [GET_SCHEMA:tables] and <GET_SCHEMA>tables</GET_SCHEMA>
+      let getSchemaMatch = reply.match(/\[GET_SCHEMA:([^\]]+)\]/);
+      if (!getSchemaMatch) {
+        getSchemaMatch = reply.match(/<GET_SCHEMA>([^<]+)<\/GET_SCHEMA>/);
+      }
       if (getSchemaMatch && bizDbConnected) {
         const tableNames = getSchemaMatch[1].split(',').map(s => s.trim());
         console.log(`[Stream Tool] AI requesting schema for: ${tableNames.join(', ')}`);
@@ -364,8 +375,15 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
         continue;
       }
 
-      // Check for QUERY_DB tool call
-      const queryDbMatch = reply.match(/\[QUERY_DB\]\s*([\s\S]*?)\s*\[\/QUERY_DB\]/);
+      // Flexible QUERY_DB matcher — handles all known AI formats:
+      //   [QUERY_DB]sql[/QUERY_DB]
+      //   [QUERY_DB] <SQL_QUERY>sql</SQL_QUERY>
+      //   [QUERY_DB] <SQL_QUERY>sql</QUERY_DB>
+      //   <QUERY_DB>sql</QUERY_DB>
+      let queryDbMatch = reply.match(/\[QUERY_DB\]\s*(?:<SQL_QUERY>\s*)?([\s\S]*?)\s*(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/);
+      if (!queryDbMatch) {
+        queryDbMatch = reply.match(/<QUERY_DB>\s*(?:<SQL_QUERY>\s*)?([\s\S]*?)\s*<\/QUERY_DB>/);
+      }
       if (queryDbMatch && bizDbConnected) {
         const sql = queryDbMatch[1].trim();
         console.log(`[Stream Tool] AI querying business DB:\n${sql}`);
@@ -382,6 +400,8 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
             const truncated = resultCount > 20 ? `\n(Showing 20 of ${resultCount} results)` : '';
             resultBlock = `[QUERY DB RESULTS - ${resultCount} rows]${truncated}\n\`\`\`json\n${preview}\n\`\`\`\n[END RESULTS]\n\nBased on these results, answer the user's question. Use tables for structured data.`;
           }
+          dbQueried = true;
+          lastDbResultBlock = resultBlock;
 
           aiMessages.push({
             role: 'assistant',
@@ -400,8 +420,14 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
         }
       }
 
+      // dbOnly enforcement: force AI to query DB before answering
+      if (dbOnly && !dbQueried && !reply.includes('[QUERY_DB]') && !reply.includes('<QUERY_DB>')) {
+        aiMessages.push({ role: 'assistant', content: reply });
+        aiMessages.push({ role: 'user', content: '[SYSTEM] You answered without querying the database. In dbOnly mode, you MUST query the database before answering. Write [QUERY_DB] with your SQL query now.' });
+        continue;
+      }
+
       // No tool call — done
-      totalAITokens += tokensUsed || 0;
       finalReply = reply;
       billableTokens = (totalAITokens > 0)
         ? totalAITokens + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0)
@@ -411,18 +437,33 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
 
     if (!finalReply) {
       finalReply = reply || '';
-      totalAITokens += tokensUsed || 0;
       billableTokens = (totalAITokens > 0)
         ? totalAITokens + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0)
         : promptTokens + estimateTokens(finalReply) + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0);
     }
 
+    // Safety net: ALWAYS strip tool call syntax (bracketed/angle-bracketed commands)
+    // Only strip ```sql blocks in dbOnly mode
+    if (bizDbConnected && finalReply) {
+      finalReply = finalReply
+        .replace(/\[QUERY_DB\][\s\S]*?(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/g, '')
+        .replace(/<QUERY_DB>[\s\S]*?<\/QUERY_DB>/g, '')
+        .replace(/\[GET_SCHEMA:[^\]]+\]/g, '')
+        .replace(/<GET_SCHEMA>[^<]+<\/GET_SCHEMA>/g, '');
+      if (dbOnly) {
+        finalReply = finalReply.replace(/```sql[\s\S]*?```/g, '');
+      }
+      finalReply = finalReply.trim();
+    }
+
+    // Fallback: if AI exhausted rounds without producing a final answer, use last DB result
+    if (dbQueried && lastDbResultBlock && (!finalReply || finalReply.length < 20)) {
+      finalReply = `📊 **Database Results:**\n\n${lastDbResultBlock.replace(/\[QUERY DB RESULTS[^\]]*\]/g, '').replace(/\[END RESULTS\][\s\S]*$/, '').replace(/```json\n?/g, '```').trim()}\n\n*AI ran out of tool rounds. Raw results shown above.*`;
+    }
+
     // Send streamed response in chunks — section-aware speed
     // Text → slow (human-readable), Tables/Code blocks → fast
     const contentLen = finalReply.length;
-    const isDataHeavy = contentLen > 300 &&
-      (finalReply.includes('|') || finalReply.includes('```'));
-
     // Parse content into sections: normal text vs data blocks (tables, code)
     const SECTIONS = [];
     const dataBlockRE = /```[\s\S]*?```|(?:^\|.+\|\s*$(?:\n\|[-: |]+\|\s*$(?:\n\|.+\|\s*$)*))/gm;
@@ -579,7 +620,11 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     console.log(`[Stream TokenTracking] AI=${totalAITokens} Embedding=${totalEmbeddingTokens} InputMsg=${estimatedInputTokens} Compress=${compressTokens} Summary=${historySummaryTokens} Total=${billableTokens}`);
 
     if (!res.writableEnded && !res.destroyed) {
-      try { res.end(); } catch { }
+      try {
+        res.end();
+      } catch (endErr) {
+        console.warn('[Stream] Failed to close response:', endErr.message);
+      }
     }
 
     // Log analytics asynchronously (fire-and-forget is fine here)
@@ -603,7 +648,10 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     let errorType = 'general';
 
     const msg = String(err?.message || '');
-    if (msg.includes('429') || msg.includes('quota')) {
+    if (msg.includes('413') || msg.includes('too large') || msg.includes('Request too large')) {
+      errorMessage = 'This model does not support such a large request. Please select another model with a higher token limit and try again.';
+      errorType = 'request_too_large';
+    } else if (msg.includes('429') || msg.includes('quota')) {
       errorMessage = 'Quota exceeded. Please use another model.';
       errorType = 'quota';
     } else if (msg.includes('ECONNREFUSED') || msg.includes('Connection')) {
@@ -630,11 +678,16 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
         errorType,
         originalError: msg
       })}\n\n`);
-    } catch {
+    } catch (writeErr) {
+      console.warn('[Stream] Failed to write SSE error response:', writeErr.message);
       return;
     }
 
-    try { res.end(); } catch { }
+    try {
+      res.end();
+    } catch (endErr) {
+      console.warn('[Stream] Failed to close errored response:', endErr.message);
+    }
   }
 });
 

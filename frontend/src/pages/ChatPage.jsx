@@ -112,6 +112,7 @@ const ChatPage = () => {
       const res = await api.get(`/history/topics/${topic.id}/messages`);
       setMessages(res.data.messages.map(m => ({
         role: m.role, content: m.content, model: m.model, tokensUsed: m.tokens_used,
+        created_at: m.created_at,
       })));
     } catch { setMessages([]); }
   };
@@ -123,7 +124,7 @@ const ChatPage = () => {
   };
 
   // Send message
-  const sendMessage = useCallback(async (msgText, file, image) => {
+  const sendMessage = useCallback(async (msgText, file, image, isRetry = false) => {
     let finalMessage = String(msgText).trim();
     const fileToUpload = file;
 
@@ -141,7 +142,9 @@ const ChatPage = () => {
     const userMsgContent = fileName
       ? (finalMessage ? `${finalMessage}\n📎 ${fileName}` : `📎 ${fileName}`)
       : finalMessage;
-    setMessages(prev => [...prev, { role: 'user', content: userMsgContent }]);
+    if (!isRetry) {
+      setMessages(prev => [...prev, { role: 'user', content: userMsgContent, created_at: new Date().toISOString() }]);
+    }
     setLoading(true);
 
     try {
@@ -224,7 +227,7 @@ const ChatPage = () => {
       let metadata = {};
       let streamingText = '';
 
-      setMessages(prev => [...prev, { role: 'assistant', content: '', streaming: true }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: '', streaming: true, created_at: new Date().toISOString() }]);
 
       while (true) {
         const { done, value } = await reader.read();
@@ -335,8 +338,14 @@ const ChatPage = () => {
     const { text, file, image } = failedMessage;
     setFailedMessage(null);
     setError('');
-    sendMessage(text, file, image);
+    // Remove the last failed assistant message before re-sending
+    setMessages(prev => prev[prev.length - 1]?.role === 'assistant' ? prev.slice(0, -1) : prev);
+    sendMessage(text, file, image, true);
   }, [failedMessage, sendMessage]);
+
+  const removeFromQueue = useCallback((index) => {
+    setMessageQueue(prev => prev.filter((_, i) => i !== index));
+  }, []);
 
   const handleStop = useCallback(() => {
     // Abort current AI request
@@ -595,6 +604,13 @@ const ChatPage = () => {
                         <div key={i} className="queue-popover-item" title={q.text || q.file?.name || 'message'}>
                           <span className="queue-popover-num">{i + 1}.</span>
                           <span className="queue-popover-text">{q.text || q.file?.name || 'message'}</span>
+                          <button
+                            className="queue-popover-remove"
+                            onClick={(e) => { e.stopPropagation(); removeFromQueue(i); }}
+                            title="Remove from queue"
+                          >
+                            ✕
+                          </button>
                         </div>
                       ))}
                     </div>

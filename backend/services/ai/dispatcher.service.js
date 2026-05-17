@@ -15,19 +15,6 @@ const { callTogether } = require('./together.service');
 const { callAnyAPI } = require('./anyapi.service');
 const { calldeepseekAPI } = require('./deepseek.service');
 
-const supportsCache = (modelConfig) => {
-  if (modelConfig.supportsCache === false) return false;
-  // Paid providers with consistent output — caching is safe
-  if (['claude', 'deepseek', 'mistral'].includes(modelConfig.provider)) return true;
-  if (modelConfig.provider === 'openrouter') {
-    return modelConfig.model.includes('claude')
-        || modelConfig.model.includes('deepseek')
-        || modelConfig.model.includes('mistral');
-  }
-  // Free providers (groq, gemini) — skip cache to keep fresh results
-  return false;
-};
-
 /**
  * dispatchToAI — routes messages to the correct AI provider
  * @param {Object} modelConfig  from config/models.js
