@@ -337,7 +337,28 @@ const sendMessage = async (req, res) => {
     let lastDbResultBlock = '';
 
     // Tool-call loop: AI can search files, request full content, or query business DB
-    const MAX_TOOL_ROUNDS = 5; // increased to accommodate DB queries
+    const MAX_TOOL_ROUNDS = 5;
+    // Track the index where tool-round messages start so we can trim oldest rounds
+    // if aiMessages grows too large (memory + token budget protection).
+    const TOOL_ROUND_START = aiMessages.length;
+    const MAX_TOOL_TOKENS = Math.floor(promptBudget.maxPromptTokens * 0.5); // 50% of budget for tool rounds
+
+    const trimOldestToolRounds = () => {
+      const estimatedToolTokens = estimateMessagesTokens(aiMessages.slice(TOOL_ROUND_START));
+      if (estimatedToolTokens <= MAX_TOOL_TOKENS) return;
+
+      // Remove the oldest pair (assistant + user) from tool rounds
+      // Keep removing until under budget — ensures at least one tool round survives
+      while (aiMessages.length > TOOL_ROUND_START + 2) {
+        const oldPairTokens = estimateTokens(aiMessages[TOOL_ROUND_START].content || '') +
+                               estimateTokens(aiMessages[TOOL_ROUND_START + 1].content || '') + 8;
+        aiMessages.splice(TOOL_ROUND_START, 2); // remove oldest assistant+user pair
+        console.log(`[Tool] Trimmed oldest tool round (~${oldPairTokens} tokens) — ${aiMessages.length - TOOL_ROUND_START} tool messages remain`);
+
+        if (estimateMessagesTokens(aiMessages.slice(TOOL_ROUND_START)) <= MAX_TOOL_TOKENS) break;
+      }
+    };
+
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const result = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
       reply = result.text;
@@ -363,6 +384,7 @@ const sendMessage = async (req, res) => {
 
         aiMessages.push({ role: 'assistant', content: reply.replace(searchMatch[0], '').trim() || `[Searching files for "${query}"]` });
         aiMessages.push({ role: 'user', content: resultBlock });
+        trimOldestToolRounds(); // ← prevent unbounded memory/token growth
         continue;
       }
 
@@ -384,6 +406,7 @@ const sendMessage = async (req, res) => {
 
         aiMessages.push({ role: 'assistant', content: reply.replace(getFileMatch[0], '').trim() || `[Requesting file: ${fileData.file_name}]` });
         aiMessages.push({ role: 'user', content: contentBlock });
+        trimOldestToolRounds(); // ← prevent unbounded memory/token growth
         continue;
       }
 
@@ -406,6 +429,7 @@ const sendMessage = async (req, res) => {
           role: 'user',
           content: schemaText + '\n\nNow write your SQL query using the exact column names shown above.'
         });
+        trimOldestToolRounds(); // ← prevent unbounded memory/token growth
         continue;
       }
 
@@ -443,6 +467,7 @@ const sendMessage = async (req, res) => {
             content: reply.replace(queryDbMatch[0], '').trim() || `[Querying business database...]`
           });
           aiMessages.push({ role: 'user', content: resultBlock });
+          trimOldestToolRounds(); // ← prevent unbounded memory/token growth
           continue;
         } catch (dbErr) {
           console.error(`[Tool] DB query failed: ${dbErr.message}`);
@@ -454,6 +479,7 @@ const sendMessage = async (req, res) => {
             role: 'user',
             content: `[QUERY DB ERROR]\n${dbErr.message}\n[END ERROR]\n\nPlease fix your SQL query and try again. Make sure table and column names are correct. Use DESCRIBE_TABLES if you need to check the schema.`
           });
+          trimOldestToolRounds(); // ← prevent unbounded memory/token growth
           continue;
         }
       }
@@ -462,6 +488,7 @@ const sendMessage = async (req, res) => {
       if (dbOnly && !dbQueried && !reply.includes('[QUERY_DB]') && !reply.includes('<QUERY_DB>')) {
         aiMessages.push({ role: 'assistant', content: reply });
         aiMessages.push({ role: 'user', content: '[SYSTEM] You answered without querying the database. In dbOnly mode, you MUST query the database before answering. Write [QUERY_DB] with your SQL query now.' });
+        trimOldestToolRounds(); // ← prevent unbounded memory/token growth
         continue;
       }
 

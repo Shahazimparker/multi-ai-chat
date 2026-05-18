@@ -31,11 +31,41 @@ const cancelableDelay = (ms, signal) => new Promise((resolve, reject) => {
 
   signal?.addEventListener('abort', onAbort, { once: true });
 });
-// ========== EMBEDDING CACHE ==========
-// NOTE: In-memory cache handles deduplication within the same request/topic.
-// Key now includes userId to prevent cross-user cache sharing.
+// ========== EMBEDDING CACHE (LRU with Hard Cap) ==========
+// - Key includes userId to prevent cross-user cache sharing.
+// - MAX_CACHE_SIZE prevents unbounded memory growth (memory leak fix).
+// - When full, oldest 10% of entries are evicted (Map insertion order = LRU).
+// - Periodic background cleanup runs every 15 minutes for stale TTL entries.
+const MAX_CACHE_SIZE = 5000;
 const embeddingCache = new Map();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour TTL
+
+/** Evict oldest entries if cache exceeds MAX_CACHE_SIZE — prevents memory leak */
+const enforceMaxCacheSize = () => {
+  if (embeddingCache.size <= MAX_CACHE_SIZE) return;
+  const deleteCount = Math.ceil(MAX_CACHE_SIZE * 0.1); // evict 10% of capacity
+  const keysToDelete = [];
+  for (const key of embeddingCache.keys()) {
+    if (keysToDelete.length >= deleteCount) break;
+    keysToDelete.push(key);
+  }
+  for (const key of keysToDelete) embeddingCache.delete(key);
+};
+
+/** Periodic background cleanup: clear stale TTL entries so they don't accumulate */
+setInterval(() => {
+  const now = Date.now();
+  let deleted = 0;
+  for (const [key, value] of embeddingCache) {
+    if (now - value.timestamp > CACHE_TTL) {
+      embeddingCache.delete(key);
+      deleted++;
+    }
+  }
+  if (deleted > 0) {
+    console.log(`[RAG] Cache cleanup: removed ${deleted} stale entries (${embeddingCache.size} remain)`);
+  }
+}, 15 * 60 * 1000).unref(); // .unref() so it doesn't keep Node process alive
 
 const getCacheKey = (text, provider, userId = null) => {
   return `${userId || 'anon'}:${provider}:${text.slice(0, 100)}`;
@@ -53,6 +83,7 @@ const getCachedEmbedding = (key) => {
 
 const setCachedEmbedding = (key, vector) => {
   embeddingCache.set(key, { vector, timestamp: Date.now() });
+  enforceMaxCacheSize(); // ← memory leak prevention
 };
 
 const clearEmbeddingCache = () => {
@@ -242,28 +273,50 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
  * @param {number} threshold  minimum similarity (default 0.4)
  * @param {string} provider   embedding provider ('openai'|'gemini')
  * @param {AbortSignal} signal
+ * @param {string|null} userId   - REQUIRED for isolation (prevents cross-user leakage)
+ * @param {string|null} topicId  - if provided, scopes search to a specific topic
  * @returns {Array}           [{title, content, similarity}]
  */
-const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = 'openrouter', signal = null) => {
-  const embedResult = await embedText(query, provider, 3, signal);
+const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = 'openrouter', signal = null, userId = null, topicId = null) => {
+  // SAFETY GUARD: require at least userId to prevent global data leakage
+  // match_documents has NO user/topic filter — without this guard it returns ALL business RAG data
+  if (!userId) {
+    console.warn('[RAG] searchRelevantDocs called without userId — returning empty to prevent cross-user data leakage');
+    return [];
+  }
+
+  const embedResult = await embedText(query, provider, 3, signal, userId);
   if (!embedResult) return [];
   const { vector: embedding, tokensUsed: embedTokens } = embedResult;
 
-  // Race the Supabase RPC call against the abort signal
-  const { data, error } = await Promise.race([
-    supabase.rpc('match_documents', {
+  // Use topic-scoped search whenever possible for best isolation
+  let rpcCall;
+  if (topicId) {
+    rpcCall = supabase.rpc('match_topic_files', {
+      query_embedding: embedding,
+      p_topic_id: topicId,
+      match_threshold: threshold,
+      match_count: topK,
+    });
+  } else {
+    rpcCall = supabase.rpc('match_documents', {
       query_embedding: embedding,
       provider_param: provider,
       match_threshold: threshold,
       match_count: topK,
-    }),
+    });
+  }
+
+  // Race the Supabase RPC call against the abort signal
+  const { data, error } = await Promise.race([
+    rpcCall,
     new Promise((_, reject) => {
       if (signal?.aborted) reject({ name: 'AbortError' });
       signal?.addEventListener('abort', () => reject({ name: 'AbortError' }), { once: true });
     })
   ]);
 
-  if (error && error.name !== 'AbortError' && error.name !== 'CanceledError') { // Only log if not an abort
+  if (error && error.name !== 'AbortError' && error.name !== 'CanceledError') {
     console.error('[RAG] Search error:', error.message);
     return [];
   }

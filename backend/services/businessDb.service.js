@@ -443,12 +443,16 @@ const getTableRowCount = async (tableName) => {
 
 /**
  * Check if business DB is connected and has execute_biz_query available
+ * On failure, clears schemaCache to prevent stale schema from being served.
  */
 const isConnected = async () => {
   try {
     await executeRawSQL('SELECT 1 as ok');
     return true;
   } catch {
+    // Connection failed — clear stale schema so next getTableSchemas() re-fetches
+    schemaCache = null;
+    lastFetched = 0;
     return false;
   }
 };
@@ -478,10 +482,17 @@ const initBusinessDB = async () => {
         _bizDbMinimalSchemaText = await buildMinimalSchemaContext();
         console.log('[BizDB] ✅ Business database connected');
       } else {
+        // Schema cache already cleared by isConnected() on failure
+        _bizDbSchemaText = '';
+        _bizDbMinimalSchemaText = '';
         console.log('[BizDB] ⚠️ Business database not configured');
       }
     } catch (err) {
       _bizDbConnected = false;
+      _bizDbSchemaText = '';
+      _bizDbMinimalSchemaText = '';
+      schemaCache = null;  // ← also clear on unexpected error
+      lastFetched = 0;
       console.warn('[BizDB] ❌ Failed to connect:', err.message);
     }
     return { connected: _bizDbConnected, schemaText: _bizDbSchemaText, minimalSchemaText: _bizDbMinimalSchemaText };

@@ -47,20 +47,24 @@ const SUMMARY_MODELS = [
   },
 ];
 
-const summaryPrompt = (text, strict = false) => (
-  `Summarize this previous conversation for chat memory.
+const summaryPrompt = (text, strict = false, currentQuery = '') => {
+  const topicFocus = currentQuery
+    ? `\n- FOCUS on information relevant to the user's current interest: "${currentQuery}". Prioritize preserving facts, preferences, and context related to this topic.\n`
+    : '\n';
+  return (
+    `Summarize this previous conversation for chat memory.
 
 Rules:
 - CRITICAL: Preserve ALL personal information about the user — their name, job/profession, skills, preferences, location, goals, and any personal context they shared.
 - Keep technical facts, model names, decisions, and unresolved questions.
 - Do NOT be generic. Include specific names, technologies, numbers, and details.
 - Keep it under 450 words.
-- Use compact bullet points.
-${strict ? '- VALIDATION RETRY: explicitly preserve important names, acronyms, unresolved questions, and repeated technical/business keywords from the source.\n- Include at least 3 concrete entities or keywords that appear in the source when available.' : ''}
+- Use compact bullet points.${topicFocus}${strict ? '- VALIDATION RETRY: explicitly preserve important names, acronyms, unresolved questions, and repeated technical/business keywords from the source.\n- Include at least 3 concrete entities or keywords that appear in the source when available.' : ''}
 
 Conversation:
 ${text}`
-);
+  );
+};
 
 /**
  * Estimate token usage for a summary call: input prompt + expected output (~600 tokens)
@@ -196,7 +200,12 @@ const fallbackSummary = (text) => {
     .slice(0, 1200);
 };
 
-const summarizeMemory = async (text, signal = null) => {
+const summarizeMemory = async (text, signal = null, currentQuery = '') => {
+  // If a current query is provided, inject it as topic focus instruction
+  const topicPrefixed = currentQuery
+    ? `[Focus on information relevant to: "${currentQuery}"]\n\n${text}`
+    : text;
+
   for (const cfg of SUMMARY_MODELS) {
     if (!cfg.apiKey) continue;
 
@@ -205,23 +214,23 @@ const summarizeMemory = async (text, signal = null) => {
         let result;
 
         if (cfg.provider === 'openrouter') {
-          result = await summarizeWithOpenRouter({ ...cfg, text, strict }, signal);
+          result = await summarizeWithOpenRouter({ ...cfg, text: topicPrefixed, strict }, signal);
         } else if (cfg.provider === 'cerebras') {
-          result = await summarizeWithCerebras({ ...cfg, text, strict }, signal);
+          result = await summarizeWithCerebras({ ...cfg, text: topicPrefixed, strict }, signal);
         } else if (cfg.provider === 'gemini') {
-          result = await summarizeWithGemini({ ...cfg, text, strict }, signal);
+          result = await summarizeWithGemini({ ...cfg, text: topicPrefixed, strict }, signal);
         } else if (cfg.provider === 'mistral') {
-          result = await summarizeWithMistral({ ...cfg, text, strict }, signal);
+          result = await summarizeWithMistral({ ...cfg, text: topicPrefixed, strict }, signal);
         }
 
-        if (result?.summary && isSummaryQualityAcceptable(text, result.summary)) {
+        if (result?.summary && isSummaryQualityAcceptable(topicPrefixed, result.summary)) {
           console.log(`[Summary] Used ${cfg.provider}/${cfg.model}${strict ? ' (strict retry)' : ''} (tokens: ${result.tokensUsed})`);
           return {
             summary: result.summary,
             provider: cfg.provider,
             model: cfg.model,
             fallback: false,
-            tokensUsed: result.tokensUsed || estimateSummaryTokens(text, strict),
+            tokensUsed: result.tokensUsed || estimateSummaryTokens(topicPrefixed, strict),
           };
         }
 
@@ -236,7 +245,7 @@ const summarizeMemory = async (text, signal = null) => {
   }
 
   return {
-    summary: fallbackSummary(text),
+    summary: fallbackSummary(topicPrefixed),
     provider: 'local',
     model: 'truncate',
     fallback: true,

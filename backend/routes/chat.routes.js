@@ -310,6 +310,24 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     let lastDbResultBlock = ''; // track last DB result for fallback
 
     const MAX_TOOL_ROUNDS = 6;
+    // Track where tool-round messages start for trimming (memory + token protection)
+    const TOOL_ROUND_START = aiMessages.length;
+    const MAX_TOOL_TOKENS = Math.floor(promptBudget.maxPromptTokens * 0.5);
+
+    const trimOldestToolRounds = () => {
+      const estimatedToolTokens = estimateMessagesTokens(aiMessages.slice(TOOL_ROUND_START));
+      if (estimatedToolTokens <= MAX_TOOL_TOKENS) return;
+
+      while (aiMessages.length > TOOL_ROUND_START + 2) {
+        const oldPairTokens = estimateTokens(aiMessages[TOOL_ROUND_START].content || '') +
+                               estimateTokens(aiMessages[TOOL_ROUND_START + 1].content || '') + 8;
+        aiMessages.splice(TOOL_ROUND_START, 2);
+        console.log(`[Stream Tool] Trimmed oldest tool round (~${oldPairTokens} tokens) — ${aiMessages.length - TOOL_ROUND_START} tool messages remain`);
+
+        if (estimateMessagesTokens(aiMessages.slice(TOOL_ROUND_START)) <= MAX_TOOL_TOKENS) break;
+      }
+    };
+
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const result = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
       reply = result.text;
@@ -337,6 +355,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
 
         aiMessages.push({ role: 'assistant', content: reply.replace(searchMatch[0], '').trim() || `[Searching files for "${query}"]` });
         aiMessages.push({ role: 'user', content: resultBlock });
+        trimOldestToolRounds();
         continue;
       }
 
@@ -358,6 +377,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
 
         aiMessages.push({ role: 'assistant', content: reply.replace(getFileMatch[0], '').trim() || `[Requesting file: ${fileData.file_name}]` });
         aiMessages.push({ role: 'user', content: contentBlock });
+        trimOldestToolRounds();
         continue;
       }
 
@@ -380,6 +400,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
           role: 'user',
           content: schemaText + '\n\nNow write your SQL query using the exact column names shown above.'
         });
+        trimOldestToolRounds();
         continue;
       }
 
@@ -416,6 +437,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
             content: reply.replace(queryDbMatch[0], '').trim() || `[Querying business database...]`
           });
           aiMessages.push({ role: 'user', content: resultBlock });
+          trimOldestToolRounds();
           continue;
         } catch (dbErr) {
           console.error(`[Stream Tool] DB query failed: ${dbErr.message}`);
@@ -424,6 +446,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
             content: reply.replace(queryDbMatch[0], '').trim() || `[Attempting to query database...]`
           });
           aiMessages.push({ role: 'user', content: `[QUERY DB ERROR]\n${dbErr.message}\n[END ERROR]\n\nTell the user there was an error querying the database.` });
+          trimOldestToolRounds();
           continue;
         }
       }
@@ -432,6 +455,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
       if (effectiveDbOnly && !dbQueried && !reply.includes('[QUERY_DB]') && !reply.includes('<QUERY_DB>')) {
         aiMessages.push({ role: 'assistant', content: reply });
         aiMessages.push({ role: 'user', content: '[SYSTEM] You answered without querying the database. In dbOnly mode, you MUST query the database before answering. Write [QUERY_DB] with your SQL query now.' });
+        trimOldestToolRounds();
         continue;
       }
 

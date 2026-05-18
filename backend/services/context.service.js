@@ -26,6 +26,36 @@ const getRecentMessages = async (topicId, limit = 10) => {
   return (data || []).reverse();
 };
 
+/** Fetch all non-summary messages after a given timestamp, capped by token budget */
+const getMessagesSince = async (topicId, sinceTimestamp, maxTokens = 3000) => {
+  if (!sinceTimestamp) return [];
+  let query = supabase
+    .from('messages')
+    .select('role, content, created_at')
+    .eq('topic_id', topicId)
+    .eq('is_summary', false)
+    .gt('created_at', sinceTimestamp)
+    .order('created_at', { ascending: true });
+
+  const { data, error } = await query;
+  if (error) {
+    console.error('[Context] getMessagesSince error:', error.message);
+    return [];
+  }
+
+  // Apply token cap — keep newest messages within budget
+  const messages = data || [];
+  let tokens = 0;
+  const capped = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const t = Math.ceil(String(messages[i].content || '').length / 4) + 4;
+    if (tokens + t > maxTokens) break;
+    capped.unshift(messages[i]);
+    tokens += t;
+  }
+  return capped;
+};
+
 const formatMessages = (messages) => {
   return messages
     .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
@@ -156,16 +186,27 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
 
   if (latestSummary && messagesSinceSummary < 8) {
     olderSummaryText = latestSummary.content;
-  } else if (olderMessages.length >= 8) {
-    const olderText = formatMessages(olderMessages);
-    const textToSummarize = latestSummary
-      ? `Existing summary:\n${latestSummary.content}\n\nNewer conversation:\n${olderText}`
-      : olderText;
-    const summaryResult = await summarizeMemory(textToSummarize, signal);
-    const { summary, provider, model } = summaryResult;
-    summaryTokens = summaryResult.tokensUsed || 0;  // ← capture token usage
-    await saveTopicSummary({ topicId, userId, summary, provider, model });
-    olderSummaryText = `${summary}\n[Summary source: ${provider}/${model}]`;
+  } else {
+    // Topic-aware summarization: fetch ALL messages since last summary (fixes data loss gap)
+    // and inject current query context so LLM focuses on relevant information
+    const messagesToSummarize = latestSummary?.created_at
+      ? await getMessagesSince(topicId, latestSummary.created_at, 3000)
+      : olderMessages;
+
+    if (messagesToSummarize.length >= 4) {
+      const olderText = formatMessages(messagesToSummarize);
+      const textToSummarize = latestSummary
+        ? `Existing summary:\n${latestSummary.content}\n\nNewer conversation:\n${olderText}`
+        : olderText;
+      const summaryResult = await summarizeMemory(textToSummarize, signal, newQuery);
+      const { summary, provider, model } = summaryResult;
+      summaryTokens = summaryResult.tokensUsed || 0;
+      await saveTopicSummary({ topicId, userId, summary, provider, model });
+      olderSummaryText = `${summary}\n[Summary source: ${provider}/${model}]`;
+    } else if (latestSummary) {
+      // Not enough new messages but summary exists — keep old one
+      olderSummaryText = latestSummary.content;
+    }
   }
 
   const latestContextMessages = [];
