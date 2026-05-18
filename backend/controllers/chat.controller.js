@@ -185,30 +185,33 @@ const sendMessage = async (req, res) => {
         totalEmbeddingTokens += embedResult.tokensUsed;
       }
 
-      const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, 0.92, user?.id, topicId);
-      if (semanticCachedReply) {
-        await logAnalytics({
-          userId: user?.id,
-          query: message,
-          modelId,
-          tokensUsed: 0,
-          isAnonymous,
-          cacheHit: true,
-          responseTimeMs: Date.now() - startTime,
-        });
+      // Skip semantic cache in dbOnly mode — business DB queries must always be fresh
+      if (!dbOnly) {
+        const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, 0.92, user?.id, topicId);
+        if (semanticCachedReply) {
+          await logAnalytics({
+            userId: user?.id,
+            query: message,
+            modelId,
+            tokensUsed: 0,
+            isAnonymous,
+            cacheHit: true,
+            responseTimeMs: Date.now() - startTime,
+          });
 
-        return res.json({
-          reply: semanticCachedReply,
-          tokensUsed: 0,
-          topicId: topicId || null,
-          cacheHit: true,
-          model: effectiveModelConfig.label,
-          tokenStats: user ? {
-            total: user.total_tokens,
-            used: user.used_tokens,
-            remaining: user.total_tokens - user.used_tokens,
-          } : null,
-        });
+          return res.json({
+            reply: semanticCachedReply,
+            tokensUsed: 0,
+            topicId: topicId || null,
+            cacheHit: true,
+            model: effectiveModelConfig.label,
+            tokenStats: user ? {
+              total: user.total_tokens,
+              used: user.used_tokens,
+              remaining: user.total_tokens - user.used_tokens,
+            } : null,
+          });
+        }
       }
     }
 
@@ -335,6 +338,7 @@ const sendMessage = async (req, res) => {
     let finalReply = '';
     let dbQueried = false;
     let lastDbResultBlock = '';
+    let lastSqlQuery = '';
 
     // Tool-call loop: AI can search files, request full content, or query business DB
     const MAX_TOOL_ROUNDS = 5;
@@ -445,6 +449,7 @@ const sendMessage = async (req, res) => {
       }
       if (queryDbMatch && bizDbConnected) {
         const sql = queryDbMatch[1].trim();
+        lastSqlQuery = sql;
         console.log(`[Tool] AI querying business DB:\n${sql}`);
 
         try {
@@ -490,6 +495,21 @@ const sendMessage = async (req, res) => {
         aiMessages.push({ role: 'user', content: '[SYSTEM] You answered without querying the database. In dbOnly mode, you MUST query the database before answering. Write [QUERY_DB] with your SQL query now.' });
         trimOldestToolRounds(); // ← prevent unbounded memory/token growth
         continue;
+      }
+
+      // Check if AI ran DISTINCT-only query (no aggregation) and reply has placeholder data
+      if (dbOnly && dbQueried && lastSqlQuery) {
+        const isDistinctOnly = /SELECT\s+DISTINCT\s+/i.test(lastSqlQuery) &&
+                               !/\b(COUNT|SUM|AVG|MIN|MAX|GROUP\s+BY)\b/i.test(lastSqlQuery);
+        const replyHasPlaceholder = /[\t\n]-\s*[\t\n]/.test(reply) || /would\s+(you\s+)?(like|prefer)/i.test(reply);
+        const userAsksForMetrics = /count|how\s+many|total|number\s+of|status|list|all/i.test(finalQuery);
+
+        if (isDistinctOnly && replyHasPlaceholder && userAsksForMetrics) {
+          aiMessages.push({ role: 'assistant', content: reply });
+          aiMessages.push({ role: 'user', content: '[SYSTEM] You queried DISTINCT values but the user asked for counts/metrics. Run a new query with COUNT(*) and GROUP BY to get actual numbers — no placeholders, no deferring.' });
+          trimOldestToolRounds();
+          continue;
+        }
       }
 
       // No tool call — done
