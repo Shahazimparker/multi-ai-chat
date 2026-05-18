@@ -183,11 +183,13 @@ $$;
 -- ─────────────────────────────────────────────
 DROP FUNCTION IF EXISTS search_uploaded_files(vector, UUID, INT);
 DROP FUNCTION IF EXISTS search_uploaded_files(vector, UUID, TEXT, INT);
+DROP FUNCTION IF EXISTS search_uploaded_files(vector, UUID, TEXT, INT, UUID);
 CREATE OR REPLACE FUNCTION search_uploaded_files(
   query_embedding vector(1536),
   user_id_param   UUID,
   provider_param  TEXT,
-  match_count     INT DEFAULT 5
+  match_count     INT DEFAULT 5,
+  topic_id_param  UUID DEFAULT NULL
 )
 RETURNS TABLE (
   file_id     UUID,
@@ -199,12 +201,13 @@ RETURNS TABLE (
 LANGUAGE plpgsql AS $$
 BEGIN
   RETURN QUERY
-  SELECT 
-    f.id, f.file_name, c.chunk_text, c.chunk_index, 
+  SELECT
+    f.id, f.file_name, c.chunk_text, c.chunk_index,
     1 - (c.embedding <=> query_embedding) AS similarity
   FROM rag_chunks c
   JOIN uploaded_files f ON c.file_id = f.id
   WHERE f.user_id = user_id_param
+    AND (topic_id_param IS NULL OR f.topic_id = topic_id_param)
     AND c.provider = provider_param
     AND 1 - (c.embedding <=> query_embedding) > 0.4
   ORDER BY similarity DESC
@@ -305,8 +308,8 @@ BEGIN
   FROM query_cache
   WHERE query_cache.model = model_param
     AND query_cache.query_embedding IS NOT NULL
-    AND (user_id_param IS NULL OR query_cache.user_id = user_id_param OR query_cache.user_id IS NULL)
-    AND (topic_id_param IS NULL OR query_cache.topic_id = topic_id_param OR query_cache.topic_id IS NULL)
+    AND query_cache.user_id IS NOT DISTINCT FROM user_id_param
+    AND query_cache.topic_id IS NOT DISTINCT FROM topic_id_param
     AND 1 - (query_cache.query_embedding <=> query_embedding) > match_threshold
   ORDER BY similarity DESC
   LIMIT match_count;

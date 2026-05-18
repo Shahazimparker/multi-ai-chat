@@ -128,6 +128,14 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     history, // client-provided conversation history (used for anonymous sessions)
   } = req.body;
 
+  // ── Greeting detection: skip DB query for casual greetings ──
+  const greetingPattern = /^(hello|hi|hey|hii|hiii|h ey|heyy?|good\s*(morning|afternoon|evening|day)|what'?s\s*up|sup|yo|howdy|greetings)[\s!.,;]*$/i;
+  const isGreeting = typeof message === 'string' && greetingPattern.test(message.trim());
+  if (isGreeting && dbOnly) {
+    console.log(`[BizDB] Greeting detected, skipping dbOnly mode for: "${message.trim()}"`);
+  }
+  const effectiveDbOnly = dbOnly && !isGreeting;
+
   const user = req.user;
   const isAnonymous = !user;
   const abortController = new AbortController();
@@ -168,7 +176,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     }
 
     // Check cache first (if hit, send cached response)
-    const cached = await getCachedResponse(message, user?.id, topicId, modelId);
+    const cached = await getCachedResponse(message, modelId, user?.id, topicId);
     if (cached) {
       res.write(`data: ${JSON.stringify({
         type: 'cached',
@@ -205,7 +213,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
           'openrouter',
           abortController.signal,
           null,
-          { tokenBudget: promptBudget.ragTokens, topicId }
+          { tokenBudget: promptBudget.ragTokens, topicId, userId: user?.id }
         );
         console.log('[RAG] Context:', ragContext.slice(0, 100));
 
@@ -226,7 +234,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
 
     // Generate query embedding to track token cost
     if (ragEnabled) {
-      const embedResult = await embedText(streamQuery, 'openrouter', 3, abortController.signal);
+      const embedResult = await embedText(streamQuery, 'openrouter', 3, abortController.signal, user?.id);
       if (embedResult) totalEmbeddingTokens += embedResult.tokensUsed;
     }
 
@@ -260,16 +268,16 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
 
 
     // ── Business DB schema injection ──
-    // dbOnly=true  → full schema (all columns) for direct SQL writing
-    // dbOnly=false → NO database information at all
-    const selectedSchema = dbOnly ? bizDbSchemaText : '';
+    // effectiveDbOnly=true  → minimal schema + relationships for focused SQL
+    // effectiveDbOnly=false → NO database information at all
+    const selectedSchema = effectiveDbOnly ? bizDbMinimalSchemaText : '';
     const baseBizRules = bizDbConnected && selectedSchema
       ? `\n\n## Business Database Access\nYou have read-only access to a business database via [QUERY_DB] tool.\n\n${selectedSchema}`
       : '';
-    const dbOnlyRules = baseBizRules + `\n\n🔒 ONLY DB MODE (ACTIVE):\n- For ANY business question — ALWAYS use [QUERY_DB] to get LIVE data.\n- You CANNOT use your training data for business facts, numbers, or answers.\n- There is NO RAG/cache. Every query is live.\n- If [QUERY_DB] returns empty — say "No data found in database."\n- NEVER fabricate or guess data. Only present what the DB returns.\n- NEVER call external APIs for business data.\n- NEVER show the SQL query text to the user — only present the formatted results.\n- Format results as tables for structured data.`;
+    const dbOnlyRules = baseBizRules + `\n\n🔒 ONLY DB MODE (ACTIVE):\n- Query the database ONLY when the user explicitly asks about business data (e.g., companies, orders, inventory, employees, reports). For greetings, small talk, or non-business messages — respond concisely WITHOUT querying the database.\n- You CANNOT use your training data for business facts, numbers, or answers.\n- There is NO RAG/cache. Every query is live.\n- If [QUERY_DB] returns empty — say "No data found in database."\n- NEVER fabricate or guess data. Only present what the DB returns.\n- NEVER call external APIs for business data.\n- NEVER show the SQL query text to the user — only present the formatted results.\n- Format results as tables for structured data.`;
     const relaxedBizRules = baseBizRules + `\n\n📋 RULES:\n- When the user asks about business data — query the DB using [QUERY_DB].\n- You may use your training knowledge alongside DB results.\n- If [QUERY_DB] returns empty, say "No data found in database."\n- NEVER fabricate data that should come from the DB.\n- NEVER call external APIs for business data.\n- Format results as tables for structured data.`;
     const bizDbDirective = bizDbConnected && selectedSchema
-      ? (dbOnly ? dbOnlyRules : relaxedBizRules)
+      ? (effectiveDbOnly ? dbOnlyRules : relaxedBizRules)
       : '';
 
     // Build AI messages
@@ -421,7 +429,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
       }
 
       // dbOnly enforcement: force AI to query DB before answering
-      if (dbOnly && !dbQueried && !reply.includes('[QUERY_DB]') && !reply.includes('<QUERY_DB>')) {
+      if (effectiveDbOnly && !dbQueried && !reply.includes('[QUERY_DB]') && !reply.includes('<QUERY_DB>')) {
         aiMessages.push({ role: 'assistant', content: reply });
         aiMessages.push({ role: 'user', content: '[SYSTEM] You answered without querying the database. In dbOnly mode, you MUST query the database before answering. Write [QUERY_DB] with your SQL query now.' });
         continue;
@@ -450,7 +458,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
         .replace(/<QUERY_DB>[\s\S]*?<\/QUERY_DB>/g, '')
         .replace(/\[GET_SCHEMA:[^\]]+\]/g, '')
         .replace(/<GET_SCHEMA>[^<]+<\/GET_SCHEMA>/g, '');
-      if (dbOnly) {
+      if (effectiveDbOnly) {
         finalReply = finalReply.replace(/```sql[\s\S]*?```/g, '');
       }
       finalReply = finalReply.trim();

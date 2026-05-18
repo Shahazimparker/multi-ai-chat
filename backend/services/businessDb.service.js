@@ -336,12 +336,27 @@ const buildMinimalSchemaContext = async () => {
     ? `\n\n[TABLE GUIDE — what each table contains]\n${guideLines.join('\n')}\n[END GUIDE]`
     : '';
 
-  return `[BUSINESS DATABASE — TABLES OVERVIEW]${guideBlock}\n\n` +
+  // Build relationships section from foreign keys
+  const relLines = [];
+  for (const table of schemas) {
+    if (!Array.isArray(table.columns)) continue;
+    for (const col of table.columns) {
+      if (col.foreign_key) {
+        relLines.push(`  - ${table.table_name}.${col.column_name} \u2192 ${col.foreign_key.ref_table}(${col.foreign_key.ref_column})`);
+      }
+    }
+  }
+
+  const relBlock = relLines.length > 0
+    ? `\n\n[TABLE RELATIONSHIPS — foreign keys for JOIN queries]\n${relLines.join('\n')}\n[END RELATIONSHIPS]`
+    : '';
+
+  return `[BUSINESS DATABASE — TABLES OVERVIEW]${guideBlock}${relBlock}\n\n` +
     `You have read-only access to this database. To query it:\n` +
     `1. First get column schema: [GET_SCHEMA:table1, table2, ...]\n` +
     `2. Then query: [QUERY_DB]\n   <SQL_QUERY>\n   [/QUERY_DB]\n\n` +
     `Rules:\n` +
-    `- ALWAYS use GET_SCHEMA first to see exact column names before writing SQL\n` +
+    `- When user mentions a business entity (e.g., Purchase Order, Vendor, Sales Order), call GET_SCHEMA with ONLY its directly related tables (e.g., [GET_SCHEMA:purchase_orders, companies, vendors]) — do NOT request all tables at once; use TABLE GUIDE + RELATIONSHIPS to identify relevant tables\n` +
     `- Only SELECT queries allowed (read-only)\n` +
     `- Use table names exactly as shown in TABLE GUIDE\n` +
     `- Use column names exactly as returned by GET_SCHEMA\n` +

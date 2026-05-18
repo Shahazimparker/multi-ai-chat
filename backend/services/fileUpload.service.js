@@ -321,7 +321,7 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
       const chunkVectors = [];
 
       for (let i = 0; i < chunks.length; i++) {
-        const result = await embedText(chunks[i], 'openrouter', 3, signal);
+        const result = await embedText(chunks[i], 'openrouter', 3, signal, userId);
         if (result) {
           chunkVectors.push(result.vector);
           totalEmbedTokens += result.tokensUsed;
@@ -655,7 +655,7 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
 
     // Generate embedding for the query
     const { embedText } = require('./rag.service');
-    const embedResult = await embedText(query, 'openrouter', 3, signal);
+    const embedResult = await embedText(query, 'openrouter', 3, signal, userId);
     if (!embedResult) {
       console.warn('[FileSearch] Embedding failed');
       return { results: [], embedTokens: 0 };
@@ -669,6 +669,7 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
       user_id_param: userId,
       provider_param: provider,
       match_count: 5,
+      topic_id_param: topicId,
     });
 
     if (error) {

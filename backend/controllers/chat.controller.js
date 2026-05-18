@@ -179,7 +179,7 @@ const sendMessage = async (req, res) => {
 
     if (ragEnabled) {
       if (abortController.signal.aborted) throw { name: 'AbortError' };
-      const embedResult = await embedText(finalQuery, modelConfig.provider, 3, abortController.signal);
+      const embedResult = await embedText(finalQuery, modelConfig.provider, 3, abortController.signal, user?.id);
       if (embedResult) {
         queryVector = embedResult.vector;
         totalEmbeddingTokens += embedResult.tokensUsed;
@@ -282,7 +282,7 @@ const sendMessage = async (req, res) => {
     // Static part — cacheable across requests in the same topic
     // dbOnly=true  → full schema (all columns) for direct SQL writing
     // dbOnly=false → NO database information at all
-    const selectedSchema = dbOnly ? bizDbSchemaText : '';
+    const selectedSchema = dbOnly ? bizDbMinimalSchemaText : '';
     const baseBizRules = bizDbConnected && selectedSchema
       ? `\n\n## Business Database Access\nYou have read-only access to a business database via [QUERY_DB] tool.\n\n${selectedSchema}`
       : '';

@@ -32,11 +32,13 @@ const cancelableDelay = (ms, signal) => new Promise((resolve, reject) => {
   signal?.addEventListener('abort', onAbort, { once: true });
 });
 // ========== EMBEDDING CACHE ==========
+// NOTE: In-memory cache handles deduplication within the same request/topic.
+// Key now includes userId to prevent cross-user cache sharing.
 const embeddingCache = new Map();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour TTL
 
-const getCacheKey = (text, provider) => {
-  return `${provider}:${text.slice(0, 100)}`;
+const getCacheKey = (text, provider, userId = null) => {
+  return `${userId || 'anon'}:${provider}:${text.slice(0, 100)}`;
 };
 
 const getCachedEmbedding = (key) => {
@@ -63,9 +65,10 @@ const clearEmbeddingCache = () => {
  * @param {string} provider 'openrouter' 'mistral', 'gemini', or 'openai' (default: 'openrouter')
  * @param {number} retries
  * @param {AbortSignal} signal
+ * @param {string|null} userId - for cache isolation across users
  * @returns {Object|null} { vector: number[], tokensUsed: number } or null on failure
  */
-const embedText = async (text, provider = 'openrouter', retries = 3, signal = null) => {
+const embedText = async (text, provider = 'openrouter', retries = 3, signal = null, userId = null) => {
   // Immediate check if already aborted
   throwIfAborted(signal);
 
@@ -73,7 +76,7 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
   const estimatedTokens = estimateTokens(text);
 
   // Check cache first
-  const cacheKey = getCacheKey(text, provider);
+  const cacheKey = getCacheKey(text, provider, userId);
   const cachedVector = getCachedEmbedding(cacheKey);
   if (cachedVector) {
     return { vector: cachedVector, tokensUsed: 0 }; // cached = no new tokens consumed
@@ -172,7 +175,7 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
         throwIfAborted(signal);
 
         // If we reach here, delay completed without abort, so proceed with retry
-        return embedText(text, provider, retries - 1, signal);
+        return embedText(text, provider, retries - 1, signal, userId);
       }
       if (err.name === 'AbortError' || err.name === 'CanceledError') throw err; // Re-throw AbortError/CanceledError immediately
       console.error('[RAG] Gemini Embedding failed:', err.message);
@@ -222,7 +225,7 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
         throwIfAborted(signal);
 
         // If we reach here, delay completed without abort, so proceed with retry
-        return embedText(text, provider, retries - 1, signal);
+        return embedText(text, provider, retries - 1, signal, userId);
       }
       console.error('[RAG] Embedding failed: 429 Too Many Requests. Rate limit exceeded. No more retries.');
     }
@@ -278,36 +281,29 @@ const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = '
  * @param {Object} options - { tokenBudget, topicId }
  */
 const buildRAGContext = async (query, provider = 'openrouter', signal = null, precomputedEmbedding = null, options = {}) => {
+  const topicId = options.topicId;
+  const userId = options.userId;
   let embedding;
   let embedTokens = 0;
   if (precomputedEmbedding) {
     embedding = precomputedEmbedding;
   } else {
-    const result = await embedText(query, 'openrouter', 3, signal);
+    const result = await embedText(query, 'openrouter', 3, signal, userId);
     if (!result) return '';
     embedding = result.vector;
     embedTokens = result.tokensUsed;
   }
 
-  const topicId = options.topicId;
-  const userId = options.userId;
-
   // Race the Supabase RPC call against the abort signal
   // If topicId provided, search only that topic's files (uploaded_files_rag)
-  // Otherwise, fall back to global rag_documents
-  const rpcCall = topicId
-    ? supabase.rpc('match_topic_files', {
-        query_embedding: embedding,
-        p_topic_id: topicId,
-        match_threshold: 0.4,
-        match_count: 3,
-      })
-    : supabase.rpc('match_documents', {
-        query_embedding: embedding,
-        provider_param: provider,
-        match_threshold: 0.4,
-        match_count: 3,
-      });
+  // Otherwise, return empty — no global RAG leakage across chats
+  if (!topicId) return '';
+  const rpcCall = supabase.rpc('match_topic_files', {
+      query_embedding: embedding,
+      p_topic_id: topicId,
+      match_threshold: 0.4,
+      match_count: 3,
+    });
 
   const { data: docs, error } = await Promise.race([
     rpcCall,
@@ -328,6 +324,7 @@ const buildRAGContext = async (query, provider = 'openrouter', signal = null, pr
         user_id_param: userId,
         provider_param: provider,
         match_count: 5,
+        topic_id_param: topicId,
       });
 
       if (chunkResults && chunkResults.length > 0) {
