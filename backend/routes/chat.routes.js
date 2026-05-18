@@ -99,6 +99,18 @@ const reserveToolLoopBudget = (promptBudget, reserveRatio = 0.15) => {
   };
 };
 
+const extractReferencedTables = (sql = '') => {
+  const tables = new Set();
+  const tableRegex = /\b(?:FROM|JOIN)\s+"?([a-zA-Z_][a-zA-Z0-9_]*)"?/gi;
+  let match;
+
+  while ((match = tableRegex.exec(sql)) !== null) {
+    tables.add(match[1]);
+  }
+
+  return [...tables];
+};
+
 // Init on module load (shared singleton — safe to call multiple times)
 const { initBusinessDB } = require('../services/businessDb.service');
 (async () => {
@@ -128,13 +140,8 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     history, // client-provided conversation history (used for anonymous sessions)
   } = req.body;
 
-  // ── Greeting detection: skip DB query for casual greetings ──
-  const greetingPattern = /^(hello|hi|hey|hii|hiii|h ey|heyy?|good\s*(morning|afternoon|evening|day)|what'?s\s*up|sup|yo|howdy|greetings)[\s!.,;]*$/i;
-  const isGreeting = typeof message === 'string' && greetingPattern.test(message.trim());
-  if (isGreeting && dbOnly) {
-    console.log(`[BizDB] Greeting detected, skipping dbOnly mode for: "${message.trim()}"`);
-  }
-  const effectiveDbOnly = dbOnly && !isGreeting;
+  // dbOnly mode: AI must query DB before answering
+  const effectiveDbOnly = dbOnly;
 
   const user = req.user;
   const isAnonymous = !user;
@@ -274,7 +281,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     const baseBizRules = bizDbConnected && selectedSchema
       ? `\n\n## Business Database Access\nYou have read-only access to a business database via [QUERY_DB] tool.\n\n${selectedSchema}`
       : '';
-    const dbOnlyRules = baseBizRules + `\n\n🔒 ONLY DB MODE (ACTIVE):\n- Query the database ONLY when the user explicitly asks about business data (e.g., companies, orders, inventory, employees, reports). For greetings, small talk, or non-business messages — respond concisely WITHOUT querying the database.\n- You CANNOT use your training data for business facts, numbers, or answers.\n- There is NO RAG/cache. Every query is live.\n- If [QUERY_DB] returns empty — say "No data found in database."\n- NEVER fabricate or guess data. Only present what the DB returns.\n- NEVER call external APIs for business data.\n- NEVER show the SQL query text to the user — only present the formatted results.\n- Format results as tables for structured data.`;
+    const dbOnlyRules = baseBizRules + `\n\n🔒 ONLY DB MODE (ACTIVE):\n- EXAMINE the user's query carefully. If it asks about business data (sales, customers, orders, inventory, employees, reports, counts, financials, etc.) — use [QUERY_DB] to get LIVE data.\n- If it's a general question, greeting, small talk, or simply NOT about business data — answer normally from your knowledge without querying the DB.\n- You CANNOT use your training data for business facts, numbers, or answers. Always query the DB for those.\n- There is NO RAG/cache. Every business query is live.\n- If [QUERY_DB] returns empty — say "No data found in database."\n- NEVER fabricate or guess data. Only present what the DB returns.\n- NEVER call external APIs for business data.\n- NEVER show the SQL query text to the user — only present the formatted results.\n- Always run the query with concise and proper syntax — never show placeholder or sample data before querying.\n- Format results as tables for structured data.`;
     const relaxedBizRules = baseBizRules + `\n\n📋 RULES:\n- When the user asks about business data — query the DB using [QUERY_DB].\n- You may use your training knowledge alongside DB results.\n- If [QUERY_DB] returns empty, say "No data found in database."\n- NEVER fabricate data that should come from the DB.\n- NEVER call external APIs for business data.\n- Format results as tables for structured data.`;
     const bizDbDirective = bizDbConnected && selectedSchema
       ? (effectiveDbOnly ? dbOnlyRules : relaxedBizRules)
@@ -308,8 +315,9 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     let billableTokens = 0;
     let dbQueried = false;
     let lastDbResultBlock = ''; // track last DB result for fallback
+    const fetchedSchemaTables = new Set();
 
-    const MAX_TOOL_ROUNDS = 6;
+    const MAX_TOOL_ROUNDS = effectiveDbOnly ? 24 : 6;
     // Track where tool-round messages start for trimming (memory + token protection)
     const TOOL_ROUND_START = aiMessages.length;
     const MAX_TOOL_TOKENS = Math.floor(promptBudget.maxPromptTokens * 0.5);
@@ -329,12 +337,14 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     };
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      console.log(`[Stream Tool] Round ${round}/${MAX_TOOL_ROUNDS}`);
       const result = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
       reply = result.text;
       tokensUsed = result.tokensUsed;
       totalAITokens += tokensUsed || 0;
       cacheCreationTokens += result.cacheCreationTokens || 0;
       cacheReadTokens += result.cacheReadTokens || 0;
+      console.log(`[Stream Tool] Reply length: ${reply.length}, Has [QUERY_DB]: ${reply.includes('[QUERY_DB]')}, Has <QUERY_DB>: ${reply.includes('<QUERY_DB>')}`);
 
       if (abortController.signal.aborted) return;
 
@@ -392,13 +402,14 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
         console.log(`[Stream Tool] AI requesting schema for: ${tableNames.join(', ')}`);
 
         const schemaText = await getTableSchema(tableNames);
+        tableNames.forEach((name) => fetchedSchemaTables.add(name));
         aiMessages.push({
           role: 'assistant',
           content: reply.replace(getSchemaMatch[0], '').trim() || `[Getting schema for ${tableNames.join(', ')}...]`
         });
         aiMessages.push({
           role: 'user',
-          content: schemaText + '\n\nNow write your SQL query using the exact column names shown above.'
+          content: schemaText + '\n\nNow write your SQL query wrapped in [QUERY_DB] tags like this:\n[QUERY_DB]SELECT column1, column2 FROM table WHERE condition[/QUERY_DB]\nUse the exact column names from the schema above. Do NOT write anything else — just the [QUERY_DB] tags with SQL inside.'
         });
         trimOldestToolRounds();
         continue;
@@ -409,13 +420,43 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
       //   [QUERY_DB] <SQL_QUERY>sql</SQL_QUERY>
       //   [QUERY_DB] <SQL_QUERY>sql</QUERY_DB>
       //   <QUERY_DB>sql</QUERY_DB>
+      // Try all known formats in order
       let queryDbMatch = reply.match(/\[QUERY_DB\]\s*(?:<SQL_QUERY>\s*)?([\s\S]*?)\s*(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/);
       if (!queryDbMatch) {
-        queryDbMatch = reply.match(/<QUERY_DB>\s*(?:<SQL_QUERY>\s*)?([\s\S]*?)\s*<\/QUERY_DB>/);
+        // Handle hybrid: <QUERY_DB> <SQL_QUERY>SQL_HERE</SQL_QUERY> [/QUERY_DB]
+        queryDbMatch = reply.match(/<QUERY_DB>\s*<SQL_QUERY>\s*([\s\S]*?)\s*<\/SQL_QUERY>\s*\[\/QUERY_DB\]/);
+      }
+      if (!queryDbMatch) {
+        // Handle pure angle brackets: <QUERY_DB>SQL_HERE</QUERY_DB>
+        queryDbMatch = reply.match(/<QUERY_DB>\s*([\s\S]*?)\s*<\/QUERY_DB>/);
+      }
+      if (!queryDbMatch) {
+        queryDbMatch = reply.match(/<query>\s*([\s\S]*?)\s*<\/query>/i);
+      }
+      if (!queryDbMatch) {
+        queryDbMatch = reply.match(/<Function\s+id="query_db_\d+"\s*>([\s\S]*?)<\/Function>/i);
       }
       if (queryDbMatch && bizDbConnected) {
         const sql = queryDbMatch[1].trim();
         console.log(`[Stream Tool] AI querying business DB:\n${sql}`);
+
+        if (effectiveDbOnly) {
+          const referencedTables = extractReferencedTables(sql);
+          const missingSchemaTables = referencedTables.filter((table) => !fetchedSchemaTables.has(table));
+
+          if (missingSchemaTables.length > 0) {
+            aiMessages.push({
+              role: 'assistant',
+              content: reply.replace(queryDbMatch[0], '').trim() || `[Preparing database query...]`
+            });
+            aiMessages.push({
+              role: 'user',
+              content: `[SYSTEM] In DB-only mode, you must fetch column schema before querying. You tried to query these tables without GET_SCHEMA: ${missingSchemaTables.join(', ')}.\n\nCall GET_SCHEMA first for all referenced tables, then regenerate the SQL using the exact returned column names.\n\nRequired next step:\n[GET_SCHEMA:${missingSchemaTables.join(', ')}]`
+            });
+            trimOldestToolRounds();
+            continue;
+          }
+        }
 
         try {
           const dbResults = await queryBusinessDB(sql);
@@ -441,22 +482,22 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
           continue;
         } catch (dbErr) {
           console.error(`[Stream Tool] DB query failed: ${dbErr.message}`);
+          const referencedTables = extractReferencedTables(sql);
+          const schemaRecoveryHint = effectiveDbOnly && referencedTables.length > 0
+            ? await getTableSchema(referencedTables)
+            : '';
+
           aiMessages.push({
             role: 'assistant',
             content: reply.replace(queryDbMatch[0], '').trim() || `[Attempting to query database...]`
           });
-          aiMessages.push({ role: 'user', content: `[QUERY DB ERROR]\n${dbErr.message}\n[END ERROR]\n\nTell the user there was an error querying the database.` });
+          aiMessages.push({
+            role: 'user',
+            content: `[QUERY DB ERROR]\n${dbErr.message}\n[END ERROR]\n\n${schemaRecoveryHint ? `${schemaRecoveryHint}\n\n` : ''}Please fix your SQL query and try again. Make sure table and column names are correct.${schemaRecoveryHint ? ' Use the schema above and regenerate the SQL with exact column names.' : ' Use GET_SCHEMA for the referenced tables if you need to check the schema.'}`
+          });
           trimOldestToolRounds();
           continue;
         }
-      }
-
-      // dbOnly enforcement: force AI to query DB before answering
-      if (effectiveDbOnly && !dbQueried && !reply.includes('[QUERY_DB]') && !reply.includes('<QUERY_DB>')) {
-        aiMessages.push({ role: 'assistant', content: reply });
-        aiMessages.push({ role: 'user', content: '[SYSTEM] You answered without querying the database. In dbOnly mode, you MUST query the database before answering. Write [QUERY_DB] with your SQL query now.' });
-        trimOldestToolRounds();
-        continue;
       }
 
       // No tool call — done
@@ -479,7 +520,12 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     if (bizDbConnected && finalReply) {
       finalReply = finalReply
         .replace(/\[QUERY_DB\][\s\S]*?(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/g, '')
+        .replace(/<QUERY_DB>[\s\S]*?<\/SQL_QUERY>[\s\S]*?\[\/QUERY_DB\]/g, '') // mixed <QUERY_DB> ... </SQL_QUERY> [/QUERY_DB]
         .replace(/<QUERY_DB>[\s\S]*?<\/QUERY_DB>/g, '')
+        .replace(/<query>[\s\S]*?<\/query>/gi, '')
+        .replace(/<Function\s+id="query_db_\d+"[\s\S]*?<\/Function>/gi, '')
+        .replace(/\[\/QUERY_DB\]/g, '')
+        .replace(/<\/query>/gi, '')
         .replace(/\[GET_SCHEMA:[^\]]+\]/g, '')
         .replace(/<GET_SCHEMA>[^<]+<\/GET_SCHEMA>/g, '');
       if (effectiveDbOnly) {
@@ -488,7 +534,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
       finalReply = finalReply.trim();
     }
 
-    // Fallback: if AI exhausted rounds without producing a final answer, use last DB result
+    // Fallback 1: if AI exhausted rounds but DID query DB, show raw DB results
     if (dbQueried && lastDbResultBlock && (!finalReply || finalReply.length < 20)) {
       finalReply = `📊 **Database Results:**\n\n${lastDbResultBlock.replace(/\[QUERY DB RESULTS[^\]]*\]/g, '').replace(/\[END RESULTS\][\s\S]*$/, '').replace(/```json\n?/g, '```').trim()}\n\n*AI ran out of tool rounds. Raw results shown above.*`;
     }
