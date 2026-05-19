@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import ThemeToggle from '../components/layout/ThemeToggle';
 import { Sparkles, Lock, User, Eye, EyeOff, Ghost } from 'lucide-react';
 import './LoginPage.css';
 
@@ -33,6 +34,11 @@ const LoginPage = () => {
 
   return (
     <div className="login-root">
+      {/* Theme toggle - top right */}
+      <div style={{ position: 'absolute', top: '20px', right: '20px', zIndex: 100 }}>
+        <ThemeToggle />
+      </div>
+
       {/* Animated background orbs */}
       <div className="orb orb-1" /><div className="orb orb-2" />
       <div className="orb orb-3" /><div className="orb orb-4" />
@@ -41,7 +47,7 @@ const LoginPage = () => {
         {/* Logo */}
         <div className="login-logo">
           <Sparkles size={32} className="logo-icon" />
-          <span className="logo-text">Azim's AI <span className="logo-accent">Chatbot</span></span>
+          <span className="logo-text">Miles <span className="logo-accent">Intelligence</span></span>
         </div>
         <p className="login-sub">Unified AI models in one place</p>
 

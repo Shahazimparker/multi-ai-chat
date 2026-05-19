@@ -10,8 +10,18 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Bot, User, Copy, Check, Zap, Download, Clock } from 'lucide-react';
+import { Bot, User, Copy, Check, Zap, Download, Clock, FileText, ExternalLink } from 'lucide-react';
+import api from '../../config/api';
 import './MessageBubble.css';
+
+// ── File languages that trigger file-card UI ─────────────────
+const FILE_LANGUAGES = new Set([
+  'html','htm','js','jsx','ts','tsx','css','scss','sass','less',
+  'json','xml','yaml','yml','md','csv','svg','txt','log',
+  'py','rb','php','java','c','cpp','h','hpp','cs','go','rs','swift',
+  'kt','sql','r','sh','bash','ps1','bat','pl','lua',
+  'xlsx','xls','doc','docx','pdf','ppt','pptx',
+]);
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -52,6 +62,29 @@ const downloadFile = (content, filename, mimeType) => {
   URL.revokeObjectURL(url);
 };
 
+// ── FileCard — renders a downloadable file from AI-generated code ──
+const FileCard = ({ file, onPreview, onDownload }) => {
+  return (
+    <div className="file-card">
+      <div className="file-card-icon-wrap">
+        <FileText size={20} />
+      </div>
+      <div className="file-card-info">
+        <span className="file-card-name">{file.file_name}</span>
+        <span className="file-card-type">{file.file_type?.toUpperCase() || 'FILE'}</span>
+      </div>
+      <div className="file-card-actions">
+        <button className="file-card-btn preview-btn" onClick={() => onPreview(file)} title="Preview">
+          <ExternalLink size={13} />
+        </button>
+        <button className="file-card-btn" onClick={() => onDownload(file)} title="Download">
+          <Download size={13} />
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // ── CodeBlock component (handles its own copy state) ─────────
 const CodeBlock = ({ code, language, csvContent, onDownloadCSV }) => {
   const [copied, setCopied] = React.useState(false);
@@ -85,7 +118,7 @@ const CodeBlock = ({ code, language, csvContent, onDownloadCSV }) => {
 
 // ── Component ────────────────────────────────────────────────
 
-const MessageBubble = ({ message }) => {
+const MessageBubble = ({ message, onSidebarRefresh }) => {
   const [copied, setCopied] = React.useState(false);
 
   // Pre-parse — extract all markdown tables → CSV
@@ -115,8 +148,10 @@ const MessageBubble = ({ message }) => {
   // Counters used inside render (reset each render)
   const tableIdx = React.useRef(0);
   const csvIdx = React.useRef(0);
+  const fileCodeBlockIdx = React.useRef(0);
   tableIdx.current = 0;
   csvIdx.current = 0;
+  fileCodeBlockIdx.current = 0;
 
   const handleCopy = async () => {
     try {
@@ -158,6 +193,23 @@ const MessageBubble = ({ message }) => {
       if (!inline && match) {
         const codeText = String(children).replace(/\n$/, '');
 
+        // If this code block language is a file type, show as FileCard
+        if (FILE_LANGUAGES.has(lang) && message.generatedFiles?.length > 0) {
+          const idx = fileCodeBlockIdx.current++;
+          const file = message.generatedFiles[idx];
+          if (file) {
+            const handlePreview = (f) => {
+              const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+              window.open(`/upload/preview/${f.file_id}?token=${token}`, '_blank');
+            };
+            const handleDownload = (f) => {
+              const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+              window.open(`/upload/download/${f.file_id}?token=${token}`, '_blank');
+            };
+            return <FileCard file={file} onPreview={handlePreview} onDownload={handleDownload} />;
+          }
+        }
+
         if (lang === 'csv') {
           const idx = csvIdx.current++;
           const content = csvCodeBlocks[idx];
@@ -180,7 +232,17 @@ const MessageBubble = ({ message }) => {
         </code>
       );
     },
-  }), [tableCSVList, csvCodeBlocks]);
+  }), [tableCSVList, csvCodeBlocks, message.generatedFiles]);
+
+  // Preview/download helpers for generated files
+  const handleFilePreview = (f) => {
+    const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+    window.open(`/upload/preview/${f.file_id}?token=${token}`, '_blank');
+  };
+  const handleFileDownload = (f) => {
+    const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+    window.open(`/upload/download/${f.file_id}?token=${token}`, '_blank');
+  };
 
   return (
     <div className={`message-row ${message.role}`}>
@@ -198,6 +260,23 @@ const MessageBubble = ({ message }) => {
           </ReactMarkdown>
         ) : (
           message.content
+        )}
+
+        {/* Generated files section */}
+        {message.generatedFiles?.length > 0 && (
+          <div className="generated-files-section">
+            <div className="generated-files-label">Generated Files</div>
+            <div className="generated-files-list">
+              {message.generatedFiles.map((f, i) => (
+                <FileCard
+                  key={f.file_id || i}
+                  file={f}
+                  onPreview={handleFilePreview}
+                  onDownload={handleFileDownload}
+                />
+              ))}
+            </div>
+          </div>
         )}
         
         {message.streaming && <span className="cursor">|</span>}

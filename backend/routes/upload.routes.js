@@ -8,7 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const { requireAuth } = require('../middleware/auth');
 const supabase = require('../config/supabase');
-const { processUploadedFile, searchUserFilesRAG, getFileContent, deleteUploadedFile, getSupportedFileType } = require('../services/fileUpload.service');
+const { processUploadedFile, searchUserFilesRAG, getFileContent, getFileContentById, deleteUploadedFile, getSupportedFileType, listAllUserFiles, saveGeneratedFile } = require('../services/fileUpload.service');
 
 
 // Ensure upload directory exists and use absolute path
@@ -155,6 +155,19 @@ router.post('/file', requireAuth, uploadTimeout, upload.single('file'), async (r
 });
 
 /**
+ * GET /api/upload/files
+ * List all uploaded files for the current user (cross-chat)
+ */
+router.get('/files', requireAuth, async (req, res) => {
+  try {
+    const result = await listAllUserFiles(req.user.id);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/upload/search
  * Search in uploaded files
  */
@@ -219,6 +232,70 @@ router.get('/content/:fileId', requireAuth, async (req, res) => {
       content: fileData.original_content || fileData.llm_analysis || '',
       created_at: fileData.created_at,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/upload/preview/:fileId
+ * Preview file content by ID (cross-chat, no topicId required)
+ */
+router.get('/preview/:fileId', requireAuth, async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const fileData = await getFileContentById(fileId, req.user.id);
+    if (!fileData) {
+      return res.status(404).json({ error: 'File not found or access denied' });
+    }
+    res.json({
+      id: fileData.id,
+      file_name: fileData.file_name,
+      file_type: fileData.file_type,
+      content: fileData.original_content || fileData.llm_analysis || '',
+      created_at: fileData.created_at,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/upload/download/:fileId
+ * Download file content as a text file (cross-chat, no topicId required)
+ */
+router.get('/download/:fileId', requireAuth, async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const fileData = await getFileContentById(fileId, req.user.id);
+    if (!fileData) {
+      return res.status(404).json({ error: 'File not found or access denied' });
+    }
+    const content = fileData.original_content || fileData.llm_analysis || '';
+    const fileName = fileData.file_name || `file_${fileId}.txt`;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}.txt"`);
+    res.send(content);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/upload/generate-file
+ * Save AI-generated file content to DB (topic-specific)
+ */
+router.post('/generate-file', requireAuth, async (req, res) => {
+  try {
+    const { topicId, fileName, content, fileType } = req.body;
+    if (!fileName || !content) {
+      return res.status(400).json({ error: 'fileName and content are required' });
+    }
+    const result = await saveGeneratedFile(req.user.id, topicId || null, fileName, content, fileType);
+    if (!result) {
+      return res.status(500).json({ error: 'Failed to save generated file' });
+    }
+    res.json({ file: result });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

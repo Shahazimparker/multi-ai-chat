@@ -68,7 +68,9 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
         setModels(nextModels);
 
         if (!selectedModel && nextModels.length > 0) {
-          onModelChange(nextModels[0]);
+          // Default to deepseek-v4-flash if available, otherwise first model
+          const defaultModel = nextModels.find(m => m.id === 'deepseek-v4-flash') || nextModels[0];
+          onModelChange(defaultModel);
         }
       })
       .catch(() => {})

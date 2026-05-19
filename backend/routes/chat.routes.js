@@ -11,6 +11,16 @@ const { tokenCheck } = require('../middleware/tokenCheck');
 const { MODELS } = require('../config/models');
 const { getProviderModels } = require('../services/modelCatalog.service');
 const supabase = require('../config/supabase');
+const {
+  reserveToolLoopBudget,
+  ensureBizDbInit,
+  buildBizDbDirective,
+  buildFileContext,
+  processToolCall,
+  stripToolTags,
+  buildFallbackDbReply,
+  classifyError,
+} = require('../services/chat.service');
 
 
 // Rate limit: 30 requests/minute per IP
@@ -76,49 +86,6 @@ router.get('/provider-models/:provider', async (req, res) => {
 
 // POST /api/chat/message
 router.post('/message', chatLimiter, optionalAuth, tokenCheck, sendMessage);
-
-// ── Business DB connection state — managed by businessDb.service.js ──
-let bizDbConnected = null;
-let bizDbSchemaText = '';
-let bizDbMinimalSchemaText = '';
-
-const reserveToolLoopBudget = (promptBudget, reserveRatio = 0.15) => {
-  const toolReserveTokens = Math.min(1400, Math.max(300, Math.floor(promptBudget.maxPromptTokens * reserveRatio)));
-  const availableContextTokens = Math.max(900, promptBudget.maxPromptTokens - toolReserveTokens);
-  const scale = Math.min(1, availableContextTokens / promptBudget.maxPromptTokens);
-
-  return {
-    ...promptBudget,
-    toolReserveTokens,
-    contextBudgetTokens: availableContextTokens,
-    systemTokens: Math.max(100, Math.floor(promptBudget.systemTokens * scale)),
-    historyTokens: Math.max(200, Math.floor(promptBudget.historyTokens * scale)),
-    ragTokens: Math.max(200, Math.floor(promptBudget.ragTokens * scale)),
-    fileTokens: Math.max(150, Math.floor(promptBudget.fileTokens * scale)),
-    queryTokens: Math.max(120, Math.floor(promptBudget.queryTokens * scale)),
-  };
-};
-
-const extractReferencedTables = (sql = '') => {
-  const tables = new Set();
-  const tableRegex = /\b(?:FROM|JOIN)\s+"?([a-zA-Z_][a-zA-Z0-9_]*)"?/gi;
-  let match;
-
-  while ((match = tableRegex.exec(sql)) !== null) {
-    tables.add(match[1]);
-  }
-
-  return [...tables];
-};
-
-// Init on module load (shared singleton — safe to call multiple times)
-const { initBusinessDB } = require('../services/businessDb.service');
-(async () => {
-  const state = await initBusinessDB();
-  bizDbConnected = state.connected;
-  bizDbSchemaText = state.schemaText;
-  bizDbMinimalSchemaText = state.minimalSchemaText;
-})();
 /**
  * POST /api/chat/stream
  * Streaming response using Server-Sent Events
@@ -259,33 +226,11 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     }
 
     // ── HYBRID APPROACH: File names only, tools for content ──
-    const fileCountNote = totalFileCount > fileResults.length
-      ? `\n(Showing ${fileResults.length} of ${totalFileCount} total files — use SEARCH_FILES to find older ones)`
-      : '';
-    const fileContext = fileResults.length > 0
-      ? `[AVAILABLE UPLOADED FILES]\n${fileResults
-          .map(r => `- ${r.file_name} (id: ${r.file_id})`)
-          .join('\n')}${fileCountNote}\n[END UPLOADED FILES]\n\n` +
-        `You have access to two tools for uploaded files:\n` +
-        `1. SEARCH_FILES — use when the user asks what a file contains or which file has specific data. ` +
-        `Respond with: [SEARCH_FILES:query=<search text>] and I will return brief snippets of matching files.\n` +
-        `2. GET_FILE — use when you need the full content of a specific file. ` +
-        `Respond with: [GET_FILE:id=<file_id>] and I will inject the full content.`
-      : '';
+    const fileContext = buildFileContext(fileResults, totalFileCount);
 
 
     // ── Business DB schema injection ──
-    // effectiveDbOnly=true  → minimal schema + relationships for focused SQL
-    // effectiveDbOnly=false → NO database information at all
-    const selectedSchema = effectiveDbOnly ? bizDbMinimalSchemaText : '';
-    const baseBizRules = bizDbConnected && selectedSchema
-      ? `\n\n## Business Database Access\nYou have read-only access to a business database via [QUERY_DB] tool.\n\n${selectedSchema}`
-      : '';
-    const dbOnlyRules = baseBizRules + `\n\n🔒 ONLY DB MODE (ACTIVE):\n- EXAMINE the user's query carefully. If it asks about business data (sales, customers, orders, inventory, employees, reports, counts, financials, etc.) — use [QUERY_DB] to get LIVE data.\n- If it's a general question, greeting, small talk, or simply NOT about business data — answer normally from your knowledge without querying the DB.\n- You CANNOT use your training data for business facts, numbers, or answers. Always query the DB for those.\n- There is NO RAG/cache. Every business query is live.\n- If [QUERY_DB] returns empty — say "No data found in database."\n- NEVER fabricate or guess data. Only present what the DB returns.\n- NEVER call external APIs for business data.\n- NEVER show the SQL query text to the user — only present the formatted results.\n- Always run the query with concise and proper syntax — never show placeholder or sample data before querying.\n- Format results as tables for structured data.`;
-    const relaxedBizRules = baseBizRules + `\n\n📋 RULES:\n- When the user asks about business data — query the DB using [QUERY_DB].\n- You may use your training knowledge alongside DB results.\n- If [QUERY_DB] returns empty, say "No data found in database."\n- NEVER fabricate data that should come from the DB.\n- NEVER call external APIs for business data.\n- Format results as tables for structured data.`;
-    const bizDbDirective = bizDbConnected && selectedSchema
-      ? (effectiveDbOnly ? dbOnlyRules : relaxedBizRules)
-      : '';
+    const { bizDbDirective } = buildBizDbDirective(effectiveDbOnly);
 
     // Build AI messages
     const systemPrompt = `You are a helpful AI assistant.${ragContext ? '\n\n[CONTEXT FROM DOCUMENTS]\n' + ragContext : ''}${fileContext ? '\n\n' + fileContext : ''}${bizDbDirective}`;
@@ -309,16 +254,15 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     const promptTokens = estimateMessagesTokens(aiMessages);
     let totalAITokens = 0;
 
-    // ── Tool-call loop: AI can request file content, we fetch it and re-invoke ──
+    // ── Tool-call loop: AI can search files, request full content, or query business DB ──
     let reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0;
     let finalReply = '';
     let billableTokens = 0;
     let dbQueried = false;
-    let lastDbResultBlock = ''; // track last DB result for fallback
+    let lastDbResultBlock = '';
     const fetchedSchemaTables = new Set();
 
     const MAX_TOOL_ROUNDS = effectiveDbOnly ? 24 : 6;
-    // Track where tool-round messages start for trimming (memory + token protection)
     const TOOL_ROUND_START = aiMessages.length;
     const MAX_TOOL_TOKENS = Math.floor(promptBudget.maxPromptTokens * 0.5);
 
@@ -331,7 +275,6 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
                                estimateTokens(aiMessages[TOOL_ROUND_START + 1].content || '') + 8;
         aiMessages.splice(TOOL_ROUND_START, 2);
         console.log(`[Stream Tool] Trimmed oldest tool round (~${oldPairTokens} tokens) — ${aiMessages.length - TOOL_ROUND_START} tool messages remain`);
-
         if (estimateMessagesTokens(aiMessages.slice(TOOL_ROUND_START)) <= MAX_TOOL_TOKENS) break;
       }
     };
@@ -348,156 +291,24 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
 
       if (abortController.signal.aborted) return;
 
-      // Check for SEARCH_FILES tool call
-      const searchMatch = reply.match(/\[SEARCH_FILES:query=([^\]]+)\]/);
-      if (searchMatch) {
-        const query = searchMatch[1].trim();
-        console.log(`[Stream Tool] AI searching files: query="${query}"`);
+      // Use shared tool processor
+      const toolResult = await processToolCall({
+        reply,
+        aiMessages,
+        user,
+        topicId,
+        effectiveDbOnly,
+        abortController,
+        fetchedSchemaTables,
+      });
 
-        const searchResult = await searchUserFilesRAG(query, user?.id, topicId, abortController.signal);
-        const searchResults = searchResult.results || [];
-        totalEmbeddingTokens += searchResult.embedTokens || 0;
-        const resultBlock = searchResults.length > 0
-          ? `[SEARCH RESULTS for "${query}"]\n${searchResults
-              .map(r => `- ${r.file_name} (id: ${r.file_id}): ${r.chunk_text.slice(0, 300)}`)
-              .join('\n')}\n[END SEARCH RESULTS]`
-          : `[SEARCH RESULTS for "${query}"]\nNo matching files found.\n[END SEARCH RESULTS]`;
-
-        aiMessages.push({ role: 'assistant', content: reply.replace(searchMatch[0], '').trim() || `[Searching files for "${query}"]` });
-        aiMessages.push({ role: 'user', content: resultBlock });
+      if (toolResult.handled) {
+        aiMessages.push(...toolResult.newMessages);
+        totalEmbeddingTokens += toolResult.embedTokens || 0;
+        if (toolResult.dbQueried) dbQueried = true;
+        if (toolResult.lastDbResultBlock) lastDbResultBlock = toolResult.lastDbResultBlock;
         trimOldestToolRounds();
         continue;
-      }
-
-      // Check for GET_FILE tool call
-      const getFileMatch = reply.match(/\[GET_FILE:id=([^\]]+)\]/);
-      if (getFileMatch) {
-        const fileId = getFileMatch[1].trim();
-        console.log(`[Stream Tool] AI requested file content: id=${fileId}`);
-
-        const fileData = await getFileContent(fileId, user?.id, topicId);
-        if (!fileData) {
-          aiMessages.push({ role: 'assistant', content: reply });
-          aiMessages.push({ role: 'user', content: `[Tool Result] File with id "${fileId}" not found or access denied.` });
-          continue;
-        }
-
-        const fileContent = fileData.original_content || fileData.llm_analysis || '[No content available]';
-        const contentBlock = `[FILE CONTENT: ${fileData.file_name}]\n\`\`\`\n${fileContent}\n\`\`\`\n[END FILE CONTENT]\n\nNow answer the user's question based on this file content. Be concise and accurate.`;
-
-        aiMessages.push({ role: 'assistant', content: reply.replace(getFileMatch[0], '').trim() || `[Requesting file: ${fileData.file_name}]` });
-        aiMessages.push({ role: 'user', content: contentBlock });
-        trimOldestToolRounds();
-        continue;
-      }
-
-      // Check for GET_SCHEMA tool call — AI requests column schema for specific tables
-      // Supports both formats: [GET_SCHEMA:tables] and <GET_SCHEMA>tables</GET_SCHEMA>
-      let getSchemaMatch = reply.match(/\[GET_SCHEMA:([^\]]+)\]/);
-      if (!getSchemaMatch) {
-        getSchemaMatch = reply.match(/<GET_SCHEMA>([^<]+)<\/GET_SCHEMA>/);
-      }
-      if (getSchemaMatch && bizDbConnected) {
-        const tableNames = getSchemaMatch[1].split(',').map(s => s.trim());
-        console.log(`[Stream Tool] AI requesting schema for: ${tableNames.join(', ')}`);
-
-        const schemaText = await getTableSchema(tableNames);
-        tableNames.forEach((name) => fetchedSchemaTables.add(name));
-        aiMessages.push({
-          role: 'assistant',
-          content: reply.replace(getSchemaMatch[0], '').trim() || `[Getting schema for ${tableNames.join(', ')}...]`
-        });
-        aiMessages.push({
-          role: 'user',
-          content: schemaText + '\n\nNow write your SQL query wrapped in [QUERY_DB] tags like this:\n[QUERY_DB]SELECT column1, column2 FROM table WHERE condition[/QUERY_DB]\nUse the exact column names from the schema above. Do NOT write anything else — just the [QUERY_DB] tags with SQL inside.'
-        });
-        trimOldestToolRounds();
-        continue;
-      }
-
-      // Flexible QUERY_DB matcher — handles all known AI formats:
-      //   [QUERY_DB]sql[/QUERY_DB]
-      //   [QUERY_DB] <SQL_QUERY>sql</SQL_QUERY>
-      //   [QUERY_DB] <SQL_QUERY>sql</QUERY_DB>
-      //   <QUERY_DB>sql</QUERY_DB>
-      // Try all known formats in order
-      let queryDbMatch = reply.match(/\[QUERY_DB\]\s*(?:<SQL_QUERY>\s*)?([\s\S]*?)\s*(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/);
-      if (!queryDbMatch) {
-        // Handle hybrid: <QUERY_DB> <SQL_QUERY>SQL_HERE</SQL_QUERY> [/QUERY_DB]
-        queryDbMatch = reply.match(/<QUERY_DB>\s*<SQL_QUERY>\s*([\s\S]*?)\s*<\/SQL_QUERY>\s*\[\/QUERY_DB\]/);
-      }
-      if (!queryDbMatch) {
-        // Handle pure angle brackets: <QUERY_DB>SQL_HERE</QUERY_DB>
-        queryDbMatch = reply.match(/<QUERY_DB>\s*([\s\S]*?)\s*<\/QUERY_DB>/);
-      }
-      if (!queryDbMatch) {
-        queryDbMatch = reply.match(/<query>\s*([\s\S]*?)\s*<\/query>/i);
-      }
-      if (!queryDbMatch) {
-        queryDbMatch = reply.match(/<Function\s+id="query_db_\d+"\s*>([\s\S]*?)<\/Function>/i);
-      }
-      if (queryDbMatch && bizDbConnected) {
-        const sql = queryDbMatch[1].trim();
-        console.log(`[Stream Tool] AI querying business DB:\n${sql}`);
-
-        if (effectiveDbOnly) {
-          const referencedTables = extractReferencedTables(sql);
-          const missingSchemaTables = referencedTables.filter((table) => !fetchedSchemaTables.has(table));
-
-          if (missingSchemaTables.length > 0) {
-            aiMessages.push({
-              role: 'assistant',
-              content: reply.replace(queryDbMatch[0], '').trim() || `[Preparing database query...]`
-            });
-            aiMessages.push({
-              role: 'user',
-              content: `[SYSTEM] In DB-only mode, you must fetch column schema before querying. You tried to query these tables without GET_SCHEMA: ${missingSchemaTables.join(', ')}.\n\nCall GET_SCHEMA first for all referenced tables, then regenerate the SQL using the exact returned column names.\n\nRequired next step:\n[GET_SCHEMA:${missingSchemaTables.join(', ')}]`
-            });
-            trimOldestToolRounds();
-            continue;
-          }
-        }
-
-        try {
-          const dbResults = await queryBusinessDB(sql);
-          const resultCount = Array.isArray(dbResults) ? dbResults.length : 0;
-
-          let resultBlock;
-          if (resultCount === 0) {
-            resultBlock = `[QUERY DB RESULTS]\nNo results found for the query.\n[END RESULTS]\n\nThe data might not exist in the database. Ask the user to clarify or check if they meant something else.`;
-          } else {
-            const preview = JSON.stringify(dbResults.slice(0, 20), null, 2);
-            const truncated = resultCount > 20 ? `\n(Showing 20 of ${resultCount} results)` : '';
-            resultBlock = `[QUERY DB RESULTS - ${resultCount} rows]${truncated}\n\`\`\`json\n${preview}\n\`\`\`\n[END RESULTS]\n\nBased on these results, answer the user's question. Use tables for structured data.`;
-          }
-          dbQueried = true;
-          lastDbResultBlock = resultBlock;
-
-          aiMessages.push({
-            role: 'assistant',
-            content: reply.replace(queryDbMatch[0], '').trim() || `[Querying business database...]`
-          });
-          aiMessages.push({ role: 'user', content: resultBlock });
-          trimOldestToolRounds();
-          continue;
-        } catch (dbErr) {
-          console.error(`[Stream Tool] DB query failed: ${dbErr.message}`);
-          const referencedTables = extractReferencedTables(sql);
-          const schemaRecoveryHint = effectiveDbOnly && referencedTables.length > 0
-            ? await getTableSchema(referencedTables)
-            : '';
-
-          aiMessages.push({
-            role: 'assistant',
-            content: reply.replace(queryDbMatch[0], '').trim() || `[Attempting to query database...]`
-          });
-          aiMessages.push({
-            role: 'user',
-            content: `[QUERY DB ERROR]\n${dbErr.message}\n[END ERROR]\n\n${schemaRecoveryHint ? `${schemaRecoveryHint}\n\n` : ''}Please fix your SQL query and try again. Make sure table and column names are correct.${schemaRecoveryHint ? ' Use the schema above and regenerate the SQL with exact column names.' : ' Use GET_SCHEMA for the referenced tables if you need to check the schema.'}`
-          });
-          trimOldestToolRounds();
-          continue;
-        }
       }
 
       // No tool call — done
@@ -515,28 +326,12 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
         : promptTokens + estimateTokens(finalReply) + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0);
     }
 
-    // Safety net: ALWAYS strip tool call syntax (bracketed/angle-bracketed commands)
-    // Only strip ```sql blocks in dbOnly mode
-    if (bizDbConnected && finalReply) {
-      finalReply = finalReply
-        .replace(/\[QUERY_DB\][\s\S]*?(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/g, '')
-        .replace(/<QUERY_DB>[\s\S]*?<\/SQL_QUERY>[\s\S]*?\[\/QUERY_DB\]/g, '') // mixed <QUERY_DB> ... </SQL_QUERY> [/QUERY_DB]
-        .replace(/<QUERY_DB>[\s\S]*?<\/QUERY_DB>/g, '')
-        .replace(/<query>[\s\S]*?<\/query>/gi, '')
-        .replace(/<Function\s+id="query_db_\d+"[\s\S]*?<\/Function>/gi, '')
-        .replace(/\[\/QUERY_DB\]/g, '')
-        .replace(/<\/query>/gi, '')
-        .replace(/\[GET_SCHEMA:[^\]]+\]/g, '')
-        .replace(/<GET_SCHEMA>[^<]+<\/GET_SCHEMA>/g, '');
-      if (effectiveDbOnly) {
-        finalReply = finalReply.replace(/```sql[\s\S]*?```/g, '');
-      }
-      finalReply = finalReply.trim();
-    }
+    // Strip leftover tool-call syntax; strip ```sql blocks in dbOnly mode
+    finalReply = stripToolTags(finalReply, { stripSqlBlocks: effectiveDbOnly });
 
-    // Fallback 1: if AI exhausted rounds but DID query DB, show raw DB results
+    // Fallback: if AI exhausted rounds but DID query DB, show raw DB results
     if (dbQueried && lastDbResultBlock && (!finalReply || finalReply.length < 20)) {
-      finalReply = `📊 **Database Results:**\n\n${lastDbResultBlock.replace(/\[QUERY DB RESULTS[^\]]*\]/g, '').replace(/\[END RESULTS\][\s\S]*$/, '').replace(/```json\n?/g, '```').trim()}\n\n*AI ran out of tool rounds. Raw results shown above.*`;
+      finalReply = buildFallbackDbReply(lastDbResultBlock);
     }
 
     // Send streamed response in chunks — section-aware speed
@@ -722,26 +517,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     // If client already gone, don't write anything
     if (res.writableEnded || res.destroyed) return;
 
-    let errorMessage = 'Something went wrong';
-    let errorType = 'general';
-
-    const msg = String(err?.message || '');
-    if (msg.includes('413') || msg.includes('too large') || msg.includes('Request too large')) {
-      errorMessage = 'This model does not support such a large request. Please select another model with a higher token limit and try again.';
-      errorType = 'request_too_large';
-    } else if (msg.includes('429') || msg.includes('quota')) {
-      errorMessage = 'Quota exceeded. Please use another model.';
-      errorType = 'quota';
-    } else if (msg.includes('ECONNREFUSED') || msg.includes('Connection')) {
-      errorMessage = 'Connection failed. Please check your internet.';
-      errorType = 'connection';
-    } else if (msg.includes('ENOTFOUND') || msg.includes('DNS')) {
-      errorMessage = 'Backend server not responding. Please try again.';
-      errorType = 'server';
-    } else if (msg.includes('timeout')) {
-      errorMessage = 'Request timeout. Please try again.';
-      errorType = 'timeout';
-    }
+    const { errorType, userMessage: errorMessage } = classifyError(err?.message);
 
     if (!res.headersSent) {
       res.setHeader('Content-Type', 'text/event-stream');
@@ -754,7 +530,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
         type: 'error',
         error: errorMessage,
         errorType,
-        originalError: msg
+        originalError: err?.message || ''
       })}\n\n`);
     } catch (writeErr) {
       console.warn('[Stream] Failed to write SSE error response:', writeErr.message);

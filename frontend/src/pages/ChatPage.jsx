@@ -188,7 +188,10 @@ const ChatPage = () => {
 
         // HYBRID: Don't inject file content into message — AI sees file names via listUserFiles
         // and uses SEARCH_FILES / GET_FILE tools to access content on demand
-        finalMessage = `[File uploaded: ${uploadRes.data.fileName}]`;
+        // Preserve user's original text + append file reference (was overwriting before!)
+        finalMessage = finalMessage
+          ? `${finalMessage}\n[File uploaded: ${uploadRes.data.fileName}]`
+          : `[File uploaded: ${uploadRes.data.fileName}]`;
       }
 
       const apiUrl = process.env.NODE_ENV === 'production'
@@ -265,11 +268,45 @@ const ChatPage = () => {
         }
       }
 
+      // ── Save AI-generated file code blocks ──────────────────
+      const generatedFiles = [];
+      if (fullReply) {
+        const fileBlockRegex = /```(\w+)\n([\s\S]*?)```/g;
+        const fileLangs = new Set([
+          'html','htm','js','jsx','ts','tsx','css','scss','sass','less',
+          'json','xml','yaml','yml','md','svg','py','rb','php','java',
+          'c','cpp','h','hpp','cs','go','rs','swift','kt','sql','r',
+          'sh','bash','ps1','bat','pl','lua',
+        ]);
+        let fileMatch;
+        let fileIdx = 0;
+        while ((fileMatch = fileBlockRegex.exec(fullReply)) !== null) {
+          const lang = fileMatch[1];
+          if (fileLangs.has(lang)) {
+            const content = fileMatch[2].trim();
+            const ext = lang === 'jsx' ? 'jsx' : lang === 'tsx' ? 'tsx' : lang === 'htm' ? 'html' : lang;
+            const fileName = `generated_${fileIdx + 1}.${ext}`;
+            try {
+              const res = await api.post('/upload/generate-file', {
+                topicId: topicIdToUse,
+                fileName,
+                content,
+                fileType: lang,
+              });
+              if (res.data?.file) generatedFiles.push(res.data.file);
+            } catch (e) { console.error('[saveGeneratedFile]', e); }
+            fileIdx++;
+          }
+        }
+      }
+
       setMessages(prev => {
         const updated = [...prev];
-        updated[updated.length - 1] = { ...updated[updated.length - 1], streaming: false, model: metadata.model, tokensUsed: metadata.tokensUsed, cacheHit: metadata.cacheHit };
+        updated[updated.length - 1] = { ...updated[updated.length - 1], streaming: false, model: metadata.model, tokensUsed: metadata.tokensUsed, cacheHit: metadata.cacheHit, generatedFiles };
         return updated;
       });
+
+      if (generatedFiles.length > 0) setSidebarRefresh(p => p + 1);
 
       setPendingImage(null);
       setFailedMessage(null); // clear failed data on success
@@ -432,7 +469,7 @@ const ChatPage = () => {
           {messages.length === 0 ? (
             <div className="empty-state">
               <div className="empty-orb" />
-              <h2>Welcome to Azim's ChatBot</h2>
+              <h2>Welcome to Miles Intelligence</h2>
               <p>Select a model and start chatting with your AI assistant</p>
               <div className="suggestion-chips">
                 {['Explain quantum computing', 'Write a Python script', 'Translate to French', 'Debug my code'].map(s => (
@@ -501,6 +538,15 @@ const ChatPage = () => {
               Advanced
             </button>
 
+            <label className="memory-toggle-control">
+              <input
+                type="checkbox"
+                checked={dbOnly}
+                onChange={e => setDbOnly(e.target.checked)}
+              />
+              🔒 Only DB
+            </label>
+
             {showAdvancedMemory && (
               <>
                 <label className="memory-limit-control">
@@ -525,14 +571,6 @@ const ChatPage = () => {
                     onChange={e => setRagEnabled(e.target.checked)}
                   />
                   RAG on
-                </label>
-                <label className="memory-toggle-control">
-                  <input
-                    type="checkbox"
-                    checked={dbOnly}
-                    onChange={e => setDbOnly(e.target.checked)}
-                  />
-                  🔒 Only DB
                 </label>
               </>
             )}

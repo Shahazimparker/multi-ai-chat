@@ -8,11 +8,13 @@
   display: flex;
   height: 100%;
   min-height: 100vh;
-  background: #080b14;
-  color: #fff;
+  background: var(--bg-primary);
+  background-attachment: fixed;
+  color: var(--text-primary);
   font-family: 'Inter', sans-serif;
   overflow-x: hidden;
   overflow-y: auto;
+  transition: background 0.3s ease, color 0.3s ease;
 }
 
 .chat-main {
@@ -21,10 +23,29 @@
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  background: var(--bg-primary);
+  backdrop-filter: blur(20px);
+  transition: background 0.3s ease;
+}
+
+/* Dark theme specific gradients */
+:root[data-theme="dark"] .chat-main {
   background:
-    radial-gradient(circle at top left, rgba(124, 58, 237, 0.14), transparent 24%),
-    radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.08), transparent 20%),
-    #090b15;
+    radial-gradient(circle at top left, rgba(236, 72, 153, 0.15), transparent 30%),
+    radial-gradient(circle at top right, rgba(124, 58, 237, 0.18), transparent 35%),
+    radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.12), transparent 28%),
+    radial-gradient(circle at bottom left, rgba(245, 158, 11, 0.08), transparent 25%),
+    linear-gradient(135deg, rgba(10, 14, 26, 0.95), rgba(26, 11, 46, 0.95));
+}
+
+/* Light theme specific gradients */
+:root[data-theme="light"] .chat-main {
+  background:
+    radial-gradient(circle at top left, rgba(236, 72, 153, 0.08), transparent 40%),
+    radial-gradient(circle at top right, rgba(124, 58, 237, 0.08), transparent 45%),
+    radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.06), transparent 38%),
+    radial-gradient(circle at bottom left, rgba(245, 158, 11, 0.04), transparent 35%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98));
 }
 
 .chat-toolbar {
@@ -32,16 +53,19 @@
   align-items: center;
   gap: 14px;
   padding: 12px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(15, 23, 42, 0.88);
-  backdrop-filter: blur(10px);
-  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+  backdrop-filter: blur(20px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 4px 24px var(--shadow-md);
   flex-shrink: 0;
   overflow: visible;
   position: relative;
   z-index: 10;
   min-height: 56px;
   width: 100%;
+  transition: all 0.3s ease;
 }
 
 .chat-toolbar>* {
@@ -55,7 +79,7 @@
 
 .topic-hint {
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--text-tertiary);
   margin-left: auto;
 }
 
@@ -121,12 +145,22 @@
 }
 
 .empty-orb {
-  width: 80px;
-  height: 80px;
-  background: radial-gradient(circle, rgba(124, 58, 237, 0.4), rgba(14, 165, 233, 0.2));
+  width: 100px;
+  height: 100px;
+  background: radial-gradient(circle,
+    rgba(236, 72, 153, 0.6),
+    rgba(124, 58, 237, 0.4),
+    rgba(14, 165, 233, 0.3));
   border-radius: 50%;
-  filter: blur(2px);
-  animation: pulse 3s ease-in-out infinite;
+  filter: blur(3px);
+  animation: pulse 3s ease-in-out infinite, rotate 10s linear infinite;
+  box-shadow: 0 0 60px rgba(236, 72, 153, 0.4);
+}
+
+@keyframes rotate {
+  from { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(180deg) scale(1.1); }
+  to { transform: rotate(360deg) scale(1); }
 }
 
 @keyframes pulse {
@@ -146,12 +180,12 @@
 .empty-state h2 {
   font-family: 'Syne', sans-serif;
   font-size: 1.6rem;
-  color: #fff;
+  color: var(--text-primary);
   margin: 0;
 }
 
 .empty-state p {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-secondary);
   font-size: 0.9rem;
   margin: 0;
 }
@@ -165,21 +199,40 @@
 }
 
 .chip {
-  padding: 7px 14px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 8px 16px;
+  background: var(--gradient-secondary);
+  border: 1px solid var(--border-primary);
   border-radius: 999px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-secondary);
   font-size: 0.82rem;
   font-family: 'Inter', sans-serif;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.chip::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+  transition: left 0.5s;
 }
 
 .chip:hover {
-  background: rgba(167, 139, 250, 0.15);
-  border-color: rgba(167, 139, 250, 0.4);
-  color: #c4b5fd;
+  background: var(--bg-hover);
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px var(--shadow-md);
+}
+
+.chip:hover::before {
+  left: 100%;
 }
 
 .typing-indicator {
@@ -230,10 +283,12 @@
 
 .input-area {
   padding: 16px 22px 20px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(10, 14, 24, 0.96);
-  backdrop-filter: blur(16px);
+  border-top: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+  backdrop-filter: blur(24px);
   flex-shrink: 0;
+  box-shadow: 0 -4px 24px var(--shadow-md);
+  transition: all 0.3s ease;
 }
 
 @media (max-width: 768px) {
@@ -285,35 +340,36 @@
 
 .memory-mode-btn,
 .memory-advanced-btn {
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.74);
+  border: 1px solid var(--border-primary);
+  background: var(--bg-input);
+  color: var(--text-secondary);
   border-radius: 999px;
   padding: 8px 14px;
   font-size: 0.8rem;
   font-family: 'Inter', sans-serif;
   cursor: pointer;
-  transition: transform 0.15s, background 0.2s, color 0.2s;
+  transition: all 0.2s ease;
 }
 
 .memory-mode-btn:hover,
 .memory-advanced-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--bg-hover);
   transform: translateY(-1px);
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .memory-mode-btn.active {
-  background: linear-gradient(135deg, rgba(124, 58, 237, 0.24), rgba(14, 165, 233, 0.24));
-  border-color: rgba(124, 58, 237, 0.4);
-  color: #fff;
+  background: var(--gradient-secondary);
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .memory-toggle-control {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-secondary);
   font-size: 0.78rem;
 }
 
@@ -324,13 +380,19 @@
 
 .memory-limit-control input {
   width: 56px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: var(--bg-input);
+  border: 1px solid var(--border-primary);
   border-radius: 12px;
-  color: #fff;
+  color: var(--text-primary);
   padding: 6px 10px;
   font-family: 'Inter', sans-serif;
   font-size: 0.78rem;
+  transition: all 0.2s ease;
+}
+
+.memory-limit-control input:focus {
+  border-color: var(--border-hover);
+  outline: none;
 }
 
 .input-box {
@@ -340,16 +402,21 @@
   padding: 10px 14px !important;
   border-radius: 999px;
   gap: 10px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
-  position: relative
+  background: var(--bg-input);
+  border: 1px solid var(--border-primary);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  box-shadow: 0 4px 12px var(--shadow-sm);
 }
 
 .input-box:focus-within {
-  border-color: rgba(124, 58, 237, 0.5);
-  background: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 18px 54px rgba(36, 30, 63, 0.12);
+  border-color: var(--border-active);
+  background: var(--bg-input);
+  box-shadow:
+    0 0 0 3px rgba(236, 72, 153, 0.1),
+    0 8px 32px var(--shadow-md),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transform: translateY(-1px);
 }
 
 .input-box textarea {
@@ -359,7 +426,7 @@
   padding: 10px 12px !important;
   background: transparent;
   border: none;
-  color: #fff;
+  color: var(--text-primary);
   font-size: 0.95rem;
   line-height: 1.5;
   outline: none;
@@ -367,7 +434,7 @@
 }
 
 .input-box textarea::placeholder {
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--text-tertiary);
 }
 
 .input-box textarea:disabled {
@@ -378,7 +445,9 @@
 .send-btn {
   width: 44px;
   height: 44px;
-  background: linear-gradient(135deg, #8b5cf6, #38bdf8);
+  background: var(--gradient-button);
+  background-size: 200% 200%;
+  animation: gradientShift 3s ease infinite;
   border: none;
   border-radius: 16px;
   color: #fff;
@@ -387,13 +456,37 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  box-shadow: 0 12px 30px rgba(56, 189, 248, 0.18);
-  transition: transform 0.15s, box-shadow 0.2s, opacity 0.2s;
+  box-shadow:
+    0 8px 24px var(--shadow-md),
+    0 0 20px rgba(124, 58, 237, 0.2);
+  transition: transform 0.2s, box-shadow 0.3s, opacity 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+
+@keyframes gradientShift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+.send-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transform: translateX(-100%);
+  transition: transform 0.6s;
 }
 
 .send-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 16px 36px rgba(56, 189, 248, 0.24);
+  transform: translateY(-2px) scale(1.05);
+  box-shadow:
+    0 12px 32px rgba(236, 72, 153, 0.4),
+    0 0 40px rgba(124, 58, 237, 0.3);
+}
+
+.send-btn:hover:not(:disabled)::before {
+  transform: translateX(100%);
 }
 
 .send-btn:disabled {

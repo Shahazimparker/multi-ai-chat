@@ -762,6 +762,67 @@ const listUserFiles = async (userId, topicId, maxFiles = 200) => {
   }
 };
 
+/**
+ * List ALL uploaded files for a user across all chats (cross-chat)
+ * @param {string} userId
+ * @param {number} maxFiles - max files to return (default 200)
+ */
+const listAllUserFiles = async (userId, maxFiles = 200) => {
+  try {
+    if (!userId) return { files: [], totalCount: 0 };
+
+    const { data, error, count } = await supabase
+      .from('uploaded_files_rag')
+      .select('id, file_name, file_type, created_at', { count: 'exact' })
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(maxFiles);
+
+    if (error) {
+      console.error('[listAllUserFiles] error:', error.message);
+      return { files: [], totalCount: 0 };
+    }
+
+    const files = (data || []).map(r => ({
+      file_id: r.id,
+      file_name: r.file_name,
+      file_type: r.file_type,
+      created_at: r.created_at,
+    }));
+
+    return { files, totalCount: count || files.length };
+  } catch (err) {
+    console.error('[listAllUserFiles] Failed:', err);
+    return { files: [], totalCount: 0 };
+  }
+};
+
+/**
+ * Get file content by ID only (cross-chat, no topicId required)
+ */
+const getFileContentById = async (fileId, userId) => {
+  try {
+    if (!fileId || !userId) return null;
+
+    const { data, error } = await supabase
+      .from('uploaded_files_rag')
+      .select('id, file_name, file_type, original_content, llm_analysis, created_at')
+      .eq('id', fileId)
+      .eq('user_id', userId)
+      .single();
+
+    if (error) {
+      console.error('[FileContentById] error:', error.message);
+      return null;
+    }
+
+    return data;
+  } catch (err) {
+    console.error('[FileContentById] Failed:', err);
+    return null;
+  }
+};
+
 const deleteUploadedFile = async (fileId, userId) => {
   const { error } = await supabase
     .from('uploaded_files_rag')
@@ -772,12 +833,74 @@ const deleteUploadedFile = async (fileId, userId) => {
   if (error) throw error;
 };
 
+/**
+ * Save AI-generated file content to DB (topic-specific)
+ * Appends timestamp if fileName already exists for same user+topic
+ */
+const saveGeneratedFile = async (userId, topicId, fileName, content, fileType) => {
+  try {
+    if (!userId || !fileName || !content) return null;
+
+    // Check for duplicate name → append timestamp
+    const { data: existing } = await supabase
+      .from('uploaded_files_rag')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('topic_id', topicId)
+      .eq('file_name', fileName)
+      .maybeSingle();
+
+    let finalName = fileName;
+    if (existing) {
+      const now = new Date();
+      const ts = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
+      const dot = fileName.lastIndexOf('.');
+      if (dot > 0) {
+        finalName = `${fileName.substring(0, dot)}_${ts}${fileName.substring(dot)}`;
+      } else {
+        finalName = `${fileName}_${ts}`;
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('uploaded_files_rag')
+      .insert({
+        file_name: finalName,
+        file_type: fileType || 'generated',
+        original_content: content,
+        user_id: userId,
+        topic_id: topicId,
+        created_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[saveGeneratedFile] error:', error.message);
+      return null;
+    }
+
+    return {
+      file_id: data.id,
+      file_name: data.file_name,
+      file_type: data.file_type,
+      created_at: data.created_at,
+    };
+  } catch (err) {
+    console.error('[saveGeneratedFile] Failed:', err);
+    return null;
+  }
+};
+
 module.exports = {
   processUploadedFile,
   searchUserFilesRAG,
   getFileContent,
+  getFileContentById,
   listUserFiles,
+  listAllUserFiles,
   deleteUploadedFile,
+  saveGeneratedFile,
   getTempDir,
   ensureUploadDir,
   getSupportedFileType,
