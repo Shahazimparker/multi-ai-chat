@@ -357,6 +357,7 @@ const buildMinimalSchemaContext = async () => {
     `2. Then query: [QUERY_DB]\n   <SQL_QUERY>\n   [/QUERY_DB]\n\n` +
     `Rules:\n` +
     `- When user mentions a business entity (e.g., Purchase Order, Vendor, Sales Order), call GET_SCHEMA with ONLY its directly related tables (e.g., [GET_SCHEMA:purchase_orders, companies, vendors]) — do NOT request all tables at once; use TABLE GUIDE + RELATIONSHIPS to identify relevant tables\n` +
+    `- **VALIDATION RULE**: When user mentions a specific entity code/ID (e.g., "plant 1000", "vendor V123", "material MAT456"), FIRST validate it exists by querying that entity's master table. If query returns 0 rows, inform user that the specific code doesn't exist and offer to list available options (e.g., "Plant 1000 not found. Available plants: ..."). Do NOT proceed with dependent queries for non-existent entities.\n` +
     `- Only SELECT queries allowed (read-only)\n` +
     `- Use table names exactly as shown in TABLE GUIDE\n` +
     `- Use column names exactly as returned by GET_SCHEMA\n` +
