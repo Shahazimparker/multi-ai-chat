@@ -352,12 +352,17 @@ const buildMinimalSchemaContext = async () => {
     : '';
 
   return `[BUSINESS DATABASE — TABLES OVERVIEW]${guideBlock}${relBlock}\n\n` +
-    `You have read-only access to this database. To query it:\n` +
+    `You have read-only access to this **PostgreSQL** database. To query it:\n` +
     `1. First get column schema: [GET_SCHEMA:table1, table2, ...]\n` +
     `2. Then query: [QUERY_DB]\n   <SQL_QUERY>\n   [/QUERY_DB]\n\n` +
     `Rules:\n` +
     `- When user mentions a business entity (e.g., Purchase Order, Vendor, Sales Order), call GET_SCHEMA with ONLY its directly related tables (e.g., [GET_SCHEMA:purchase_orders, companies, vendors]) — do NOT request all tables at once; use TABLE GUIDE + RELATIONSHIPS to identify relevant tables\n` +
+    `- **TOOL USAGE**: When using GET_SCHEMA or QUERY_DB, do NOT explain to the user what you're doing (e.g., "I need to check the schema", "Let me query the database"). Just use the tool silently and provide the final answer. Users don't see your tool calls.\n` +
     `- **VALIDATION RULE**: When user mentions a specific entity code/ID (e.g., "plant 1000", "vendor V123", "material MAT456"), FIRST validate it exists by querying that entity's master table. If query returns 0 rows, inform user that the specific code doesn't exist and offer to list available options (e.g., "Plant 1000 not found. Available plants: ..."). Do NOT proceed with dependent queries for non-existent entities.\n` +
+    `- **DATABASE TYPE: PostgreSQL** — Use PostgreSQL syntax ONLY:\n` +
+    `  * Date functions: to_char(date, 'YYYY-MM'), date_trunc('month', date), EXTRACT(MONTH FROM date)\n` +
+    `  * String functions: CONCAT(), SUBSTRING(), POSITION(), LOWER(), UPPER()\n` +
+    `  * NOT SQLite (no strftime), NOT MySQL (no DATE_FORMAT)\n` +
     `- Only SELECT queries allowed (read-only)\n` +
     `- Use table names exactly as shown in TABLE GUIDE\n` +
     `- Use column names exactly as returned by GET_SCHEMA\n` +

@@ -103,6 +103,7 @@ const findGetFileMatch = (reply) => reply.match(/\[GET_FILE:id=([^\]]+)\]/);
 
 const findGetSchemaMatch = (reply) => {
   let m = reply.match(/\[GET_SCHEMA:([^\]]+)\]/);
+  if (!m) m = reply.match(/<GET_SCHEMA:([^>]+)>/);  // Match <GET_SCHEMA:table1, table2>
   if (!m) m = reply.match(/<GET_SCHEMA>([^<]+)<\/GET_SCHEMA>/);
   if (!m) m = reply.match(/<request_label>Get\s+Schema<\/request_label>\s*<request_text>([^<]+)<\/request_text>/i);
   return m;
@@ -368,6 +369,7 @@ const stripToolTags = (text, opts = {}) => {
     .replace(/\[\/QUERY_DB\]/g, '')
     .replace(/<\/query>/gi, '')
     .replace(/\[GET_SCHEMA:[^\]]+\]/g, '')
+    .replace(/<GET_SCHEMA:[^>]+>/g, '')  // Strip <GET_SCHEMA:table1, table2>
     .replace(/<GET_SCHEMA>[^<]+<\/GET_SCHEMA>/g, '')
     .replace(/<request_label>Get\s+Schema<\/request_label>\s*<request_text>[^<]+<\/request_text>/gi, '');
 
