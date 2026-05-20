@@ -56,12 +56,6 @@ const deleteTopic = async (req, res) => {
       .delete()
       .eq('topic_id', topicId);
 
-    // DELETE related user files
-    await supabase
-      .from('user_files')
-      .delete()
-      .eq('topic_id', topicId);
-
     // DELETE query_cache entries scoped to this topic
     await supabase
       .from('query_cache')

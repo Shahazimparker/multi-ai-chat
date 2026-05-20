@@ -491,14 +491,13 @@ const ChatPage = () => {
             </div>
           )}
 
-          {/* AI Responding Animation - Big Circle */}
+          {/* AI Responding Animation - Floating Orbs */}
           {loading && (
             <div className="ai-loading-overlay">
-              <div className="ai-loading-circle">
-                <div className="ai-loading-ring ring-1"></div>
-                <div className="ai-loading-ring ring-2"></div>
-                <div className="ai-loading-ring ring-3"></div>
-                <div className="ai-loading-core"></div>
+              <div className="floating-orbs">
+                <div className="float-orb" />
+                <div className="float-orb" />
+                <div className="float-orb" />
               </div>
             </div>
           )}
