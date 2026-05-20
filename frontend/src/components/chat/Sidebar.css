@@ -302,16 +302,27 @@
 }
 .artifact-content {
   flex: 1;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   min-width: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.15) transparent;
+}
+.artifact-content::-webkit-scrollbar {
+  height: 3px;
+}
+.artifact-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+.artifact-content::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.15);
+  border-radius: 2px;
 }
 .artifact-name {
   display: block;
   font-size: 0.8rem;
   color: var(--sidebar-text-primary);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .artifact-size {
   display: block;
@@ -440,6 +451,13 @@
 
 :root[data-theme="light"] .artifact-icon {
   color: rgba(59, 130, 246, 0.7) !important;
+}
+
+:root[data-theme="light"] .artifact-content::-webkit-scrollbar-thumb {
+  background: rgba(71, 85, 105, 0.25) !important;
+}
+:root[data-theme="light"] .artifact-content {
+  scrollbar-color: rgba(71, 85, 105, 0.25) transparent !important;
 }
 
 :root[data-theme="light"] .sidebar-empty-msg {

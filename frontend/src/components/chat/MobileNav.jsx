@@ -9,6 +9,7 @@ import { Menu, X, PlusCircle, MessageSquare, LogOut, Settings, Trash2, Pencil, C
 import { useAuth } from '../../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import api from '../../config/api';
+import ThemeToggle from '../layout/ThemeToggle';
 import './MobileNav.css';
 
 const RECENT_COUNT = 3;
@@ -76,6 +77,18 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
             URL.revokeObjectURL(url);
         } catch (err) {
             console.error('[Artifact] Download failed:', err);
+        }
+    }, []);
+
+    const handleArtifactDelete = useCallback(async (e, art) => {
+        e.stopPropagation();
+        if (!window.confirm(`Delete "${art.name}"? This cannot be undone.`)) return;
+        try {
+            await api.delete(`/upload/${art.id}`);
+            setArtifacts(prev => prev.filter(a => a.id !== art.id));
+        } catch (err) {
+            console.error('[Artifact] Delete failed:', err);
+            alert('Failed to delete file');
         }
     }, []);
 
@@ -164,15 +177,18 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
             <div className={`mobile-drawer ${isOpen ? 'open' : ''}`}>
                 <div className="mobile-drawer-header">
                     <span className="drawer-title">✦ Miles Intelligence</span>
-                    <button
-                        type="button"
-                        className="drawer-close-btn"
-                        onClick={() => setIsOpen(false)}
-                        title="Close"
-                        aria-label="Close menu"
-                    >
-                        <X size={20} />
-                    </button>
+                    <div className="mobile-drawer-header-actions">
+                        <ThemeToggle />
+                        <button
+                            type="button"
+                            className="drawer-close-btn"
+                            onClick={() => setIsOpen(false)}
+                            title="Close"
+                            aria-label="Close menu"
+                        >
+                            <X size={20} />
+                        </button>
+                    </div>
                 </div>
 
                 {/* ─── TOP SCROLLABLE SECTION ─── */}
@@ -275,13 +291,22 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
                                                                 <span className="mobile-artifact-name">{art.name}</span>
                                                                 <span className="mobile-artifact-size">{art.size}</span>
                                                             </div>
-                                                            <button
-                                                                className="mobile-artifact-dl-btn"
-                                                                onClick={e => handleArtifactDownload(e, art)}
-                                                                title="Download"
-                                                            >
-                                                                <Download size={12} />
-                                                            </button>
+                                                            <div className="mobile-artifact-actions">
+                                                                <button
+                                                                    className="mobile-artifact-dl-btn"
+                                                                    onClick={e => handleArtifactDownload(e, art)}
+                                                                    title="Download"
+                                                                >
+                                                                    <Download size={12} />
+                                                                </button>
+                                                                <button
+                                                                    className="mobile-artifact-del-btn"
+                                                                    onClick={e => handleArtifactDelete(e, art)}
+                                                                    title="Delete"
+                                                                >
+                                                                    <Trash2 size={12} />
+                                                                </button>
+                                                            </div>
                                                         </div>
                                                     ))
                                 )}
@@ -310,9 +335,41 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
                                     >
                                         <MessageSquare size={14} className="mobile-topic-icon" />
                                         <div className="mobile-topic-content">
-                                            <span className="mobile-topic-title">{topic.title}</span>
-                                            <span className="mobile-topic-model">{topic.model}</span>
+                                            {editing === topic.id ? (
+                                                <div className="mobile-edit-row" onClick={e => e.stopPropagation()}>
+                                                    <input
+                                                        value={editVal}
+                                                        onChange={e => setEditVal(e.target.value)}
+                                                        onKeyDown={e => {
+                                                            if (e.key === 'Enter') saveEdit(topic.id);
+                                                            if (e.key === 'Escape') setEditing(null);
+                                                        }}
+                                                        autoFocus
+                                                    />
+                                                    <button onClick={() => saveEdit(topic.id)} title="Save">
+                                                        <Check size={12} />
+                                                    </button>
+                                                    <button onClick={() => setEditing(null)} title="Cancel">
+                                                        <X size={12} />
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <span className="mobile-topic-title">{topic.title}</span>
+                                                    <span className="mobile-topic-model">{topic.model}</span>
+                                                </>
+                                            )}
                                         </div>
+                                        {editing !== topic.id && (
+                                            <div className="mobile-topic-actions">
+                                                <button onClick={e => startEdit(e, topic)} title="Rename">
+                                                    <Pencil size={14} />
+                                                </button>
+                                                <button onClick={e => handleDelete(e, topic.id)} title="Delete">
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
+                                        )}
                                     </div>
                                 ))
                             )}

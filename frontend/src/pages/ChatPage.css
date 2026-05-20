@@ -26,6 +26,7 @@
   background: var(--bg-primary);
   backdrop-filter: blur(20px);
   transition: background 0.3s ease;
+  position: relative;
 }
 
 /* Dark theme specific gradients */
@@ -274,6 +275,50 @@
   30% {
     transform: translateY(-6px);
   }
+}
+
+/* ── Upload progress bar ── */
+.upload-progress-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  margin: 8px 16px;
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: 8px;
+}
+:root[data-theme="light"] .upload-progress-bar {
+  background: rgba(99, 102, 241, 0.08);
+  border-color: rgba(99, 102, 241, 0.2);
+}
+
+.upload-progress-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  overflow: hidden;
+}
+:root[data-theme="light"] .upload-progress-track {
+  background: rgba(71, 85, 105, 0.12);
+}
+
+.upload-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.upload-progress-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+:root[data-theme="light"] .upload-progress-label {
+  color: rgba(71, 85, 105, 0.8);
 }
 
 .spin {
@@ -768,7 +813,7 @@
    AI LOADING ANIMATION - FLOATING ORBS
    ============================================================ */
 .ai-loading-overlay {
-  position: fixed;
+  position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);

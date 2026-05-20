@@ -131,6 +131,7 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
             'HTTP-Referer': 'http://localhost:3000',
             'X-Title': 'MultiAI Chat',
           },
+          timeout: 30000,
           signal: signal
         }
       );

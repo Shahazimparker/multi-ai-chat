@@ -303,7 +303,7 @@ File ready for queries.`,
  * Store file + LLM response in RAG (globally, not per-topic)
  * This allows RAG to retrieve past file analyses for any query
  */
-const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userId, topicId, signal = null, ragEnabled = true, provider = 'openrouter') => {
+const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userId, topicId, signal = null, ragEnabled = true, provider = 'openrouter', onProgress = null) => {
   try {
     const fileHash = getFileHash(fileName, fileContent);
 
@@ -313,6 +313,7 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
 
     const { embedText } = require('./rag.service');
     let ragRecord = null;
+    let fileRecord = null;
     let totalEmbedTokens = 0;  // ← track embedding tokens for this upload
 
     if (ragEnabled) {
@@ -321,6 +322,10 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
       const chunkVectors = [];
 
       for (let i = 0; i < chunks.length; i++) {
+        if (onProgress) {
+          const pct = Math.round(((i) / Math.max(chunks.length, 1)) * 100);
+          onProgress({ type: 'progress', phase: 'embedding', percent: pct, message: `Embedding chunk ${i + 1}/${chunks.length} for ${fileName}` });
+        }
         const result = await embedText(chunks[i], 'openrouter', 3, signal, userId);
         if (result) {
           chunkVectors.push(result.vector);
@@ -336,7 +341,7 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
       const { data, error: ragError } = await supabase
         .rpc('insert_rag_document', {
           p_user_id: userId,
-          p_topic_id: topicId,
+          p_topic_id: topicId || null,
           p_file_name: fileName,
           p_file_hash: fileHash,
           p_file_type: fileType,
@@ -353,7 +358,7 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
       // ── Store chunks in rag_chunks for granular search ──
       if (chunks.length > 1) {
         // Insert into uploaded_files (legacy table) for FK reference from rag_chunks
-        const { data: fileRecord, error: fileErr } = await supabase
+        const { data: fr, error: fileErr } = await supabase
           .from('uploaded_files')
           .insert({
             user_id: userId,
@@ -367,7 +372,8 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
           .select('id')
           .single();
 
-        if (!fileErr && fileRecord) {
+        if (!fileErr && fr) {
+          fileRecord = fr;
           // Insert each chunk into rag_chunks
           const chunkRows = chunks.map((text, i) => ({
             file_id: fileRecord.id,
@@ -416,7 +422,7 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
 
       console.log(`[FileUpload] Stored in RAG: ${fileName} (hash: ${fileHash}, chunks: ${chunks.length}, embedTokens: ${totalEmbedTokens})`);
     }
-    return { ragId: ragRecord?.id || null, embedTokens: totalEmbedTokens };
+    return { ragId: ragRecord?.id || null, fileId: fileRecord?.id || null, embedTokens: totalEmbedTokens };
   } catch (err) {
     console.error('[FileUpload] RAG storage failed:', err);
     throw err;
@@ -456,10 +462,12 @@ const mapConcurrent = async (items, concurrency, fn) => {
  * Process ZIP file - extract all supported files and analyze each
  * Uses concurrent workers (default: 3) to speed up large ZIPs
  */
-const processZipFile = async (filePath, fileName, userId, topicId, modelId, signal, ragEnabled) => {
-  const CONCURRENCY = 3; // process 3 files at a time inside ZIP
+const processZipFile = async (filePath, fileName, userId, topicId, modelId, signal, ragEnabled, onProgress = null) => {
+  const CONCURRENCY = 5; // process 5 files at a time inside ZIP
   const zip = await JSZip.loadAsync(fs.readFileSync(filePath));
   const skipped = [];
+  const savedRagIds = [];    // track uploaded_files_rag IDs for cleanup on abort
+  const savedFileIds = [];   // track uploaded_files IDs for cleanup on abort
 
   // Filter to processable entries first
   const entries = Object.values(zip.files).filter(entry => {
@@ -483,50 +491,74 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
 
   console.log(`[FileUpload] ZIP has ${entries.length} processable entries (concurrency=${CONCURRENCY})`);
 
-  // Process entries concurrently with bounded concurrency
-  const results = await mapConcurrent(entries, CONCURRENCY, async (entry) => {
-    if (signal?.aborted) throw { name: 'AbortError' };
+  let validResults = [];
+  let completedCount = 0;
+  const total = entries.length;
 
-    const entryName = normalizeZipEntryName(entry.name);
-    const innerType = getSupportedFileType(entryName);
+  try {
+    onProgress?.({ type: 'progress', phase: 'extracting', percent: 5, message: `ZIP contains ${total} processable files. Starting...` });
 
-    try {
-      const buffer = await entry.async('nodebuffer');
-      const extractedText = await extractTextFromBuffer(buffer, innerType, modelId, signal, entryName);
+    // Process entries concurrently with bounded concurrency
+    const results = await mapConcurrent(entries, CONCURRENCY, async (entry) => {
+      if (signal?.aborted) throw { name: 'AbortError' };
 
-      if (!extractedText || extractedText.length < 10) {
+      const entryName = normalizeZipEntryName(entry.name);
+      const innerType = getSupportedFileType(entryName);
+
+      try {
+        const buffer = await entry.async('nodebuffer');
+        const extractedText = await extractTextFromBuffer(buffer, innerType, modelId, signal, entryName);
+
+        if (!extractedText || extractedText.length < 10) {
+          skipped.push(entryName);
+          completedCount++;
+          onProgress?.({ type: 'progress', phase: 'processing', percent: Math.round((completedCount / total) * 90) + 5, message: `[${completedCount}/${total}] Skipped empty: ${entryName}` });
+          return null;
+        }
+
+        const { llmAnalysis } = await analyzeFileWithLLM(extractedText, entryName, innerType, modelId, signal);
+
+        const saveResult = await saveFileToRAG(
+          `${fileName}/${entryName}`,
+          innerType,
+          extractedText,
+          llmAnalysis,
+          userId,
+          topicId,
+          signal,
+          ragEnabled,
+          'openrouter'
+        );
+
+        if (saveResult.ragId) savedRagIds.push(saveResult.ragId);
+        if (saveResult.fileId) savedFileIds.push(saveResult.fileId);
+
+        completedCount++;
+        onProgress?.({ type: 'progress', phase: 'processing', percent: Math.round((completedCount / total) * 90) + 5, message: `[${completedCount}/${total}] Processed: ${entryName}` });
+
+        return {
+          fileName: entryName,
+          fileType: innerType,
+          ragId: saveResult.ragId,
+          tokensUsed: saveResult.embedTokens,
+        };
+      } catch (err) {
+        console.error(`[FileUpload] Error processing ${entryName}:`, err.message);
         skipped.push(entryName);
+        completedCount++;
+        onProgress?.({ type: 'progress', phase: 'processing', percent: Math.round((completedCount / total) * 90) + 5, message: `[${completedCount}/${total}] Error: ${entryName}` });
         return null;
       }
+    });
 
-      const { llmAnalysis } = await analyzeFileWithLLM(extractedText, entryName, innerType, modelId, signal);
-
-      const saveResult = await saveFileToRAG(
-        `${fileName}/${entryName}`,
-        innerType,
-        extractedText,
-        llmAnalysis,
-        userId,
-        topicId,
-        signal,
-        ragEnabled,
-        'openrouter'
-      );
-
-      return {
-        fileName: entryName,
-        fileType: innerType,
-        ragId: saveResult.ragId,
-        tokensUsed: saveResult.embedTokens,
-      };
-    } catch (err) {
-      console.error(`[FileUpload] Error processing ${entryName}:`, err.message);
-      skipped.push(entryName);
-      return null;
-    }
-  });
-
-  const validResults = results.filter(Boolean);
+    validResults = results.filter(Boolean);
+  } catch (err) {
+    // On abort/timeout/error, clean up orphaned RAG entries
+    console.error('[FileUpload] ZIP processing interrupted — cleaning up orphaned RAG entries...');
+    onProgress?.({ type: 'progress', phase: 'error', percent: 0, message: 'Upload interrupted. Cleaning up...' });
+    await cleanupOrphanedRagEntries(savedRagIds, savedFileIds);
+    throw err;
+  }
 
   if (validResults.length === 0) {
     throw new Error('ZIP did not contain any processable files');
@@ -536,6 +568,8 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
     .map(r => `• ${r.fileName} (${r.fileType})`)
     .join('\n')
     .slice(0, 4000);
+
+  onProgress?.({ type: 'progress', phase: 'complete', percent: 100, message: `ZIP processed: ${validResults.length} files ready` });
 
   return {
     fileName,
@@ -552,18 +586,19 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
 /**
  * Main: Process uploaded file
  */
-const processUploadedFile = async (filePath, fileName, fileType, userId, topicId, modelId, signal = null, ragEnabled = true) => {
+const processUploadedFile = async (filePath, fileName, fileType, userId, topicId, modelId, signal = null, ragEnabled = true, onProgress = null) => {
 
   try {
     console.log(`[FileUpload] Processing: ${fileName}`);
 
     if (fileType === 'zip') {
-      const result = await processZipFile(filePath, fileName, userId, topicId, modelId, signal,ragEnabled);
+      const result = await processZipFile(filePath, fileName, userId, topicId, modelId, signal, ragEnabled, onProgress);
       cleanupTempFile(filePath);
       return result;
     }
 
     // 1. Extract text from file
+    onProgress?.({ type: 'progress', phase: 'extracting', percent: 5, message: 'Extracting text from file...' });
     const buffer = fs.readFileSync(filePath);
     const extractedText = await extractTextFromBuffer(buffer, fileType, modelId, signal, fileName);
 
@@ -574,11 +609,14 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
     // 2. Send directly to LLM (no embedding!)
     let llmAnalysis, tokensUsed = 0;
     if (!ragEnabled) {
+      onProgress?.({ type: 'progress', phase: 'analyzing', percent: 30, message: 'Analyzing file content...' });
       const result = await analyzeFileWithLLM(extractedText, fileName, fileType, modelId, signal);
       llmAnalysis = result.llmAnalysis;
       tokensUsed = result.tokensUsed;
 
       cleanupTempFile(filePath);
+
+      onProgress?.({ type: 'progress', phase: 'complete', percent: 100, message: 'File processed successfully' });
 
       return {
         fileName,
@@ -593,6 +631,8 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
 
 
     // Only reach here if ragEnabled = true
+    onProgress?.({ type: 'progress', phase: 'analyzing', percent: 20, message: 'Preparing file for RAG storage...' });
+
     llmAnalysis = `File: ${fileName} (${fileType})
 
 Content length: ${extractedText.length} characters
@@ -606,13 +646,22 @@ File ready for queries.`;
 
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // 3. Store in RAG — now returns { ragId, embedTokens }
-    const saveResult = await saveFileToRAG(fileName, fileType, extractedText, llmAnalysis, userId, topicId, signal, ragEnabled, 'openrouter');
+    // 3. Store in RAG — wrap onProgress to map embedding 0-100% → overall 30-95%
+    onProgress?.({ type: 'progress', phase: 'embedding', percent: 30, message: 'Embedding file content...' });
+    const embedOnProgress = onProgress ? (data) => {
+      if (data.type === 'progress') {
+        const mapped = 30 + Math.round((data.percent / 100) * 65);
+        onProgress({ ...data, percent: Math.min(mapped, 95) });
+      }
+    } : null;
+    const saveResult = await saveFileToRAG(fileName, fileType, extractedText, llmAnalysis, userId, topicId, signal, ragEnabled, 'openrouter', embedOnProgress);
     const ragId = saveResult.ragId;
     tokensUsed = saveResult.embedTokens;  // ← actual embedding token cost
 
     // 4. Cleanup temp file
     cleanupTempFile(filePath);
+
+    onProgress?.({ type: 'progress', phase: 'complete', percent: 100, message: 'File processed successfully' });
 
     console.log(`[FileUpload] Success: ${fileName} analyzed and stored (tokens: ${tokensUsed})`);
 
@@ -889,6 +938,36 @@ const saveGeneratedFile = async (userId, topicId, fileName, content, fileType) =
   } catch (err) {
     console.error('[saveGeneratedFile] Failed:', err);
     return null;
+  }
+};
+
+/**
+ * Clean up orphaned RAG entries when ZIP processing is interrupted
+ * Deletes from uploaded_files (cascades to rag_chunks) and uploaded_files_rag
+ */
+const cleanupOrphanedRagEntries = async (ragIds, fileIds) => {
+  if (!ragIds.length && !fileIds.length) return;
+
+  try {
+    if (fileIds.length) {
+      const { error } = await supabase
+        .from('uploaded_files')
+        .delete()
+        .in('id', fileIds);
+      if (error) console.warn('[Cleanup] Failed to delete uploaded_files:', error.message);
+    }
+
+    if (ragIds.length) {
+      const { error } = await supabase
+        .from('uploaded_files_rag')
+        .delete()
+        .in('id', ragIds);
+      if (error) console.warn('[Cleanup] Failed to delete uploaded_files_rag:', error.message);
+    }
+
+    console.log(`[Cleanup] Removed ${ragIds.length} RAG + ${fileIds.length} file orphaned records`);
+  } catch (err) {
+    console.warn('[Cleanup] Error during orphan cleanup:', err.message);
   }
 };
 

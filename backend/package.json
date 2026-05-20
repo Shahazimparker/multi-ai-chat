@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Node.js backend for MultiAI Chat Platform",
   "main": "server.js",
+  "nodemonConfig": {
+    "ignore": ["uploads/*"]
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",

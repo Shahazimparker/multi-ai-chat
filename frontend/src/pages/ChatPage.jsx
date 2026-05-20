@@ -32,6 +32,7 @@ const ChatPage = () => {
 
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingImage, setPendingImage] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
@@ -151,6 +152,8 @@ const ChatPage = () => {
       let topicIdToUse = activeTopic?.id || null;
 
       if (fileToUpload) {
+        setUploadProgress(0);
+
         // Show uploading status — preserve text if user typed something
         setMessages(prev => {
           const updated = [...prev];
@@ -168,12 +171,104 @@ const ChatPage = () => {
         formData.append('ragEnabled', ragEnabled);
         if (topicIdToUse) formData.append('topicId', topicIdToUse);
 
-        const uploadRes = await api.post('/upload/file', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-          signal: controller.signal,
+        // ── XHR-based upload with SSE progress streaming ──
+        const baseUrl = process.env.NODE_ENV === 'production'
+          ? 'https://multi-ai-chat-backend.vercel.app/api'
+          : 'http://localhost:5000/api';
+        const authTokenForUpload =
+          localStorage.getItem('auth_token') ||
+          sessionStorage.getItem('auth_token');
+
+        const uploadResult = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', `${baseUrl}/upload/file`);
+          xhr.timeout = 600000; // 10 minutes — large ZIPs take time
+          if (authTokenForUpload) xhr.setRequestHeader('Authorization', `Bearer ${authTokenForUpload}`);
+
+          // Upload byte progress
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              const pct = Math.round((e.loaded / e.total) * 100);
+              setUploadProgress(pct);
+            }
+          };
+
+          // Incremental SSE parsing via readystatechange — progress (processing) + error/done
+          let parsedLen = 0;
+          xhr.onreadystatechange = () => {
+            if (xhr.readyState === 3 || xhr.readyState === 4) {
+              const chunk = xhr.responseText.substring(parsedLen);
+              parsedLen = xhr.responseText.length;
+              const lines = chunk.split('\n');
+              for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  if (data.type === 'error') {
+                    window.__uploadSseError = data.error;
+                  }
+                } catch (e) { /* ignore parse errors on partial lines */ }
+              }
+            }
+          };
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              // Check if an SSE error event was received
+              const sseError = window.__uploadSseError;
+              window.__uploadSseError = null;
+
+              // Find last 'done' SSE event for the result
+              const allLines = xhr.responseText.split('\n');
+              let result = null;
+              let lastError = null;
+              for (const line of allLines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  if (data.type === 'done') result = data;
+                  if (data.type === 'error') lastError = data.error;
+                } catch (e) {}
+              }
+              if (sseError || lastError) {
+                reject(new Error(sseError || lastError || 'Upload failed'));
+              } else {
+                resolve(result || { fileName: fileName || 'unknown' });
+              }
+            } else {
+              // Try to extract error: SSE event or JSON response
+              let errMsg = 'Upload failed';
+              try {
+                // Try JSON first (pre-SSE errors like unsupported type, auth)
+                const json = JSON.parse(xhr.responseText);
+                if (json.error) errMsg = json.error;
+              } catch (_) {
+                // Fallback to SSE event parsing
+                for (const line of xhr.responseText.split('\n')) {
+                  if (!line.startsWith('data: ')) continue;
+                  try {
+                    const data = JSON.parse(line.slice(6));
+                    if (data.type === 'error') errMsg = data.error;
+                  } catch (e) {}
+                }
+              }
+              reject(new Error(errMsg));
+            }
+          };
+
+          xhr.onerror = () => reject(new Error('Network error'));
+          xhr.ontimeout = () => reject(new Error('Upload timed out. Try a smaller file.'));
+          xhr.onabort = () => reject(new DOMException('Aborted', 'AbortError'));
+
+          if (controller.signal) {
+            controller.signal.addEventListener('abort', () => xhr.abort());
+          }
+
+          xhr.send(formData);
         });
 
-        setUploadedFiles(prev => [...prev, uploadRes.data]);
+        setUploadedFiles(prev => [...prev, uploadResult]);
+        setTimeout(() => { setUploadProgress(0); }, 5000);
 
         // Update user message to show upload complete — preserve text
         setMessages(prev => {
@@ -190,8 +285,8 @@ const ChatPage = () => {
         // and uses SEARCH_FILES / GET_FILE tools to access content on demand
         // Preserve user's original text + append file reference (was overwriting before!)
         finalMessage = finalMessage
-          ? `${finalMessage}\n[File uploaded: ${uploadRes.data.fileName}]`
-          : `[File uploaded: ${uploadRes.data.fileName}]`;
+          ? `${finalMessage}\n[File uploaded: ${uploadResult.fileName}]`
+          : `[File uploaded: ${uploadResult.fileName}]`;
       }
 
       const apiUrl = process.env.NODE_ENV === 'production'
@@ -337,6 +432,7 @@ const ChatPage = () => {
       // failedMessage kept so retry can use it
     } finally {
       setLoading(false);
+      setUploadProgress(0);
       abortControllerRef.current = null;
     }
   }, [model, activeTopic, memoryMode, historyLimit, ragEnabled, providerModelId, refreshTokenStats]);
@@ -463,6 +559,17 @@ const ChatPage = () => {
         {/* Token bar */}
         <TokenBar />
 
+        {/* AI Responding Animation - Floating Orbs (outside messages-area to avoid mobile fixed-position issues) */}
+        {loading && (
+          <div className="ai-loading-overlay">
+            <div className="floating-orbs">
+              <div className="float-orb" />
+              <div className="float-orb" />
+              <div className="float-orb" />
+            </div>
+          </div>
+        )}
+
         {/* Messages area */}
         <div className="messages-area" ref={messagesAreaRef} onScroll={handleScroll}>
 
@@ -481,23 +588,22 @@ const ChatPage = () => {
             messages.map((msg, i) => <MessageBubble key={i} message={msg} />)
           )}
 
+          {/* Upload progress bar */}
+          {uploadProgress > 0 && (
+            <div className="upload-progress-bar">
+              <div className="upload-progress-track">
+                <div className="upload-progress-fill" style={{ width: `${uploadProgress}%` }} />
+              </div>
+              <span className="upload-progress-label">{uploadProgress}%</span>
+            </div>
+          )}
+
           {/* Typing indicator — only show when no streaming message exists yet */}
           {loading && !isStreaming && (
             <div className="message-row assistant">
               <div className="msg-avatar assistant"><Loader2 size={14} className="spin" /></div>
               <div className="msg-bubble assistant typing-indicator">
                 <span /><span /><span />
-              </div>
-            </div>
-          )}
-
-          {/* AI Responding Animation - Floating Orbs */}
-          {loading && (
-            <div className="ai-loading-overlay">
-              <div className="floating-orbs">
-                <div className="float-orb" />
-                <div className="float-orb" />
-                <div className="float-orb" />
               </div>
             </div>
           )}
@@ -613,7 +719,7 @@ const ChatPage = () => {
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              placeholder={model ? `Message ${model.label}…` : 'Select a model first…'}
+              placeholder={model ? 'Ask me anything' : 'Select a model first…'}
               disabled={!model}
               rows={1}
               onPaste={handlePaste}

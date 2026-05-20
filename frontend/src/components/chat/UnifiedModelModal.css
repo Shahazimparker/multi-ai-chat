@@ -248,3 +248,42 @@
 .spin {
   animation: spin 1s linear infinite;
 }
+
+/* ── Light theme overrides ── */
+:root[data-theme="light"] .unified-modal {
+  background: #ffffff;
+  border-color: rgba(0,0,0,0.12);
+  box-shadow: 0 24px 70px rgba(0,0,0,0.15);
+}
+:root[data-theme="light"] .unified-modal-header p {
+  color: rgba(0,0,0,0.45);
+}
+:root[data-theme="light"] .unified-modal-header button {
+  background: rgba(0,0,0,0.05);
+  border-color: rgba(0,0,0,0.1);
+  color: #1e293b;
+}
+:root[data-theme="light"] .unified-search {
+  background: rgba(0,0,0,0.04);
+  border-color: rgba(0,0,0,0.1);
+}
+:root[data-theme="light"] .unified-search input {
+  color: #1e293b;
+}
+:root[data-theme="light"] .unified-model-option {
+  color: rgba(0,0,0,0.75);
+}
+:root[data-theme="light"] .unified-model-option:hover {
+  background: rgba(99,102,241,0.1);
+  border-color: rgba(99,102,241,0.25);
+  color: #1e293b;
+}
+:root[data-theme="light"] .unified-model-option em {
+  color: rgba(0,0,0,0.38);
+}
+:root[data-theme="light"] .unified-empty {
+  color: rgba(0,0,0,0.45);
+}
+:root[data-theme="light"] .unified-error {
+  color: #dc2626;
+}
