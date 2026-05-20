@@ -491,6 +491,18 @@ const ChatPage = () => {
             </div>
           )}
 
+          {/* AI Responding Animation - Big Circle */}
+          {loading && (
+            <div className="ai-loading-overlay">
+              <div className="ai-loading-circle">
+                <div className="ai-loading-ring ring-1"></div>
+                <div className="ai-loading-ring ring-2"></div>
+                <div className="ai-loading-ring ring-3"></div>
+                <div className="ai-loading-core"></div>
+              </div>
+            </div>
+          )}
+
           <div ref={bottomRef} />
         </div>
 

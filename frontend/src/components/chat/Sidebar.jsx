@@ -115,6 +115,18 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
     }
   }, []);
 
+  const handleArtifactDelete = useCallback(async (e, art) => {
+    e.stopPropagation();
+    if (!window.confirm(`Delete "${art.name}"? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/upload/${art.id}`);
+      setArtifacts(prev => prev.filter(a => a.id !== art.id));
+    } catch (err) {
+      console.error('[Artifact] Delete failed:', err);
+      alert('Failed to delete file');
+    }
+  }, []);
+
   // Fetch user's uploaded files (cross-chat) when component mounts or refreshTrigger changes
   useEffect(() => {
     if (!user) return;
@@ -239,7 +251,7 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
                     {editing !== topic.id && (
                       <div className="topic-actions">
                         <button onClick={e => startEdit(e, topic)} title="Rename"><Pencil size={12}/></button>
-                        <button onClick={e => handleDelete(e, topic.id)} title="Delete"><Trash2 size={12}/></button>
+                        <button className="topic-del-btn" onClick={e => handleDelete(e, topic.id)} title="Delete"><Trash2 size={12}/></button>
                       </div>
                     )}
                   </div>
@@ -281,13 +293,22 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
                       <span className="artifact-name">{art.name}</span>
                       <span className="artifact-size">{art.size}</span>
                     </div>
-                    <button
-                      className="artifact-dl-btn"
-                      onClick={e => handleArtifactDownload(e, art)}
-                      title="Download"
-                    >
-                      <Download size={12} />
-                    </button>
+                    <div className="artifact-actions">
+                      <button
+                        className="artifact-dl-btn"
+                        onClick={e => handleArtifactDownload(e, art)}
+                        title="Download"
+                      >
+                        <Download size={12} />
+                      </button>
+                      <button
+                        className="artifact-del-btn"
+                        onClick={e => handleArtifactDelete(e, art)}
+                        title="Delete"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
@@ -316,9 +337,33 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
                 >
                   <MessageSquare size={14} className="topic-icon" />
                   <div className="topic-content">
-                    <span className="topic-title">{topic.title}</span>
-                    <span className="topic-model">{topic.model}</span>
+                    {editing === topic.id ? (
+                      <div className="edit-row" onClick={e => e.stopPropagation()}>
+                        <input
+                          value={editVal}
+                          onChange={e => setEditVal(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') saveEdit(topic.id);
+                            if (e.key === 'Escape') setEditing(null);
+                          }}
+                          autoFocus
+                        />
+                        <button onClick={() => saveEdit(topic.id)}><Check size={12}/></button>
+                        <button onClick={() => setEditing(null)}><X size={12}/></button>
+                      </div>
+                    ) : (
+                      <>
+                        <span className="topic-title">{topic.title}</span>
+                        <span className="topic-model">{topic.model}</span>
+                      </>
+                    )}
                   </div>
+                  {editing !== topic.id && (
+                    <div className="topic-actions">
+                      <button onClick={e => startEdit(e, topic)} title="Rename"><Pencil size={12}/></button>
+                      <button className="topic-del-btn" onClick={e => handleDelete(e, topic.id)} title="Delete"><Trash2 size={12}/></button>
+                    </div>
+                  )}
                 </div>
               ))
             )}

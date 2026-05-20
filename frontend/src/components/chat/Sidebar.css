@@ -218,6 +218,7 @@
   transition: color 0.15s, background 0.15s;
 }
 .topic-actions button:hover { color: #fff; background: rgba(255,255,255,0.1); }
+.topic-actions button.topic-del-btn:hover { color: #ef4444; background: rgba(239,68,68,0.15); }
 
 .edit-row { display:flex; gap:4px; align-items:center; width:100%; }
 .edit-row input {
@@ -360,6 +361,37 @@
   background: rgba(167,139,250,0.12);
 }
 
+/* ── Artifact actions wrapper ──────────────── */
+.artifact-actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ── Artifact delete button ────────────────── */
+.artifact-del-btn {
+  background: none;
+  border: none;
+  color: var(--sidebar-text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.artifact-item:hover .artifact-del-btn {
+  opacity: 1;
+}
+.artifact-del-btn:hover {
+  color: #ef4444;
+  background: rgba(239,68,68,0.12);
+}
+
 /* ── Divider ─────────────────────────────────── */
 .sidebar-divider {
   height: 1px;
@@ -373,17 +405,49 @@
   padding: 4px 8px 0;
 }
 
-/* Force black text for recent chats in light mode */
-:root[data-theme="light"] .sidebar-recent-section .topic-title {
-  color: rgba(15, 23, 42, 0.95) !important;
+/* Force dark text for sidebar items in light mode */
+:root[data-theme="light"] .topic-title {
+  color: rgba(15, 23, 42, 0.88) !important;
 }
 
-:root[data-theme="light"] .sidebar-recent-section .topic-model {
-  color: rgba(51, 65, 85, 0.85) !important;
+:root[data-theme="light"] .topic-model {
+  color: rgba(51, 65, 85, 0.72) !important;
 }
 
-:root[data-theme="light"] .sidebar-recent-section .topic-icon {
+:root[data-theme="light"] .topic-icon {
+  color: rgba(71, 85, 105, 0.7) !important;
+}
+
+:root[data-theme="light"] .topic-actions button {
   color: rgba(71, 85, 105, 0.8) !important;
+}
+:root[data-theme="light"] .topic-actions button:hover {
+  color: rgba(15, 23, 42, 0.95) !important;
+  background: rgba(15, 23, 42, 0.08) !important;
+}
+:root[data-theme="light"] .topic-actions button.topic-del-btn:hover {
+  color: #dc2626 !important;
+  background: rgba(220,38,38,0.12) !important;
+}
+
+:root[data-theme="light"] .artifact-name {
+  color: rgba(15, 23, 42, 0.88) !important;
+}
+
+:root[data-theme="light"] .artifact-size {
+  color: rgba(51, 65, 85, 0.72) !important;
+}
+
+:root[data-theme="light"] .artifact-icon {
+  color: rgba(59, 130, 246, 0.7) !important;
+}
+
+:root[data-theme="light"] .sidebar-empty-msg {
+  color: rgba(71, 85, 105, 0.85) !important;
+}
+
+:root[data-theme="light"] .sidebar-section-label {
+  color: rgba(71, 85, 105, 0.85) !important;
 }
 
 /* ── User footer ─────────────────────────────── */

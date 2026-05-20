@@ -78,6 +78,12 @@
   border: 1px solid rgba(245, 158, 11, 0.3);
 }
 
+:root[data-theme="light"] .model-badge.paid {
+  background: rgba(245, 158, 11, 0.15);
+  color: #b45309;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
 .model-badge.sm {
   font-size: 0.65rem;
   padding: 1px 6px;
