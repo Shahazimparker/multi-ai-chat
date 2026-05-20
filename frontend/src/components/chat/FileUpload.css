@@ -12,10 +12,10 @@
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.12);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
   border-radius: 16px;
-  color: #e0d7ff;
+  color: var(--text-secondary);
   font-size: 0.85rem;
   font-family: 'Inter', sans-serif;
   cursor: pointer;
@@ -23,8 +23,8 @@
 }
 
 .upload-trigger:hover {
-  background: rgba(255,255,255,0.12);
-  border-color: rgba(124,58,237,0.44);
+  background: var(--bg-hover);
+  border-color: var(--border-hover);
   transform: translateY(-1px);
 }
 
@@ -36,15 +36,15 @@
 .upload-input-wrapper {
   position: relative;
   padding: 12px;
-  background: rgba(255,255,255,0.04);
-  border: 1px dashed rgba(255,255,255,0.14);
+  background: var(--bg-input);
+  border: 1px dashed var(--border-primary);
   border-radius: 16px;
   text-align: center;
 }
 
 .file-label {
   display: block;
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--text-tertiary);
   font-size: 0.86rem;
   cursor: pointer;
   padding: 10px;
@@ -58,7 +58,7 @@
 
 .files-count {
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -100,7 +100,7 @@
 .delete-file {
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--text-tertiary);
   cursor: pointer;
   padding: 2px;
   border-radius: 4px;
@@ -121,11 +121,12 @@
   background: transparent;
   border: none;
   padding: 0;
+  color: var(--text-secondary);
 }
 
 .upload-trigger.icon-pin:hover {
   background: rgba(167, 139, 250, 0.15);
-  color: #c4b5fd;
+  color: var(--accent-purple);
 }
 
 .spin {
