@@ -341,17 +341,19 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
 
       const fileVector = chunkVectors.find(v => v !== null) || null;
 
-      const { data, error: ragError } = await supabase
+      const { data: ragData, error: ragError } = await supabase
         .rpc('insert_rag_document', {
           p_user_id: userId, p_topic_id: topicId || null,
           p_file_name: fileName, p_file_hash: fileHash,
           p_file_type: fileType, p_original_content: sanitizedContent,
           p_llm_analysis: sanitizedAnalysis, p_embedding: fileVector,
-        })
-        .select('id').single();
+          p_original_file_b64: fileBuffer ? fileBuffer.toString('base64') : null,
+        });
 
       if (ragError) throw ragError;
-      ragRecord = data;
+      // RPC returns SETOF uuid (scalar UUIDs directly), extract the first one
+      const insertedId = Array.isArray(ragData) ? ragData[0] : ragData;
+      ragRecord = { id: insertedId };
 
       if (chunks.length > 1) {
         const { data: fr, error: fileErr } = await supabase
@@ -373,11 +375,6 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
           if (chunkErr) console.warn(`[FileUpload] rag_chunks error: ${chunkErr.message}`);
           else { chunksStored = true; console.log(`[FileUpload] Stored ${chunks.length} chunks for: ${fileName}`); }
         }
-      }
-
-      if (fileBuffer && ragRecord?.id) {
-        try { await supabase.from('uploaded_files_rag').update({ original_file_data: fileBuffer }).eq('id', ragRecord.id); }
-        catch (binErr) { console.warn(`[FileUpload] Binary store failed: ${binErr.message}`); }
       }
 
       const codeExts = ['js','ts','py','java','cpp','go','rb'];

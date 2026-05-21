@@ -372,14 +372,18 @@ router.get('/download/:fileId', requireAuth, async (req, res) => {
     if (fileData.original_file_data) {
       const mime = getMimeType(fileName);
       const bin = fileData.original_file_data;
+      console.log(`[Download] fileId=${fileId} fileName=${fileName} binType=${typeof bin} binLen=${bin?.length || bin?.byteLength || '?'} isString=${typeof bin === 'string'} first100=${typeof bin === 'string' ? bin.slice(0, 100) : 'NOT STRING'}`);
       res.setHeader('Content-Type', mime);
       res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
       // bin can be base64 string, Buffer, or bytea hex — normalize
       if (typeof bin === 'string' && /^[A-Za-z0-9+/=]+$/.test(bin)) {
+        console.log('[Download] Decoding as base64');
         res.send(Buffer.from(bin, 'base64'));
       } else if (typeof bin === 'string' && bin.startsWith('\\x')) {
+        console.log('[Download] Decoding as hex');
         res.send(Buffer.from(bin.slice(2), 'hex'));
       } else {
+        console.log('[Download] Using as raw bytes, isBuffer:', Buffer.isBuffer(bin), 'isArray:', Array.isArray(bin));
         res.send(Buffer.from(bin));
       }
       return;

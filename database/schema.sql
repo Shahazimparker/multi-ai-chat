@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS uploaded_files_rag (
 
 -- ─────────────────────────────────────────────
 -- FUNCTION: insert_rag_document (Insert into uploaded_files_rag)
+-- Also stores original binary file data via base64 decode
 -- ─────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION insert_rag_document(
   p_user_id           UUID,
@@ -167,15 +168,20 @@ CREATE OR REPLACE FUNCTION insert_rag_document(
   p_file_type         TEXT,
   p_original_content  TEXT,
   p_llm_analysis      TEXT,
-  p_embedding         vector(1536)
+  p_embedding         vector(1536),
+  p_original_file_b64 TEXT DEFAULT NULL
 )
 RETURNS TABLE (id UUID)
 LANGUAGE plpgsql AS $$
+DECLARE
+  v_id UUID;
 BEGIN
-  RETURN QUERY
-  INSERT INTO uploaded_files_rag (user_id, topic_id, file_name, file_hash, file_type, original_content, llm_analysis, embedding)
-  VALUES (p_user_id, p_topic_id, p_file_name, p_file_hash, p_file_type, p_original_content, p_llm_analysis, p_embedding)
-  RETURNING uploaded_files_rag.id;
+  INSERT INTO uploaded_files_rag (user_id, topic_id, file_name, file_hash, file_type, original_content, llm_analysis, embedding, original_file_data)
+  VALUES (p_user_id, p_topic_id, p_file_name, p_file_hash, p_file_type, p_original_content, p_llm_analysis, p_embedding,
+    CASE WHEN p_original_file_b64 IS NOT NULL THEN decode(p_original_file_b64, 'base64') ELSE NULL END)
+  RETURNING uploaded_files_rag.id INTO v_id;
+
+  RETURN QUERY SELECT v_id;
 END;
 $$;
 

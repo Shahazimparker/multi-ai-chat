@@ -23,19 +23,23 @@ COMMENT ON SCHEMA "public" IS 'standard public schema';
 
 
 
-CREATE OR REPLACE FUNCTION "public"."insert_rag_document"("p_user_id" "uuid", "p_topic_id" "uuid", "p_file_name" "text", "p_file_hash" "text", "p_file_type" "text", "p_original_content" "text", "p_llm_analysis" "text", "p_embedding" "public"."vector") RETURNS TABLE("id" "uuid")
+CREATE OR REPLACE FUNCTION "public"."insert_rag_document"("p_user_id" "uuid", "p_topic_id" "uuid", "p_file_name" "text", "p_file_hash" "text", "p_file_type" "text", "p_original_content" "text", "p_llm_analysis" "text", "p_embedding" "public"."vector", "p_original_file_b64" "text" DEFAULT NULL::"text") RETURNS TABLE("id" "uuid")
     LANGUAGE "plpgsql"
     AS $$
+DECLARE
+  v_id UUID;
 BEGIN
-  RETURN QUERY
-  INSERT INTO uploaded_files_rag (user_id, topic_id, file_name, file_hash, file_type, original_content, llm_analysis, embedding)
-  VALUES (p_user_id, p_topic_id, p_file_name, p_file_hash, p_file_type, p_original_content, p_llm_analysis, p_embedding)
-  RETURNING uploaded_files_rag.id;
+  INSERT INTO uploaded_files_rag (user_id, topic_id, file_name, file_hash, file_type, original_content, llm_analysis, embedding, original_file_data)
+  VALUES (p_user_id, p_topic_id, p_file_name, p_file_hash, p_file_type, p_original_content, p_llm_analysis, p_embedding,
+    CASE WHEN p_original_file_b64 IS NOT NULL THEN decode(p_original_file_b64, 'base64') ELSE NULL END)
+  RETURNING uploaded_files_rag.id INTO v_id;
+
+  RETURN QUERY SELECT v_id;
 END;
 $$;
 
 
-ALTER FUNCTION "public"."insert_rag_document"("p_user_id" "uuid", "p_topic_id" "uuid", "p_file_name" "text", "p_file_hash" "text", "p_file_type" "text", "p_original_content" "text", "p_llm_analysis" "text", "p_embedding" "public"."vector") OWNER TO "postgres";
+ALTER FUNCTION "public"."insert_rag_document"("p_user_id" "uuid", "p_topic_id" "uuid", "p_file_name" "text", "p_file_hash" "text", "p_file_type" "text", "p_original_content" "text", "p_llm_analysis" "text", "p_embedding" "public"."vector", "p_original_file_b64" "text") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."match_documents"("query_embedding" "public"."vector", "match_threshold" double precision DEFAULT 0.4, "match_count" integer DEFAULT 5) RETURNS TABLE("id" "uuid", "title" "text", "content" "text", "similarity" double precision)
@@ -687,9 +691,9 @@ GRANT USAGE ON SCHEMA "public" TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."insert_rag_document"("p_user_id" "uuid", "p_topic_id" "uuid", "p_file_name" "text", "p_file_hash" "text", "p_file_type" "text", "p_original_content" "text", "p_llm_analysis" "text", "p_embedding" "public"."vector") TO "anon";
-GRANT ALL ON FUNCTION "public"."insert_rag_document"("p_user_id" "uuid", "p_topic_id" "uuid", "p_file_name" "text", "p_file_hash" "text", "p_file_type" "text", "p_original_content" "text", "p_llm_analysis" "text", "p_embedding" "public"."vector") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."insert_rag_document"("p_user_id" "uuid", "p_topic_id" "uuid", "p_file_name" "text", "p_file_hash" "text", "p_file_type" "text", "p_original_content" "text", "p_llm_analysis" "text", "p_embedding" "public"."vector") TO "service_role";
+GRANT ALL ON FUNCTION "public"."insert_rag_document"("p_user_id" "uuid", "p_topic_id" "uuid", "p_file_name" "text", "p_file_hash" "text", "p_file_type" "text", "p_original_content" "text", "p_llm_analysis" "text", "p_embedding" "public"."vector", "p_original_file_b64" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."insert_rag_document"("p_user_id" "uuid", "p_topic_id" "uuid", "p_file_name" "text", "p_file_hash" "text", "p_file_type" "text", "p_original_content" "text", "p_llm_analysis" "text", "p_embedding" "public"."vector", "p_original_file_b64" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."insert_rag_document"("p_user_id" "uuid", "p_topic_id" "uuid", "p_file_name" "text", "p_file_hash" "text", "p_file_type" "text", "p_original_content" "text", "p_llm_analysis" "text", "p_embedding" "public"."vector", "p_original_file_b64" "text") TO "service_role";
 
 
 

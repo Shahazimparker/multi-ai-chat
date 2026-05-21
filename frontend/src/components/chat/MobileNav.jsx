@@ -70,7 +70,10 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
             const url = URL.createObjectURL(new Blob([res.data]));
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${art.name}.txt`;
+            // Use Content-Disposition filename from server if available
+            const cd = res.headers?.['content-disposition'];
+            const match = cd && cd.match(/filename="?(.+?)"?$/);
+            a.download = match ? match[1] : art.name;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
