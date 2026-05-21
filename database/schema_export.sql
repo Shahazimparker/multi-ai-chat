@@ -351,6 +351,7 @@ CREATE TABLE IF NOT EXISTS "public"."uploaded_files_rag" (
     "file_name" "text" NOT NULL,
     "file_type" "text" NOT NULL,
     "original_content" "text",
+    "original_file_data" "bytea",
     "llm_analysis" "text" NOT NULL,
     "metadata" "jsonb",
     "created_at" timestamp with time zone DEFAULT "now"(),
@@ -392,6 +393,7 @@ CREATE TABLE IF NOT EXISTS "public"."users" (
     "used_tokens" integer DEFAULT 0,
     "per_query_limit" integer DEFAULT 2000,
     "session_minutes" integer DEFAULT 60,
+    "locked_until" timestamp with time zone,
     "expires_at" timestamp with time zone,
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"()

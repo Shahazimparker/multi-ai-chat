@@ -198,13 +198,37 @@ const MessageBubble = ({ message, onSidebarRefresh }) => {
           const idx = fileCodeBlockIdx.current++;
           const file = message.generatedFiles[idx];
           if (file) {
-            const handlePreview = (f) => {
+            const handlePreview = async (f) => {
               const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
-              window.open(`/upload/preview/${f.file_id}?token=${token}`, '_blank');
+              try {
+                const res = await fetch(`/upload/preview/${f.file_id}`, {
+                  headers: { Authorization: `Bearer ${token}` },
+                });
+                if (!res.ok) return alert('Preview failed');
+                const data = await res.json();
+                const w = window.open('', '_blank');
+                w.document.write(`<pre style="font:14px/1.5 monospace;padding:20px">${data.content}</pre>`);
+                w.document.title = data.file_name;
+              } catch { alert('Preview failed'); }
             };
-            const handleDownload = (f) => {
+            const handleDownload = async (f) => {
               const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
-              window.open(`/upload/download/${f.file_id}?token=${token}`, '_blank');
+              try {
+                const res = await fetch(`/upload/download/${f.file_id}`, {
+                  headers: { Authorization: `Bearer ${token}` },
+                });
+                if (!res.ok) return alert('Download failed');
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                // Use the Content-Disposition filename from server if available
+                const cd = res.headers.get('Content-Disposition');
+                const match = cd && cd.match(/filename="?(.+?)"?$/);
+                a.download = match ? match[1] : (f.file_name || 'file');
+                a.click();
+                URL.revokeObjectURL(url);
+              } catch { alert('Download failed'); }
             };
             return <FileCard file={file} onPreview={handlePreview} onDownload={handleDownload} />;
           }
@@ -234,14 +258,38 @@ const MessageBubble = ({ message, onSidebarRefresh }) => {
     },
   }), [tableCSVList, csvCodeBlocks, message.generatedFiles]);
 
-  // Preview/download helpers for generated files
-  const handleFilePreview = (f) => {
+  // Preview/download helpers for generated files (Auth header, no token in URL)
+  const handleFilePreview = async (f) => {
     const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
-    window.open(`/upload/preview/${f.file_id}?token=${token}`, '_blank');
+    try {
+      const res = await fetch(`/upload/preview/${f.file_id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return alert('Preview failed');
+      const data = await res.json();
+      const w = window.open('', '_blank');
+      w.document.write(`<pre style="font:14px/1.5 monospace;padding:20px">${data.content}</pre>`);
+      w.document.title = data.file_name;
+    } catch { alert('Preview failed'); }
   };
-  const handleFileDownload = (f) => {
+  const handleFileDownload = async (f) => {
     const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
-    window.open(`/upload/download/${f.file_id}?token=${token}`, '_blank');
+    try {
+      const res = await fetch(`/upload/download/${f.file_id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return alert('Download failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      // Use the Content-Disposition filename from server if available
+      const cd = res.headers.get('Content-Disposition');
+      const match = cd && cd.match(/filename="?(.+?)"?$/);
+      a.download = match ? match[1] : (f.file_name || 'file');
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { alert('Download failed'); }
   };
 
   return (

@@ -7,16 +7,25 @@
 
 const bcrypt = require('bcryptjs');
 const supabase = require('../config/supabase');
+const { clearFailedAttempts } = require('./auth.controller');
 
 // ── GET /api/admin/users — list all users ──────────────────
 const getUsers = async (req, res) => {
   const { data, error } = await supabase
     .from('users')
-    .select('id, email, username, role, is_active, total_tokens, used_tokens, per_query_limit, session_minutes, expires_at, created_at')
+    .select('id, email, username, role, is_active, locked_until, total_tokens, used_tokens, per_query_limit, session_minutes, expires_at, created_at')
     .order('created_at', { ascending: false });
 
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ users: data });
+
+  // Attach is_login_locked flag — locked if locked_until is in the future
+  const now = new Date();
+  const usersWithLock = (data || []).map(u => ({
+    ...u,
+    is_login_locked: !!(u.locked_until && new Date(u.locked_until) > now),
+  }));
+
+  res.json({ users: usersWithLock });
 };
 
 // ── POST /api/admin/users — create new user ────────────────
@@ -167,4 +176,53 @@ const getAnalytics = async (req, res) => {
   }
 };
 
-module.exports = { getUsers, createUser, updateUser, deleteUser, resetTokens, getAnalytics };
+// ── POST /api/admin/users/:id/unlock-login — clear brute-force lock ──
+const unlockLogin = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .update({ locked_until: null })
+      .eq('id', id)
+      .select('username')
+      .single();
+
+    if (error || !user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Also clear in-memory failMap
+    clearFailedAttempts(user.username);
+
+    res.json({ message: `Login unlocked for ${user.username}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ── POST /api/admin/users/:id/lock-login — manually lock account (persisted to DB) ──
+const lockLogin = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const lockDurationMs = 15 * 60 * 1000; // 15 minutes
+    const lockedUntil = new Date(Date.now() + lockDurationMs).toISOString();
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .update({ locked_until: lockedUntil })
+      .eq('id', id)
+      .select('username')
+      .single();
+
+    if (error || !user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({ message: `Login locked for ${user.username} (15 min)` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { getUsers, createUser, updateUser, deleteUser, resetTokens, getAnalytics, unlockLogin, lockLogin };

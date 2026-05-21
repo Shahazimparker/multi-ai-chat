@@ -321,6 +321,30 @@
   color: rgba(71, 85, 105, 0.8);
 }
 
+.upload-cancel-btn {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.2s, background 0.2s;
+}
+.upload-cancel-btn:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+:root[data-theme="light"] .upload-cancel-btn {
+  color: rgba(71, 85, 105, 0.5);
+}
+:root[data-theme="light"] .upload-cancel-btn:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+
 .spin {
   animation: spin 1s linear infinite;
 }

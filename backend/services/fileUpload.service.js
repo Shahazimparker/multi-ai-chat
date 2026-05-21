@@ -176,11 +176,14 @@ const isSafeZipEntryName = (entryName) => {
  */
 const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, fileName = '') => {
   try {
+    if (signal?.aborted) return '';
+
     if (fileType === 'txt' || fileType === 'csv') {
       return buffer.toString('utf-8');
     }
 
     if (fileType === 'xlsx') {
+      if (signal?.aborted) return '';
       const XLSX = require('xlsx');
       const workbook = XLSX.read(buffer, { type: 'buffer' });
       const sheets = [];
@@ -193,6 +196,7 @@ const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, f
     }
 
     if (fileType === 'image') {
+      if (signal?.aborted) return '';
       const base64Image = buffer.toString('base64');
       const ext = path.extname(fileName).toLowerCase();
       const mimeTypeMap = {
@@ -233,11 +237,13 @@ const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, f
     }
 
     if (fileType === 'pdf') {
+      if (signal?.aborted) return '';
       const data = await pdfParse(buffer);
       return data.text;
     }
 
     if (fileType === 'doc') {
+      if (signal?.aborted) return '';
       const result = await mammoth.extractRawText({ buffer });
       return result.value;
     }
@@ -248,6 +254,7 @@ const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, f
 
     // 'other' — best-effort text extraction for unknown file types
     if (fileType === 'other') {
+      if (signal?.aborted) return '';
       // Try UTF-8; if binary, return placeholder
       try {
         const text = buffer.toString('utf-8');
@@ -303,128 +310,103 @@ File ready for queries.`,
  * Store file + LLM response in RAG (globally, not per-topic)
  * This allows RAG to retrieve past file analyses for any query
  */
-const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userId, topicId, signal = null, ragEnabled = true, provider = 'openrouter', onProgress = null) => {
+const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userId, topicId, signal = null, ragEnabled = true, provider = 'openrouter', onProgress = null, fileBuffer = null) => {
+  let ragRecord = null;
+  let fileRecord = null;
+  let totalEmbedTokens = 0;
+  let chunksStored = false;
+  const fileHash = getFileHash(fileName, fileContent);
   try {
-    const fileHash = getFileHash(fileName, fileContent);
-
-    // Strip null bytes (\u0000) from content to avoid PostgreSQL error
     const sanitizedContent = (fileContent || '').replace(/\0/g, '');
     const sanitizedAnalysis = (llmAnalysis || '').replace(/\0/g, '');
-
     const { embedText } = require('./rag.service');
-    let ragRecord = null;
-    let fileRecord = null;
-    let totalEmbedTokens = 0;  // ← track embedding tokens for this upload
 
     if (ragEnabled) {
-      // ── CHUNKING: Split full content for better embedding coverage ──
       const chunks = chunkContent(sanitizedContent, 2000, 200);
       const chunkVectors = [];
 
       for (let i = 0; i < chunks.length; i++) {
+        if (signal?.aborted) throw new Error('Upload cancelled by user');
         if (onProgress) {
           const pct = Math.round(((i) / Math.max(chunks.length, 1)) * 100);
           onProgress({ type: 'progress', phase: 'embedding', percent: pct, message: `Embedding chunk ${i + 1}/${chunks.length} for ${fileName}` });
         }
         const result = await embedText(chunks[i], 'openrouter', 3, signal, userId);
+        if (signal?.aborted) throw new Error('Upload cancelled by user');
         if (result) {
           chunkVectors.push(result.vector);
           totalEmbedTokens += result.tokensUsed;
-        }
-        // If embedding fails for a chunk, push null to maintain index alignment
-        else chunkVectors.push(null);
+        } else chunkVectors.push(null);
       }
 
-      // Use first valid vector as the file-level embedding (backward compat)
       const fileVector = chunkVectors.find(v => v !== null) || null;
 
       const { data, error: ragError } = await supabase
         .rpc('insert_rag_document', {
-          p_user_id: userId,
-          p_topic_id: topicId || null,
-          p_file_name: fileName,
-          p_file_hash: fileHash,
-          p_file_type: fileType,
-          p_original_content: sanitizedContent,
-          p_llm_analysis: sanitizedAnalysis,
-          p_embedding: fileVector,
+          p_user_id: userId, p_topic_id: topicId || null,
+          p_file_name: fileName, p_file_hash: fileHash,
+          p_file_type: fileType, p_original_content: sanitizedContent,
+          p_llm_analysis: sanitizedAnalysis, p_embedding: fileVector,
         })
-        .select('id')
-        .single();
+        .select('id').single();
 
       if (ragError) throw ragError;
       ragRecord = data;
 
-      // ── Store chunks in rag_chunks for granular search ──
       if (chunks.length > 1) {
-        // Insert into uploaded_files (legacy table) for FK reference from rag_chunks
         const { data: fr, error: fileErr } = await supabase
-          .from('uploaded_files')
-          .insert({
-            user_id: userId,
-            topic_id: topicId,
-            file_name: fileName,
-            file_type: fileType,
-            content_text: sanitizedContent,
-            provider: 'openrouter',
+          .from('uploaded_files').insert({
+            user_id: userId, topic_id: topicId,
+            file_name: fileName, file_type: fileType,
+            content_text: sanitizedContent, provider: 'openrouter',
             embedding: fileVector,
-          })
-          .select('id')
-          .single();
+          }).select('id').single();
 
         if (!fileErr && fr) {
           fileRecord = fr;
-          // Insert each chunk into rag_chunks
-          const chunkRows = chunks.map((text, i) => ({
-            file_id: fileRecord.id,
-            chunk_text: text,
-            provider: 'openrouter',
-            embedding: chunkVectors[i] || fileVector,
-            chunk_index: i,
-          }));
-
           const { error: chunkErr } = await supabase
-            .from('rag_chunks')
-            .insert(chunkRows);
-
-          if (chunkErr) {
-            console.warn(`[FileUpload] Failed to store chunks in rag_chunks: ${chunkErr.message}`);
-          } else {
-            console.log(`[FileUpload] Stored ${chunks.length} chunks in rag_chunks for: ${fileName}`);
-          }
+            .from('rag_chunks').insert(chunks.map((text, i) => ({
+              file_id: fileRecord.id, chunk_text: text,
+              provider: 'openrouter', embedding: chunkVectors[i] || fileVector,
+              chunk_index: i,
+            })));
+          if (chunkErr) console.warn(`[FileUpload] rag_chunks error: ${chunkErr.message}`);
+          else { chunksStored = true; console.log(`[FileUpload] Stored ${chunks.length} chunks for: ${fileName}`); }
         }
       }
 
-      // Store in code_files if code (only when RAG is enabled)
-      const codeExtensions = ['js', 'ts', 'py', 'java', 'cpp', 'go', 'rb'];
+      if (fileBuffer && ragRecord?.id) {
+        try { await supabase.from('uploaded_files_rag').update({ original_file_data: fileBuffer }).eq('id', ragRecord.id); }
+        catch (binErr) { console.warn(`[FileUpload] Binary store failed: ${binErr.message}`); }
+      }
+
+      const codeExts = ['js','ts','py','java','cpp','go','rb'];
       const ext = fileName.split('.').pop().toLowerCase();
-
-      if (codeExtensions.includes(ext)) {
-        await supabase
-          .from('code_files')
-          .delete()
-          .eq('file_name', fileName)
-          .eq('topic_id', topicId);
-
-        await supabase
-          .from('code_files')
-          .insert({
-            user_id: userId,
-            topic_id: topicId,
-            file_name: fileName,
-            file_type: fileType,
-            content: fileContent,
-            language: detectLanguage(fileName),
-            file_hash: fileHash,
-            rag_record_id: ragRecord?.id || null
-          });
+      if (codeExts.includes(ext)) {
+        await supabase.from('code_files').delete().eq('file_name', fileName).eq('topic_id', topicId);
+        await supabase.from('code_files').insert({
+          user_id: userId, topic_id: topicId, file_name: fileName,
+          file_type: fileType, content: fileContent, language: detectLanguage(fileName),
+          file_hash: fileHash, rag_record_id: ragRecord?.id || null,
+        });
       }
 
       console.log(`[FileUpload] Stored in RAG: ${fileName} (hash: ${fileHash}, chunks: ${chunks.length}, embedTokens: ${totalEmbedTokens})`);
+      }
+      return { ragId: ragRecord?.id || null, fileId: fileRecord?.id || null, embedTokens: totalEmbedTokens };
+    } catch (err) {
+      const isAbort = err.message === 'Upload cancelled by user' || err.name === 'AbortError' || err.name === 'CanceledError';
+      if (isAbort) console.log(`[FileUpload] Aborted by user: ${fileName}`);
+      else console.error(`[FileUpload] Failed: ${fileName} - ${err.message}`);
+      // Clean up partial data on abort
+      if (isAbort) {
+      if (ragRecord?.id) {
+        supabase.from('uploaded_files_rag').delete().eq('id', ragRecord.id).then().catch(() => {});
+      }
+      if (fileRecord?.id) {
+        supabase.from('uploaded_files').delete().eq('id', fileRecord.id).then().catch(() => {});
+      }
     }
-    return { ragId: ragRecord?.id || null, fileId: fileRecord?.id || null, embedTokens: totalEmbedTokens };
-  } catch (err) {
-    console.error('[FileUpload] RAG storage failed:', err);
     throw err;
   }
 };
@@ -437,7 +419,12 @@ const mapConcurrent = async (items, concurrency, fn) => {
   const executing = new Set();
 
   for (const [index, item] of items.entries()) {
-    const promise = fn(item, index).then(result => ({ index, result }));
+    const promise = fn(item, index)
+      .then(result => ({ index, result }))
+      .catch(err => {
+        // Swallow to prevent unhandled rejections from concurrent workers
+        return { index, error: err };
+      });
     executing.add(promise);
     promise.finally(() => executing.delete(promise));
 
@@ -450,7 +437,7 @@ const mapConcurrent = async (items, concurrency, fn) => {
   // Wait for all remaining
   const settled = await Promise.allSettled(executing);
   for (const s of settled) {
-    if (s.status === 'fulfilled') results.push(s.value);
+    if (s.status === 'fulfilled' && s.value && !s.value.error) results.push(s.value);
   }
 
   // Re-sort by original index
@@ -500,12 +487,11 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
 
     // Process entries concurrently with bounded concurrency
     const results = await mapConcurrent(entries, CONCURRENCY, async (entry) => {
-      if (signal?.aborted) throw { name: 'AbortError' };
-
       const entryName = normalizeZipEntryName(entry.name);
       const innerType = getSupportedFileType(entryName);
 
       try {
+        if (signal?.aborted) throw { name: 'AbortError' };
         const buffer = await entry.async('nodebuffer');
         const extractedText = await extractTextFromBuffer(buffer, innerType, modelId, signal, entryName);
 
@@ -543,7 +529,8 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
           tokensUsed: saveResult.embedTokens,
         };
       } catch (err) {
-        console.error(`[FileUpload] Error processing ${entryName}:`, err.message);
+        const isAbort = err.name === 'AbortError' || err.name === 'CanceledError' || err?.message === 'Upload cancelled by user';
+        if (!isAbort) console.error(`[FileUpload] Error processing ${entryName}:`, err.message);
         skipped.push(entryName);
         completedCount++;
         onProgress?.({ type: 'progress', phase: 'processing', percent: Math.round((completedCount / total) * 90) + 5, message: `[${completedCount}/${total}] Error: ${entryName}` });
@@ -552,11 +539,22 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
     });
 
     validResults = results.filter(Boolean);
+
+    // If signal was aborted during concurrent processing, clean up orphans
+    if (signal?.aborted) {
+      console.log('[FileUpload] ZIP aborted — cleaning up orphaned RAG entries...');
+      onProgress?.({ type: 'progress', phase: 'error', percent: 0, message: 'Upload cancelled. Cleaning up...' });
+      await cleanupOrphanedRagEntries(savedRagIds, savedFileIds);
+      throw { name: 'AbortError', message: 'Upload cancelled by user' };
+    }
   } catch (err) {
     // On abort/timeout/error, clean up orphaned RAG entries
-    console.error('[FileUpload] ZIP processing interrupted — cleaning up orphaned RAG entries...');
-    onProgress?.({ type: 'progress', phase: 'error', percent: 0, message: 'Upload interrupted. Cleaning up...' });
-    await cleanupOrphanedRagEntries(savedRagIds, savedFileIds);
+    const isAbort = err.name === 'AbortError' || err.message === 'Upload cancelled by user';
+    if (!isAbort) {
+      console.error('[FileUpload] ZIP processing interrupted — cleaning up orphaned RAG entries...');
+      onProgress?.({ type: 'progress', phase: 'error', percent: 0, message: 'Upload interrupted. Cleaning up...' });
+      await cleanupOrphanedRagEntries(savedRagIds, savedFileIds);
+    }
     throw err;
   }
 
@@ -587,6 +585,8 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
  * Main: Process uploaded file
  */
 const processUploadedFile = async (filePath, fileName, fileType, userId, topicId, modelId, signal = null, ragEnabled = true, onProgress = null) => {
+
+  if (signal?.aborted) throw new Error('Upload cancelled by user');
 
   try {
     console.log(`[FileUpload] Processing: ${fileName}`);
@@ -654,7 +654,7 @@ File ready for queries.`;
         onProgress({ ...data, percent: Math.min(mapped, 95) });
       }
     } : null;
-    const saveResult = await saveFileToRAG(fileName, fileType, extractedText, llmAnalysis, userId, topicId, signal, ragEnabled, 'openrouter', embedOnProgress);
+    const saveResult = await saveFileToRAG(fileName, fileType, extractedText, llmAnalysis, userId, topicId, signal, ragEnabled, 'openrouter', embedOnProgress, buffer);
     const ragId = saveResult.ragId;
     tokensUsed = saveResult.embedTokens;  // ← actual embedding token cost
 
@@ -855,7 +855,7 @@ const getFileContentById = async (fileId, userId) => {
 
     const { data, error } = await supabase
       .from('uploaded_files_rag')
-      .select('id, file_name, file_type, original_content, llm_analysis, created_at')
+      .select('id, file_name, file_type, original_content, original_file_data, llm_analysis, created_at')
       .eq('id', fileId)
       .eq('user_id', userId)
       .single();

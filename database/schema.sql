@@ -149,10 +149,11 @@ CREATE TABLE IF NOT EXISTS uploaded_files_rag (
   file_name         TEXT NOT NULL,
   file_hash         TEXT,
   file_type         TEXT,
-  original_content  TEXT,
-  llm_analysis      TEXT,
-  embedding         vector(1536),
-  created_at        TIMESTAMPTZ DEFAULT NOW()
+  original_content     TEXT,
+  original_file_data   BYTEA,
+  llm_analysis         TEXT,
+  embedding            vector(1536),
+  created_at           TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ─────────────────────────────────────────────
@@ -359,3 +360,8 @@ VALUES (
   9999,
   480
 ) ON CONFLICT (email) DO NOTHING;
+
+-- ─────────────────────────────────────────────
+-- ADD: locked_until for brute-force/admin lock persistence
+-- ─────────────────────────────────────────────
+ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ;

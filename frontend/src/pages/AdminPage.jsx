@@ -7,8 +7,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
-import { Users, BarChart2, Plus, Trash2, Edit2, RefreshCw, LogOut, MessageSquare, Zap, ChevronLeft } from 'lucide-react';
+import { Users, BarChart2, Plus, Trash2, Edit2, RefreshCw, LogOut, MessageSquare, Zap, ChevronLeft, Lock, Unlock, Sun, Moon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import api from '../config/api';
 import UserModal from '../components/admin/UserModal';
 import './AdminPage.css';
@@ -17,6 +18,7 @@ const COLORS = ['#7c3aed', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#a78bfa'
 
 const AdminPage = () => {
   const { logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [tab, setTab] = useState('users');   // 'users' | 'analytics'
   const [users, setUsers] = useState([]);
@@ -86,6 +88,17 @@ const AdminPage = () => {
     catch { alert('Reset failed'); }
   };
 
+  const handleUnlockLogin = async (id) => {
+    try { await api.post(`/admin/users/${id}/unlock-login`); loadUsers(); }
+    catch (err) { alert(err.response?.data?.error || 'Unlock failed'); }
+  };
+
+  const handleLockLogin = async (id) => {
+    if (!window.confirm('Lock this user\'s login (simulate 5 failed attempts)?')) return;
+    try { await api.post(`/admin/users/${id}/lock-login`); loadUsers(); }
+    catch (err) { alert(err.response?.data?.error || 'Lock failed'); }
+  };
+
   // Build pie data for model usage
   const modelPieData = analytics
     ? Object.entries(analytics.modelCounts).map(([name, value]) => ({ name, value }))
@@ -123,6 +136,9 @@ const AdminPage = () => {
         </nav>
         <div className="admin-footer-nav">
           <button onClick={() => navigate('/chat')}><ChevronLeft size={15} /> Back to Chat</button>
+          <button onClick={toggleTheme} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
+            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />} {theme === 'dark' ? 'Light' : 'Dark'} Mode
+          </button>
           <button onClick={() => { logout(); navigate('/login'); }} className="logout">
             <LogOut size={14} /> Logout
           </button>
@@ -165,7 +181,10 @@ const AdminPage = () => {
                         <td className="td-bold">{u.username}</td>
                         <td className="td-muted">{u.email}</td>
                         <td><span className={`role-badge ${u.role}`}>{u.role}</span></td>
-                        <td><span className={`status-dot ${u.is_active ? 'on' : 'off'}`}>{u.is_active ? 'Active' : 'Disabled'}</span></td>
+                        <td>
+                          <span className={`status-dot ${u.is_active ? 'on' : 'off'}`}>{u.is_active ? 'Active' : 'Disabled'}</span>
+                          {u.is_login_locked && <span className="lock-badge">🔒 Locked</span>}
+                        </td>
                         <td>{(u.used_tokens || 0).toLocaleString()}</td>
                         <td>{(u.total_tokens || 0).toLocaleString()}</td>
                         <td>{u.per_query_limit}</td>
@@ -174,6 +193,8 @@ const AdminPage = () => {
                         <td>
                           <div className="td-actions">
                             <button title="Edit" onClick={() => setModal({ open: true, user: u })}><Edit2 size={13} /></button>
+                            <button title="Lock Login" onClick={() => handleLockLogin(u.id)} className={u.is_login_locked ? 'lock-on' : ''}><Lock size={13} /></button>
+                            <button title="Unlock Login" onClick={() => handleUnlockLogin(u.id)} className={!u.is_login_locked ? 'unlock-on' : ''}><Unlock size={13} /></button>
                             <button title="Reset Tokens" onClick={() => handleResetTokens(u.id)}><Zap size={13} /></button>
                             <button title="Delete" onClick={() => handleDelete(u.id)} className="del"><Trash2 size={13} /></button>
                           </div>

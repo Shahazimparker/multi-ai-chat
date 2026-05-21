@@ -12,6 +12,8 @@ const { MODELS } = require('../config/models');
 const { getProviderModels } = require('../services/modelCatalog.service');
 const supabase = require('../config/supabase');
 const {
+  MAX_DB_QUERIES,
+  MAX_CONSECUTIVE_ZERO_RESULTS,
   reserveToolLoopBudget,
   ensureBizDbInit,
   buildBizDbDirective,
@@ -260,6 +262,8 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     let billableTokens = 0;
     let dbQueried = false;
     let lastDbResultBlock = '';
+    let consecutiveZeroResults = 0;
+    let dbQueryCount = 0;
     const fetchedSchemaTables = new Set();
 
     const MAX_TOOL_ROUNDS = effectiveDbOnly ? 24 : 6;
@@ -300,6 +304,8 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
         effectiveDbOnly,
         abortController,
         fetchedSchemaTables,
+        consecutiveZeroResults,
+        dbQueryCount,
       });
 
       if (toolResult.handled) {
@@ -307,7 +313,23 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
         totalEmbeddingTokens += toolResult.embedTokens || 0;
         if (toolResult.dbQueried) dbQueried = true;
         if (toolResult.lastDbResultBlock) lastDbResultBlock = toolResult.lastDbResultBlock;
+        consecutiveZeroResults = toolResult.consecutiveZeroResults || 0;
+        if (toolResult.dbQueryCount !== undefined) dbQueryCount = toolResult.dbQueryCount;
         trimOldestToolRounds();
+
+        // Break on 4+ consecutive zero results
+        if (consecutiveZeroResults >= MAX_CONSECUTIVE_ZERO_RESULTS) {
+          finalReply = reply.replace(/\[QUERY_DB\][\s\S]*?(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/g, '').trim() || 'No data found.';
+          console.log(`[Stream Tool] ${MAX_CONSECUTIVE_ZERO_RESULTS} consecutive zero results — breaking tool loop`);
+          break;
+        }
+
+        // Break on max DB queries
+        if (dbQueryCount >= MAX_DB_QUERIES) {
+          if (!finalReply) finalReply = 'Maximum database queries reached.';
+          console.log(`[Stream Tool] Max DB queries (${dbQueryCount}) reached — breaking tool loop`);
+          break;
+        }
         continue;
       }
 
@@ -330,7 +352,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) =
     finalReply = stripToolTags(finalReply, { stripSqlBlocks: effectiveDbOnly });
 
     // Fallback: if AI exhausted rounds but DID query DB, show raw DB results
-    if (dbQueried && lastDbResultBlock && (!finalReply || finalReply.length < 20)) {
+    if (dbQueried && lastDbResultBlock && consecutiveZeroResults < 4 && (!finalReply || finalReply.length < 20)) {
       finalReply = buildFallbackDbReply(lastDbResultBlock);
     }
 

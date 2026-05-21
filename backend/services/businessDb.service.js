@@ -54,16 +54,24 @@ const loadForeignKeyMap = async () => {
  * Falls back gracefully if RPC function doesn't exist yet
  */
 const executeRawSQL = async (sql) => {
-  // Security: only allow SELECT/WITH queries
-  const trimmed = sql.trim().toUpperCase();
+  // Strip SQL comments first so they can't hide the actual statement
+  const noComments = sql.replace(/\/\*[\s\S]*?\*\/|--.*$/gm, '');
+
+  // Security: strictly only allow SELECT/WITH queries
+  const trimmed = noComments.trim().toUpperCase();
   if (!trimmed.startsWith('SELECT') && !trimmed.startsWith('WITH')) {
-    throw new Error('Only SELECT queries are allowed');
+    throw new Error('Only SELECT/WITH queries are allowed');
   }
 
-  // Block dangerous keywords
-  const dangerous = /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|EXEC|EXECUTE|CALL|MERGE|REPLACE)\b/i;
+  // Block dangerous keywords anywhere (including after SELECT/WITH)
+  const dangerous = /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|EXEC|EXECUTE|CALL|MERGE|REPLACE|COPY|GRANT|REVOKE|COMMENT|SET)\b/i;
   if (dangerous.test(sql)) {
     throw new Error('Only read-only queries are allowed');
+  }
+
+  // Reject any semicolons inside the SQL — prevents stacked query injection
+  if (/;/.test(sql.replace(/;\s*$/, ''))) {
+    throw new Error('Semicolons are not allowed in queries');
   }
 
   // Strip trailing semicolons — Supabase RPC doesn't accept them

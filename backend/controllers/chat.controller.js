@@ -22,6 +22,8 @@ const { buildContextMessages, maybeCompressQuery } = require('../services/contex
 const { listUserFiles } = require('../services/fileUpload.service');
 const { logAnalytics } = require('../services/analytics.service');
 const {
+  MAX_DB_QUERIES,
+  MAX_CONSECUTIVE_ZERO_RESULTS,
   reserveToolLoopBudget,
   extractReferencedTables,
   ensureBizDbInit,
@@ -299,6 +301,7 @@ const sendMessage = async (req, res) => {
     let lastDbResultBlock = '';
     let consecutiveZeroResults = 0;
     let lastSqlQuery = '';
+    let dbQueryCount = 0;
     const fetchedSchemaTables = new Set();
 
     // Tool-call loop: AI can search files, request full content, or query business DB
@@ -338,6 +341,7 @@ const sendMessage = async (req, res) => {
         abortController,
         fetchedSchemaTables,
         consecutiveZeroResults,
+        dbQueryCount,
       });
 
       if (toolResult.handled) {
@@ -348,12 +352,20 @@ const sendMessage = async (req, res) => {
         if (toolResult.lastSqlQuery) lastSqlQuery = toolResult.lastSqlQuery;
         if (toolResult.lastDbResultBlock) lastDbResultBlock = toolResult.lastDbResultBlock;
         consecutiveZeroResults = toolResult.consecutiveZeroResults || 0;
+        if (toolResult.dbQueryCount !== undefined) dbQueryCount = toolResult.dbQueryCount;
         trimOldestToolRounds();
 
         // Break on 4+ consecutive zero results
-        if (consecutiveZeroResults >= 4) {
+        if (consecutiveZeroResults >= MAX_CONSECUTIVE_ZERO_RESULTS) {
           finalReply = reply.replace(/\[QUERY_DB\][\s\S]*?(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/g, '').trim() || 'No data found.';
-          console.log(`[Tool] 4 consecutive zero results — breaking tool loop`);
+          console.log(`[Tool] ${MAX_CONSECUTIVE_ZERO_RESULTS} consecutive zero results — breaking tool loop`);
+          break;
+        }
+
+        // Break on max DB queries
+        if (dbQueryCount >= MAX_DB_QUERIES) {
+          if (!finalReply) finalReply = 'Maximum database queries reached.';
+          console.log(`[Tool] Max DB queries (${dbQueryCount}) reached — breaking tool loop`);
           break;
         }
         continue;

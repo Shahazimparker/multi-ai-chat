@@ -8,7 +8,7 @@ const router = express.Router();
 const supabase = require('../config/supabase');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const {
-  getUsers, createUser, updateUser, deleteUser, resetTokens, getAnalytics,
+  getUsers, createUser, updateUser, deleteUser, resetTokens, getAnalytics, unlockLogin, lockLogin,
 } = require('../controllers/admin.controller');
 
 // All admin routes require both auth + admin role
@@ -20,6 +20,8 @@ router.put('/users/:id', updateUser);
 router.delete('/users/:id', deleteUser);
 router.post('/users/:id/reset-tokens', resetTokens);
 router.get('/analytics', getAnalytics);
+router.post('/users/:id/unlock-login', unlockLogin);
+router.post('/users/:id/lock-login', lockLogin);
 
 router.get('/api-status', requireAuth, async (req, res) => {
   const status = {

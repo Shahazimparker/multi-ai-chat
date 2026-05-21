@@ -6,6 +6,7 @@
 // ============================================================
 
 const axios = require('axios');
+const crypto = require('crypto');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const supabase = require('../config/supabase');
 const { trimTextByTokens, estimateTokens } = require('./tokenBudget.service');
@@ -34,22 +35,25 @@ const cancelableDelay = (ms, signal) => new Promise((resolve, reject) => {
 // ========== EMBEDDING CACHE (LRU with Hard Cap) ==========
 // - Key includes userId to prevent cross-user cache sharing.
 // - MAX_CACHE_SIZE prevents unbounded memory growth (memory leak fix).
-// - When full, oldest 10% of entries are evicted (Map insertion order = LRU).
+// - When full, least recently used 5% of entries are evicted (true LRU).
 // - Periodic background cleanup runs every 15 minutes for stale TTL entries.
 const MAX_CACHE_SIZE = 5000;
+const EVICT_PERCENT = 0.05; // evict only 5% at a time (gentler under high load)
 const embeddingCache = new Map();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour TTL
 
-/** Evict oldest entries if cache exceeds MAX_CACHE_SIZE — prevents memory leak */
+/** Evict least recently used entries when cache exceeds MAX_CACHE_SIZE */
 const enforceMaxCacheSize = () => {
   if (embeddingCache.size <= MAX_CACHE_SIZE) return;
-  const deleteCount = Math.ceil(MAX_CACHE_SIZE * 0.1); // evict 10% of capacity
-  const keysToDelete = [];
-  for (const key of embeddingCache.keys()) {
-    if (keysToDelete.length >= deleteCount) break;
-    keysToDelete.push(key);
+
+  // Convert to array, sort by lastAccessed (ascending), evict oldest 5%
+  const entries = [...embeddingCache.entries()]
+    .sort((a, b) => (a[1].lastAccessed || 0) - (b[1].lastAccessed || 0));
+
+  const deleteCount = Math.ceil(MAX_CACHE_SIZE * EVICT_PERCENT);
+  for (let i = 0; i < deleteCount && i < entries.length; i++) {
+    embeddingCache.delete(entries[i][0]);
   }
-  for (const key of keysToDelete) embeddingCache.delete(key);
 };
 
 /** Periodic background cleanup: clear stale TTL entries so they don't accumulate */
@@ -68,7 +72,8 @@ setInterval(() => {
 }, 15 * 60 * 1000).unref(); // .unref() so it doesn't keep Node process alive
 
 const getCacheKey = (text, provider, userId = null) => {
-  return `${userId || 'anon'}:${provider}:${text.slice(0, 100)}`;
+  const hash = crypto.createHash('sha256').update(text).digest('hex');
+  return `${userId || 'anon'}:${provider}:${hash}`;
 };
 
 const getCachedEmbedding = (key) => {
@@ -78,12 +83,20 @@ const getCachedEmbedding = (key) => {
     embeddingCache.delete(key);
     return null;
   }
+  // Track LRU access and hit count — used by eviction to keep hot entries
+  cached.lastAccessed = Date.now();
+  cached.hits = (cached.hits || 0) + 1;
   return cached.vector;
 };
 
 const setCachedEmbedding = (key, vector) => {
-  embeddingCache.set(key, { vector, timestamp: Date.now() });
-  enforceMaxCacheSize(); // ← memory leak prevention
+  embeddingCache.set(key, {
+    vector,
+    timestamp: Date.now(),
+    lastAccessed: Date.now(),
+    hits: 0,
+  });
+  enforceMaxCacheSize();
 };
 
 const clearEmbeddingCache = () => {

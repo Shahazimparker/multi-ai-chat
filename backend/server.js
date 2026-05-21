@@ -10,6 +10,16 @@ const cors     = require('cors');
 const helmet   = require('helmet');
 const morgan   = require('morgan');
 
+// ── JWT_SECRET validation on startup ──
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  console.error('[FATAL] JWT_SECRET must be at least 32 characters long');
+  process.exit(1);
+}
+if (process.env.JWT_SECRET === 'your_super_secret_jwt_key_min_32_chars_change_this') {
+  console.error('[FATAL] Change the default JWT_SECRET in your .env file before deploying');
+  process.exit(1);
+}
+
 // ── Global crash logging ──
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught Exception:', err);

@@ -7,6 +7,66 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
+
+// ── Upload session store — tracks active uploads for cancel, status polling, and resume ──
+// Value: { controller, status, progress, message, phase, result, error }
+const uploadSessions = new Map();
+// Clean stale sessions every 60s
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, s] of uploadSessions) {
+    if (s.status !== 'processing' && now - s.ts > 60000) uploadSessions.delete(id);
+  }
+}, 60000);
+
+// ── MIME type map for download ──
+const MIME_MAP = {
+  txt: 'text/plain',
+  csv: 'text/csv',
+  json: 'application/json',
+  xml: 'application/xml',
+  html: 'text/html',
+  htm: 'text/html',
+  css: 'text/css',
+  js: 'text/javascript',
+  mjs: 'text/javascript',
+  ts: 'application/typescript',
+  py: 'text/x-python',
+  java: 'text/x-java',
+  rb: 'text/x-ruby',
+  go: 'text/x-go',
+  rs: 'text/x-rust',
+  cpp: 'text/x-c++',
+  c: 'text/x-c',
+  h: 'text/x-c',
+  sh: 'application/x-sh',
+  yaml: 'text/yaml',
+  yml: 'text/yaml',
+  md: 'text/markdown',
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  svg: 'image/svg+xml',
+  webp: 'image/webp',
+  zip: 'application/zip',
+  gz: 'application/gzip',
+  tar: 'application/x-tar',
+  mp3: 'audio/mpeg',
+  mp4: 'video/mp4',
+};
+const getMimeType = (fileName) => {
+  const ext = path.extname(fileName).toLowerCase().replace('.', '');
+  return MIME_MAP[ext] || 'application/octet-stream';
+};
 const { requireAuth } = require('../middleware/auth');
 const supabase = require('../config/supabase');
 const { processUploadedFile, searchUserFilesRAG, getFileContent, getFileContentById, deleteUploadedFile, getSupportedFileType, listAllUserFiles, saveGeneratedFile } = require('../services/fileUpload.service');
@@ -49,20 +109,44 @@ const uploadTimeout = (req, res, next) => {
  * Upload and process a file
  */
 router.post('/file', requireAuth, uploadTimeout, upload.single('file'), async (req, res) => {
+  let sessionId = null;
+  let abortController = null;
+  let updateSession = null;
+
+  // Create session before try so catch can also update it
+  if (req.file) {
+    abortController = new AbortController();
+    sessionId = crypto.randomUUID();
+    uploadSessions.set(sessionId, {
+      controller: abortController,
+      status: 'processing',
+      progress: 0,
+      message: 'Starting...',
+      phase: 'uploading',
+      result: null,
+      error: null,
+      ts: Date.now(),
+    });
+
+    updateSession = (updates) => {
+      const s = uploadSessions.get(sessionId);
+      if (s) Object.assign(s, updates, { ts: Date.now() });
+    };
+  }
+
   try {
     if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
-    const abortController = new AbortController();
-    req.on('close', () => {
-      if (!res.writableEnded) {
-        console.log('[Upload] Request closed. Aborting file processing...');
-        abortController.abort();
-      }
-    });
+    // Detect client disconnect but DON'T abort — upload continues in background
+    const onDisconnect = () => {
+      console.log('[Upload] Client disconnected (navigated away). Upload continues in background.');
+    };
+    req.on('close', onDisconnect);
+    req.on('aborted', onDisconnect);
+    res.on('close', onDisconnect);
 
     const { topicId, modelId } = req.body;
     const fileName = req.file.originalname;
-    // Determine file type via shared service (returns 'other' for unknown)
     const fileType = getSupportedFileType(req.file.originalname);
 
     // ── SSE setup ──
@@ -85,13 +169,15 @@ router.post('/file', requireAuth, uploadTimeout, upload.single('file'), async (r
       console.error('[Upload] setNoDelay failed:', noDelayErr);
     }
 
-    // Guard: if client disconnects, prevent further writes
     res.on('close', () => {
       console.log('[Upload] Response closed');
     });
 
-    // Send initial progress event
     const sendProgress = (data) => {
+      // Store progress in session for status polling
+      if (data.type === 'progress') {
+        updateSession({ progress: data.percent, message: data.message || '', phase: data.phase || 'processing' });
+      }
       if (!res.writableEnded && !res.destroyed) {
         try {
           res.write(`data: ${JSON.stringify(data)}\n\n`);
@@ -101,10 +187,9 @@ router.post('/file', requireAuth, uploadTimeout, upload.single('file'), async (r
       }
     };
 
-    sendProgress({ type: 'progress', phase: 'starting', percent: 0, message: 'Starting file processing...' });
+    // Send sessionId to frontend so it can call cancel endpoint
+    sendProgress({ type: 'init', sessionId, percent: 0, message: 'Starting file processing...' });
 
-    // Process file
-    req.on('aborted', () => abortController.abort());
     const ragEnabled = req.body.ragEnabled === 'true' || req.body.ragEnabled === true;
     console.log('[Upload] ragEnabled:', ragEnabled, 'req.body:', req.body);
 
@@ -117,10 +202,10 @@ router.post('/file', requireAuth, uploadTimeout, upload.single('file'), async (r
       modelId,
       abortController.signal,
       ragEnabled,
-      sendProgress   // ← pass SSE progress callback
+      sendProgress
     );
 
-    // ── Deduct embedding tokens used during file upload ──
+    // ── Deduct embedding tokens ──
     if (result.tokensUsed > 0) {
       const { data: user } = await supabase
         .from('users')
@@ -137,7 +222,9 @@ router.post('/file', requireAuth, uploadTimeout, upload.single('file'), async (r
       }
     }
 
-    // Send final done event
+    // Mark as done but keep in Map for 60s so frontend can poll status
+    updateSession({ status: 'done', progress: 100, phase: 'complete', result });
+
     sendProgress({
       type: 'done',
       success: true,
@@ -148,10 +235,12 @@ router.post('/file', requireAuth, uploadTimeout, upload.single('file'), async (r
     res.end();
 
   } catch (err) {
-    console.error('[Upload] Error:', err.message, err.stack ? '\n' + err.stack : '');
+    const isAbort = err.name === 'AbortError' || err.name === 'CanceledError' || err.message === 'Upload cancelled by user';
+    updateSession({ status: isAbort ? 'aborted' : 'error', error: err.message });
+    console.error(`[Upload] ${isAbort ? 'Aborted' : 'Error'}:`, err.message);
     if (!res.writableEnded && !res.destroyed) {
       try {
-        res.write(`data: ${JSON.stringify({ type: 'error', error: err.message || 'File upload failed' })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: isAbort ? 'aborted' : 'error', error: err.message || 'File upload failed' })}\n\n`);
         res.end();
       } catch (writeErr) {
         console.error('[Upload] Failed to send error via SSE:', writeErr);
@@ -180,7 +269,7 @@ router.get('/files', requireAuth, async (req, res) => {
 
 router.get('/search', requireAuth, async (req, res) => {
   try {
-    const { query, topicId } = req.query; // ← ADD topicId
+    const { query, topicId } = req.query;
     if (!query) return res.status(400).json({ error: 'Query required' });
 
     const searchResult = await searchUserFilesRAG(query, req.user.id, topicId);
@@ -268,7 +357,7 @@ router.get('/preview/:fileId', requireAuth, async (req, res) => {
 
 /**
  * GET /api/upload/download/:fileId
- * Download file content as a text file (cross-chat, no topicId required)
+ * Download original file if binary data exists, otherwise fall back to text
  */
 router.get('/download/:fileId', requireAuth, async (req, res) => {
   try {
@@ -277,8 +366,27 @@ router.get('/download/:fileId', requireAuth, async (req, res) => {
     if (!fileData) {
       return res.status(404).json({ error: 'File not found or access denied' });
     }
+    const fileName = fileData.file_name || `file_${fileId}`;
+
+    // If original binary data exists, serve it with correct MIME type
+    if (fileData.original_file_data) {
+      const mime = getMimeType(fileName);
+      const bin = fileData.original_file_data;
+      res.setHeader('Content-Type', mime);
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      // bin can be base64 string, Buffer, or bytea hex — normalize
+      if (typeof bin === 'string' && /^[A-Za-z0-9+/=]+$/.test(bin)) {
+        res.send(Buffer.from(bin, 'base64'));
+      } else if (typeof bin === 'string' && bin.startsWith('\\x')) {
+        res.send(Buffer.from(bin.slice(2), 'hex'));
+      } else {
+        res.send(Buffer.from(bin));
+      }
+      return;
+    }
+
+    // Fallback: serve extracted text
     const content = fileData.original_content || fileData.llm_analysis || '';
-    const fileName = fileData.file_name || `file_${fileId}.txt`;
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}.txt"`);
     res.send(content);
@@ -305,6 +413,43 @@ router.post('/generate-file', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+/**
+ * GET /api/upload/status/:sessionId
+ * Poll upload progress — used when user navigates back after browser back/forward
+ */
+router.get('/status/:sessionId', requireAuth, async (req, res) => {
+  const { sessionId } = req.params;
+  const session = uploadSessions.get(sessionId);
+  if (!session) {
+    return res.json({ active: false });
+  }
+  res.json({
+    active: true,
+    status: session.status,
+    progress: session.progress,
+    message: session.message,
+    phase: session.phase,
+  });
+});
+
+/**
+ * POST /api/upload/cancel/:sessionId
+ * Explicitly cancel an upload in progress — triggers abort signal which
+ * causes saveFileToRAG / processZipFile to clean up partial DB records
+ */
+router.post('/cancel/:sessionId', requireAuth, async (req, res) => {
+  const { sessionId } = req.params;
+  const session = uploadSessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'Upload session not found or already completed' });
+  }
+  console.log(`[Upload] Explicit cancel for session: ${sessionId}`);
+  session.controller.abort();
+  uploadSessions.delete(sessionId);
+  // DB cleanup happens automatically inside saveFileToRAG / processZipFile catch block
+  res.json({ success: true, message: 'Upload cancelled & DB cleaned' });
 });
 
 module.exports = router;

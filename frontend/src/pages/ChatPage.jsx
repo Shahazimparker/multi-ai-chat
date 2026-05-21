@@ -33,10 +33,13 @@ const ChatPage = () => {
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingImage, setPendingImage] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadMessage, setUploadMessage] = useState('');
 
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
   const abortControllerRef = useRef(null);
+  const uploadAbortRef = useRef(null);
+  const uploadSessionIdRef = useRef(null);
   const messagesAreaRef = useRef(null);
   const isUserAtBottom = useRef(true); // tracks if user is scrolled to bottom
   const [memoryMode, setMemoryMode] = useState('accurate');
@@ -52,6 +55,58 @@ const ChatPage = () => {
   const [failedMessage, setFailedMessage] = useState(null);
   const [llmError, setLlmError] = useState(null);
   const [uploadedFiles, setUploadedFiles] = useState([]);
+
+  // Resume upload progress display after browser back/forward navigation
+  // Checks sessionStorage for active upload sessionId and polls status endpoint
+  useEffect(() => {
+    const savedSid = sessionStorage.getItem('uploadSessionId');
+    if (!savedSid) return;
+
+    const baseUrl = process.env.NODE_ENV === 'production'
+      ? 'https://multi-ai-chat-backend.vercel.app/api'
+      : 'http://localhost:5000/api';
+    const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+
+    let cancelled = false;
+    const poll = async () => {
+      while (!cancelled) {
+        try {
+          const res = await fetch(`${baseUrl}/upload/status/${savedSid}`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          });
+          const data = await res.json();
+          if (!data.active) {
+            // Upload completed or expired — clear storage
+            sessionStorage.removeItem('uploadSessionId');
+            if (!cancelled) { setUploadProgress(0); setUploadMessage(''); }
+            return;
+          }
+          if (!cancelled) {
+            setLoading(true);
+            setUploadProgress(data.progress);
+            setUploadMessage(data.message || '');
+            uploadSessionIdRef.current = savedSid;
+          }
+          if (data.status === 'done' || data.status === 'aborted' || data.status === 'error') {
+            // Final state — show briefly then clear
+            setTimeout(() => {
+              if (!cancelled) { setUploadProgress(0); setUploadMessage(''); setLoading(false); }
+            }, 3000);
+            sessionStorage.removeItem('uploadSessionId');
+            return;
+          }
+        } catch {
+          // Poll failed (network error) — stop trying
+          if (!cancelled) { setUploadProgress(0); setUploadMessage(''); }
+          sessionStorage.removeItem('uploadSessionId');
+          return;
+        }
+        await new Promise(r => setTimeout(r, 2000)); // poll every 2s
+      }
+    };
+    poll();
+    return () => { cancelled = true; };
+  }, []);
 
   // Track if user is near the bottom of the messages area
   const handleScroll = useCallback(() => {
@@ -134,6 +189,8 @@ const ChatPage = () => {
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    const uploadController = new AbortController();
+    uploadAbortRef.current = uploadController;
 
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setError('');
@@ -204,8 +261,17 @@ const ChatPage = () => {
                 if (!line.startsWith('data: ')) continue;
                 try {
                   const data = JSON.parse(line.slice(6));
+                  if (data.type === 'init' && data.sessionId) {
+                    uploadSessionIdRef.current = data.sessionId;
+                    sessionStorage.setItem('uploadSessionId', data.sessionId);
+                  }
                   if (data.type === 'error') {
                     window.__uploadSseError = data.error;
+                  }
+                  if (data.type === 'progress' && typeof data.percent === 'number') {
+                    // After upload hits 100%, switch to server-side processing percent
+                    setUploadProgress(data.percent);
+                    if (data.message) setUploadMessage(data.message);
                   }
                 } catch (e) { /* ignore parse errors on partial lines */ }
               }
@@ -260,15 +326,16 @@ const ChatPage = () => {
           xhr.ontimeout = () => reject(new Error('Upload timed out. Try a smaller file.'));
           xhr.onabort = () => reject(new DOMException('Aborted', 'AbortError'));
 
-          if (controller.signal) {
-            controller.signal.addEventListener('abort', () => xhr.abort());
+          if (uploadController.signal) {
+            uploadController.signal.addEventListener('abort', () => xhr.abort());
           }
 
           xhr.send(formData);
         });
 
+        sessionStorage.removeItem('uploadSessionId');
         setUploadedFiles(prev => [...prev, uploadResult]);
-        setTimeout(() => { setUploadProgress(0); }, 5000);
+        setTimeout(() => { setUploadProgress(0); setUploadMessage(''); }, 5000);
 
         // Update user message to show upload complete — preserve text
         setMessages(prev => {
@@ -434,6 +501,9 @@ const ChatPage = () => {
       setLoading(false);
       setUploadProgress(0);
       abortControllerRef.current = null;
+      uploadAbortRef.current = null;
+      uploadSessionIdRef.current = null;
+      sessionStorage.removeItem('uploadSessionId');
     }
   }, [model, activeTopic, memoryMode, historyLimit, ragEnabled, providerModelId, refreshTokenStats]);
 
@@ -481,7 +551,7 @@ const ChatPage = () => {
   }, []);
 
   const handleStop = useCallback(() => {
-    // Abort current AI request
+    // Abort current AI request only (not file uploads)
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
@@ -588,13 +658,50 @@ const ChatPage = () => {
             messages.map((msg, i) => <MessageBubble key={i} message={msg} />)
           )}
 
-          {/* Upload progress bar */}
+          {/* Upload progress bar — shows byte upload then server-side phase */}
           {uploadProgress > 0 && (
             <div className="upload-progress-bar">
               <div className="upload-progress-track">
                 <div className="upload-progress-fill" style={{ width: `${uploadProgress}%` }} />
               </div>
-              <span className="upload-progress-label">{uploadProgress}%</span>
+              <span className="upload-progress-label">
+                {uploadMessage || `${uploadProgress}%`}
+              </span>
+              <button
+                className="upload-cancel-btn"
+                onClick={() => {
+                  // 1. Call cancel endpoint to stop backend processing + DB cleanup
+                  const sid = uploadSessionIdRef.current;
+                  if (sid) {
+                    const baseUrl = process.env.NODE_ENV === 'production'
+                      ? 'https://multi-ai-chat-backend.vercel.app/api'
+                      : 'http://localhost:5000/api';
+                    const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+                    fetch(`${baseUrl}/upload/cancel/${sid}`, {
+                      method: 'POST',
+                      headers: token ? { Authorization: `Bearer ${token}` } : {},
+                    }).catch(() => {});
+                    uploadSessionIdRef.current = null;
+                  }
+                  // 2. Abort upload XHR
+                  if (uploadAbortRef.current) {
+                    uploadAbortRef.current.abort();
+                    uploadAbortRef.current = null;
+                  }
+                  // 3. Also abort AI request (upload may have finished, AI streaming)
+                  if (abortControllerRef.current) {
+                    abortControllerRef.current.abort();
+                    abortControllerRef.current = null;
+                  }
+                  sessionStorage.removeItem('uploadSessionId');
+                  setLoading(false);
+                  setUploadProgress(0);
+                  setUploadMessage('');
+                }}
+                title="Cancel upload"
+              >
+                ✕
+              </button>
             </div>
           )}
 

@@ -25,17 +25,34 @@ api.interceptors.request.use((config) => {
 });
 
 // ── Global response error handling ─────────────────────────
+let isRedirecting = false; // guards against redirect loops across multiple tabs
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      // Token expired — clear storage and redirect to login
+    if (error.response?.status === 401 && !isRedirecting) {
+      // Already on login page — don't loop
+      if (window.location.pathname === '/login') {
+        return Promise.reject(error);
+      }
+      isRedirecting = true;
       localStorage.removeItem('auth_token');
       sessionStorage.removeItem('auth_token');
+      sessionStorage.setItem('logged_out', 'true'); // signal other tabs
       window.location.href = '/login';
     }
     return Promise.reject(error);
   }
 );
+
+// Listen for logout events from other tabs (same-origin storage sync)
+window.addEventListener('storage', (e) => {
+  if (e.key === 'logged_out' && e.newValue === 'true') {
+    localStorage.removeItem('auth_token');
+    sessionStorage.removeItem('auth_token');
+    if (window.location.pathname !== '/login') {
+      window.location.href = '/login';
+    }
+  }
+});
 
 export default api;

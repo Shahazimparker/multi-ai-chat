@@ -33,6 +33,10 @@ const ensureBizDbInit = async () => {
 // Init on module load
 ensureBizDbInit();
 
+// ── Query Safety Limits ──────────────────────────────────────
+const MAX_DB_QUERIES = 12;  // Max queries per conversation
+const MAX_CONSECUTIVE_ZERO_RESULTS = 4;  // Break after N empty results
+
 // ── Tool loop budget ──────────────────────────────────────
 const reserveToolLoopBudget = (promptBudget, reserveRatio = 0.15) => {
   const toolReserveTokens = Math.min(1400, Math.max(300, Math.floor(promptBudget.maxPromptTokens * reserveRatio)));
@@ -155,7 +159,7 @@ const buildFallbackDbReply = (lastDbResultBlock) => {
 
 // ── Tool-call processor ───────────────────────────────────
 // Processes ONE round of tool calls from AI reply.
-// Returns: { handled: boolean, newMessages: array, dbQueried: boolean, lastSqlQuery: string, consecutiveZeroResults: number }
+// Returns: { handled: boolean, newMessages: array, dbQueried: boolean, lastSqlQuery: string, consecutiveZeroResults: number, dbQueryCount: number }
 // If handled is false, no tool call was detected (AI gave final answer).
 const processToolCall = async ({
   reply,
@@ -166,6 +170,7 @@ const processToolCall = async ({
   abortController,
   fetchedSchemaTables,
   consecutiveZeroResults = 0,
+  dbQueryCount = 0,
 }) => {
   // ── SEARCH_FILES tool ──
   const searchMatch = findSearchFileMatch(reply);
@@ -190,7 +195,8 @@ const processToolCall = async ({
       embedTokens,
       dbQueried: false,
       lastSqlQuery: '',
-      consecutiveZeroResults: 0,
+      consecutiveZeroResults, // preserve — non-DB tool, don't reset
+      dbQueryCount, // preserve — non-DB tool
     };
   }
 
@@ -210,7 +216,8 @@ const processToolCall = async ({
         embedTokens: 0,
         dbQueried: false,
         lastSqlQuery: '',
-        consecutiveZeroResults: 0,
+        consecutiveZeroResults, // preserve
+        dbQueryCount, // preserve — non-DB tool
       };
     }
 
@@ -226,14 +233,20 @@ const processToolCall = async ({
       embedTokens: 0,
       dbQueried: false,
       lastSqlQuery: '',
-      consecutiveZeroResults: 0,
+      consecutiveZeroResults, // preserve
+      dbQueryCount, // preserve — non-DB tool
     };
   }
 
   // ── GET_SCHEMA tool ──
   const getSchemaMatch = findGetSchemaMatch(reply);
   if (getSchemaMatch && bizDbConnected) {
-    const tableNames = getSchemaMatch[1].split(',').map(s => s.trim());
+    const rawNames = getSchemaMatch[1].split(',').map(s => s.trim());
+    const MAX_SCHEMA_TABLES = 8; // prevent excessive schema requests
+    const tableNames = rawNames.slice(0, MAX_SCHEMA_TABLES);
+    if (rawNames.length > MAX_SCHEMA_TABLES) {
+      console.log(`[Tool] GET_SCHEMA capped from ${rawNames.length} to ${MAX_SCHEMA_TABLES} tables`);
+    }
     const schemaText = await getTableSchema(tableNames);
     tableNames.forEach((name) => fetchedSchemaTables.add(name));
 
@@ -252,7 +265,8 @@ const processToolCall = async ({
       embedTokens: 0,
       dbQueried: false,
       lastSqlQuery: '',
-      consecutiveZeroResults: 0,
+      consecutiveZeroResults, // preserve — non-DB tool
+      dbQueryCount, // preserve — non-DB tool
     };
   }
 
@@ -270,7 +284,8 @@ const processToolCall = async ({
       embedTokens: 0,
       dbQueried: false,
       lastSqlQuery: '',
-      consecutiveZeroResults: 0,
+      consecutiveZeroResults, // preserve
+      dbQueryCount, // preserve — non-DB tool
     };
   }
 
@@ -299,9 +314,26 @@ const processToolCall = async ({
           embedTokens: 0,
           dbQueried: false,
           lastSqlQuery: sql,
-          consecutiveZeroResults: 0,
+          consecutiveZeroResults, // preserve
+          dbQueryCount, // preserve — non-DB tool
         };
       }
+    }
+
+    // Enforce per-conversation DB query cap
+    if (dbQueryCount >= MAX_DB_QUERIES) {
+      return {
+        handled: true,
+        newMessages: [
+          { role: 'assistant', content: reply.replace(queryDbMatch[0], '').trim() || '' },
+          { role: 'user', content: `[SYSTEM] Maximum of ${MAX_DB_QUERIES} database queries reached for this conversation. Summarize what you've found so far.` },
+        ],
+        embedTokens: 0,
+        dbQueried: true,
+        lastSqlQuery: sql,
+        consecutiveZeroResults,
+        dbQueryCount, // return current count without incrementing
+      };
     }
 
     try {
@@ -324,6 +356,7 @@ const processToolCall = async ({
         lastDbResultBlock: resultBlock,
         consecutiveZeroResults: newConsecutiveZero,
         resultCount,
+        dbQueryCount: dbQueryCount + 1, // increment on successful query execution
       };
     } catch (dbErr) {
       const referencedTables = extractReferencedTables(sql);
@@ -346,7 +379,8 @@ const processToolCall = async ({
         embedTokens: 0,
         dbQueried: true,
         lastSqlQuery: sql,
-        consecutiveZeroResults: 0,
+        consecutiveZeroResults, // preserve — error doesn't reset counter
+        dbQueryCount: dbQueryCount + 1, // increment on query attempt (error or not)
       };
     }
   }
@@ -416,6 +450,10 @@ const classifyError = (messageText) => {
 };
 
 module.exports = {
+  // Query safety limits
+  MAX_DB_QUERIES,
+  MAX_CONSECUTIVE_ZERO_RESULTS,
+
   // State
   ensureBizDbInit,
   get bizDbConnected() { return bizDbConnected; },
