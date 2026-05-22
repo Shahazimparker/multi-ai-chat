@@ -414,13 +414,15 @@
   border-color: rgba(124, 58, 237, 0.3);
 }
 
-.preview-btn:hover {
+.preview-btn:hover,
+.expand-btn:hover {
   background: rgba(14, 165, 233, 0.2);
   color: #38bdf8;
   border-color: rgba(14, 165, 233, 0.3);
 }
 
-.preview-btn.active {
+.preview-btn.active,
+.expand-btn.active {
   background: rgba(14, 165, 233, 0.25);
   color: #38bdf8;
   border-color: rgba(14, 165, 233, 0.5);
@@ -458,6 +460,27 @@
   max-height: 350px;
   overflow-y: auto;
   background: rgba(0, 0, 0, 0.4);
+}
+
+/* ── Show all / Show less button inside preview ──────────── */
+.file-expand-btn {
+  display: block;
+  width: 100%;
+  padding: 6px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.5);
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  text-align: center;
+}
+
+.file-expand-btn:hover {
+  background: rgba(124, 58, 237, 0.15);
+  color: #a78bfa;
 }
 
 /* ── Mobile responsiveness ────────────────────────────────── */

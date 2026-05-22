@@ -10,7 +10,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Bot, User, Copy, Check, Zap, Download, Clock, FileText, ExternalLink } from 'lucide-react';
+import { Bot, User, Copy, Check, Zap, Download, Clock, FileText, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import api from '../../config/api';
 import './MessageBubble.css';
 
@@ -22,6 +22,7 @@ const FILE_LANGUAGES = new Set([
   'kt','sql','r','sh','bash','ps1','bat','pl','lua',
   'xlsx','xls','doc','docx','pdf','ppt','pptx',
 ]);
+const MIN_FILE_LINES = 300;
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -64,16 +65,14 @@ const downloadFile = (content, filename, mimeType) => {
 
 // ── FileCard — renders a downloadable file from AI-generated code ──
 const FileCard = ({ file, onDownload }) => {
-  const [previewOpen, setPreviewOpen] = React.useState(false);
+  const [expanded, setExpanded] = React.useState(false);
   const [fetchedContent, setFetchedContent] = React.useState(null);
   const isHtml = file.file_type === 'html' || file.file_name?.endsWith('.html');
   const displayContent = file.content || fetchedContent || '';
 
-  const togglePreview = () => {
-    const opening = !previewOpen;
-    setPreviewOpen(opening);
-    // Fetch content from server if file has file_id but no local content
-    if (opening && !file.content && !fetchedContent && file.file_id) {
+  // Fetch server content on first expand
+  React.useEffect(() => {
+    if (expanded && !file.content && !fetchedContent && file.file_id) {
       const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
       fetch(`/upload/preview/${file.file_id}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -82,7 +81,7 @@ const FileCard = ({ file, onDownload }) => {
         .then(data => setFetchedContent(data.content || ''))
         .catch(() => setFetchedContent('[Preview unavailable]'));
     }
-  };
+  }, [expanded, file.content, fetchedContent, file.file_id]);
 
   return (
     <div className="file-card-wrap">
@@ -96,18 +95,19 @@ const FileCard = ({ file, onDownload }) => {
         </div>
         <div className="file-card-actions">
           <button
-            className={`file-card-btn preview-btn ${previewOpen ? 'active' : ''}`}
-            onClick={togglePreview}
-            title="Preview"
+            className={`file-card-btn expand-btn ${expanded ? 'active' : ''}`}
+            onClick={() => setExpanded(p => !p)}
+            title={expanded ? 'Collapse' : 'Expand'}
           >
-            <ExternalLink size={13} />
+            {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
           </button>
           <button className="file-card-btn" onClick={() => onDownload(file)} title="Download">
             <Download size={13} />
           </button>
         </div>
       </div>
-      {previewOpen && (
+
+      {expanded && (
         <div className="file-preview-inline">
           {isHtml ? (
             <iframe
@@ -233,8 +233,8 @@ const MessageBubble = ({ message, onSidebarRefresh }) => {
       if (!inline && match) {
         const codeText = String(children).replace(/\n$/, '');
 
-        // If this code block language is a file type, show as FileCard
-        if (FILE_LANGUAGES.has(lang)) {
+        // Show as FileCard only for large code blocks (>= 300 lines)
+        if (FILE_LANGUAGES.has(lang) && codeText.split('\n').length >= MIN_FILE_LINES) {
           const idx = fileCodeBlockIdx.current++;
           // Prefer server-backed file if available, else build client-side file object
           const serverFile = message.generatedFiles?.[idx];
