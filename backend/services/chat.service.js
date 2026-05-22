@@ -75,7 +75,7 @@ const buildBizDbDirective = (effectiveDbOnly) => {
 
   const baseBizRules = `\n\n## Business Database Access\nYou have read-only access to a business database via [QUERY_DB] tool.\n\n${selectedSchema}`;
 
-  const dbOnlyRules = baseBizRules + `\n\n🔒 ONLY DB MODE (ACTIVE):\n- EXAMINE the user's query carefully. If it asks about business data (sales, customers, orders, inventory, employees, reports, counts, financials, etc.) — use [QUERY_DB] to get LIVE data.\n- If it's a general question, greeting, small talk, or simply NOT about business data — answer normally from your knowledge without querying the DB.\n- You CANNOT use your training data for business facts, numbers, or answers. Always query the DB for those.\n- There is NO RAG/cache. Every business query is live.\n- If [QUERY_DB] returns empty — say "No data found in database."\n- NEVER fabricate or guess data. Only present what the DB returns.\n- NEVER call external APIs for business data.\n- NEVER show the SQL query text to the user — only present the formatted results.\n- Always run the query with concise and proper syntax — never show placeholder or sample data before querying.\n- Format results as tables for structured data.`;
+  const dbOnlyRules = baseBizRules + `\n\n🔒 ONLY DB MODE (ACTIVE - STRICT):\n- You MUST use [QUERY_DB] for ANY question that could involve data, facts, counts, lists, names, IDs, statuses, dates, amounts, or anything that might exist in the business database.\n- DEFAULT behavior: query the DB first. Do NOT answer from training data or memory.\n- ONLY skip [QUERY_DB] if the user message is a pure greeting ("hi", "hello", "thanks", "bye") or an explicit meta question about you (e.g., "what model are you?"). When in doubt — QUERY.\n- You CANNOT use your training data for business facts, numbers, names, or answers. ALWAYS query the DB.\n- There is NO RAG/cache. Every business query is live.\n- If [QUERY_DB] returns empty — say exactly "No data found in database." Do NOT invent fallback answers.\n- NEVER fabricate, guess, or estimate data. Only present what the DB returns.\n- NEVER call external APIs for business data.\n- NEVER show the SQL query text to the user — no \`\`\`sql blocks, no <SQL_QUERY> tags, no SELECT statements. Present ONLY the formatted results as tables/text.\n- Your FINAL answer must be plain prose + markdown tables. No SQL anywhere.\n- Always run the query with concise and proper syntax — never show placeholder or sample data before querying.\n- If you are unsure which table to use, call [GET_SCHEMA:table1,table2] first, then [QUERY_DB].\n- Format results as tables for structured data.`;
   const relaxedBizRules = baseBizRules + `\n\n📋 RULES:\n- When the user asks about business data — query the DB using [QUERY_DB].\n- You may use your training knowledge alongside DB results.\n- If [QUERY_DB] returns empty, say "No data found in database."\n- NEVER fabricate data that should come from the DB.\n- NEVER call external APIs for business data.\n- Format results as tables for structured data.`;
 
   return {
@@ -109,6 +109,8 @@ const findGetSchemaMatch = (reply) => {
   let m = reply.match(/\[GET_SCHEMA:([^\]]+)\]/);
   if (!m) m = reply.match(/<GET_SCHEMA:([^>]+)>/);  // Match <GET_SCHEMA:table1, table2>
   if (!m) m = reply.match(/<GET_SCHEMA>([^<]+)<\/GET_SCHEMA>/);
+  if (!m) m = reply.match(/<DB_SCHEMA_REQUEST>\s*([^<]+?)\s*<\/DB_SCHEMA_REQUEST>/i);
+  if (!m) m = reply.match(/\[DB_SCHEMA_REQUEST:?\s*([^\]]+)\]/i);
   if (!m) m = reply.match(/<request_label>Get\s+Schema<\/request_label>\s*<request_text>([^<]+)<\/request_text>/i);
   return m;
 };
@@ -408,6 +410,8 @@ const stripToolTags = (text, opts = {}) => {
     /^\s*\[GET_SCHEMA:[^\]]+\]/,
     /^\s*<GET_SCHEMA:[^>]+>/,
     /^\s*<GET_SCHEMA>[^<]+<\/GET_SCHEMA>/,
+    /^\s*<DB_SCHEMA_REQUEST>[\s\S]*?<\/DB_SCHEMA_REQUEST>/i,
+    /^\s*\[DB_SCHEMA_REQUEST:?[^\]]+\]/i,
     /^\s*<request_label>Get\s+Schema<\/request_label>\s*<request_text>[^<]+<\/request_text>/i,
     /^\s*\[SEARCH_FILES:query=[^\]]+\]/,
     /^\s*\[GET_FILE:id=[^\]]+\]/,
@@ -444,11 +448,28 @@ const stripToolTags = (text, opts = {}) => {
     if (match) result = result.slice(match[0].length);
   }
 
-  if (stripSqlBlocks && /^\s*```sql/.test(result)) {
-    result = result.replace(/^```sql[\s\S]*?```/, '').trimStart();
+  if (stripSqlBlocks) {
+    // Strip ALL ```sql blocks (not just leading) — AI may include SQL anywhere
+    result = result.replace(/```sql[\s\S]*?```/gi, '').trim();
+    // Strip ALL <SQL_QUERY>...</SQL_QUERY> blocks
+    result = result.replace(/<SQL_QUERY>[\s\S]*?<\/SQL_QUERY>/gi, '').trim();
+    // Strip status-like placeholders the AI sometimes emits as its only answer
+    result = result.replace(/^\s*\[(?:Querying|Preparing|Getting|Searching|Requesting|Attempting)[^\]]*\]\s*$/gim, '').trim();
+    // Collapse triple+ blank lines left behind
+    result = result.replace(/\n{3,}/g, '\n\n');
   }
 
   return result.trim();
+};
+
+// Detect a reply that is ONLY a placeholder/status line (no real content)
+const isPlaceholderOnly = (text) => {
+  if (!text) return true;
+  const trimmed = text.trim();
+  if (trimmed.length < 60 && /^\[(?:Querying|Preparing|Getting|Searching|Requesting|Attempting)[^\]]*\]$/i.test(trimmed)) {
+    return true;
+  }
+  return false;
 };
 
 // ── Error classification ──────────────────────────────────
@@ -512,6 +533,7 @@ module.exports = {
   stripToolTags,
   formatDbResults,
   buildFallbackDbReply,
+  isPlaceholderOnly,
 
   // Error handling
   classifyError,

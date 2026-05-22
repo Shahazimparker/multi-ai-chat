@@ -363,6 +363,10 @@ const buildMinimalSchemaContext = async () => {
     `You have read-only access to this **PostgreSQL** database. To query it:\n` +
     `1. First get column schema: [GET_SCHEMA:table1, table2, ...]\n` +
     `2. Then query: [QUERY_DB]\n   <SQL_QUERY>\n   [/QUERY_DB]\n\n` +
+    `⚠️ TAG FORMAT — Use EXACTLY these tags. Do NOT invent variants like <DB_SCHEMA_REQUEST>, <SchemaRequest>, [REQUEST_SCHEMA], etc. ONLY:\n` +
+    `  • [GET_SCHEMA:table1, table2]\n` +
+    `  • [QUERY_DB]SQL HERE[/QUERY_DB]\n` +
+    `Any other format will FAIL silently and the user will see your raw tags.\n\n` +
     `Rules:\n` +
     `- When user mentions a business entity (e.g., Purchase Order, Vendor, Sales Order), call GET_SCHEMA with ONLY its directly related tables (e.g., [GET_SCHEMA:purchase_orders, companies, vendors]) — do NOT request all tables at once; use TABLE GUIDE + RELATIONSHIPS to identify relevant tables\n` +
     `- **TOOL USAGE**: When using GET_SCHEMA or QUERY_DB, do NOT explain to the user what you're doing (e.g., "I need to check the schema", "Let me query the database"). Just use the tool silently and provide the final answer. Users don't see your tool calls.\n` +

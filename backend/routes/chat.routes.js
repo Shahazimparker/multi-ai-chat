@@ -12,6 +12,7 @@ const { sanitizeBody } = require('../middleware/sanitize');
 const { MODELS } = require('../config/models');
 const { getProviderModels } = require('../services/modelCatalog.service');
 const supabase = require('../config/supabase');
+const chatService = require('../services/chat.service');
 const {
   MAX_DB_QUERIES,
   MAX_CONSECUTIVE_ZERO_RESULTS,
@@ -23,7 +24,8 @@ const {
   stripToolTags,
   buildFallbackDbReply,
   classifyError,
-} = require('../services/chat.service');
+  isPlaceholderOnly,
+} = chatService;
 const { dispatchToAI } = require('../services/ai/dispatcher.service');
 const { getCachedResponse, getSemanticCachedResponse } = require('../services/cache.service');
 const { buildRAGContext, embedText } = require('../services/rag.service');
@@ -136,6 +138,9 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     // Send initial connection confirmation
     res.write('data: {"status": "connected"}\n\n');
 
+    // Ensure business DB is initialized (shared singleton) — critical for dbOnly mode
+    await ensureBizDbInit();
+
     const modelConfig = MODELS[modelId];
     const effectiveModelConfig = providerModelId
       ? { ...modelConfig, model: providerModelId }
@@ -146,8 +151,8 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
       return;
     }
 
-    // Check cache first (if hit, send cached response)
-    const cached = await getCachedResponse(message, modelId, user?.id, topicId);
+    // Check cache first (if hit, send cached response) — skip in dbOnly mode (business data must be fresh)
+    const cached = !dbOnly ? await getCachedResponse(message, modelId, user?.id, topicId) : null;
     if (cached) {
       res.write(`data: ${JSON.stringify({
         type: 'cached',
@@ -274,6 +279,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     let lastDbResultBlock = '';
     let consecutiveZeroResults = 0;
     let dbQueryCount = 0;
+    let dbOnlyNudged = false;
     const fetchedSchemaTables = new Set();
 
     const MAX_TOOL_ROUNDS = effectiveDbOnly ? 24 : 6;
@@ -343,6 +349,36 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
         continue;
       }
 
+      // dbOnly enforcement: if AI gave only a placeholder ("[Querying...]") after a DB call,
+      // force it to produce a real summary using the last DB results.
+      if (effectiveDbOnly && dbQueried && isPlaceholderOnly(reply)) {
+        console.log('[Stream Tool] dbOnly enforcement: placeholder-only reply detected — forcing summary');
+        aiMessages.push({ role: 'assistant', content: reply });
+        aiMessages.push({
+          role: 'user',
+          content: '[SYSTEM] Your previous reply was only a status placeholder (e.g., "[Querying...]"). The database results above are final. Now write the COMPLETE final answer to the user using ONLY those results — plain prose plus a markdown table where helpful. No SQL, no placeholders, no further queries.',
+        });
+        trimOldestToolRounds();
+        continue;
+      }
+
+      // dbOnly enforcement: if AI gave a final reply without ever querying DB
+      // and the user message isn't a pure greeting/meta question, force a query (once).
+      if (effectiveDbOnly && chatService.bizDbConnected && !dbQueried && !dbOnlyNudged) {
+        const isGreetingOrMeta = /^\s*(hi|hello|hey|thanks|thank\s+you|bye|goodbye|ok|okay|what\s+model|who\s+are\s+you|what\s+are\s+you)[\s!.?]*$/i.test(String(message || '').trim());
+        if (!isGreetingOrMeta) {
+          console.log('[Stream Tool] dbOnly enforcement: AI skipped DB query — nudging to use [QUERY_DB]');
+          aiMessages.push({ role: 'assistant', content: reply });
+          aiMessages.push({
+            role: 'user',
+            content: '[SYSTEM] DB-ONLY MODE is ACTIVE. You answered without querying the database. You MUST use [QUERY_DB]...[/QUERY_DB] to fetch live data from the business DB before answering. If you do not know the schema, call [GET_SCHEMA:table_name] first. Do not answer from training data.',
+          });
+          dbOnlyNudged = true;
+          trimOldestToolRounds();
+          continue;
+        }
+      }
+
       // No tool call — done
       finalReply = reply;
       billableTokens = (totalAITokens > 0)
@@ -361,8 +397,8 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     // Strip leftover tool-call syntax; strip ```sql blocks in dbOnly mode
     finalReply = stripToolTags(finalReply, { stripSqlBlocks: effectiveDbOnly });
 
-    // Fallback: if AI exhausted rounds but DID query DB, show raw DB results
-    if (dbQueried && lastDbResultBlock && consecutiveZeroResults < 4 && (!finalReply || finalReply.length < 20)) {
+    // Fallback: only if AI literally gave us nothing usable after stripping
+    if (dbQueried && lastDbResultBlock && consecutiveZeroResults < 4 && (!finalReply || finalReply.trim().length < 5)) {
       finalReply = buildFallbackDbReply(lastDbResultBlock);
     }
 

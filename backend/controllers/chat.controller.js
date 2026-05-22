@@ -21,6 +21,7 @@ const { buildRAGContext, embedText } = require('../services/rag.service');
 const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
 const { listUserFiles } = require('../services/fileUpload.service');
 const { logAnalytics } = require('../services/analytics.service');
+const chatService = require('../services/chat.service');
 const {
   MAX_DB_QUERIES,
   MAX_CONSECUTIVE_ZERO_RESULTS,
@@ -33,8 +34,8 @@ const {
   stripToolTags,
   buildFallbackDbReply,
   classifyError,
-  bizDbConnected,
-} = require('../services/chat.service');
+  isPlaceholderOnly,
+} = chatService;
 
 const {
   createPromptBudget,
@@ -384,6 +385,35 @@ const sendMessage = async (req, res) => {
         continue;
       }
 
+      // dbOnly enforcement: if AI gave only a placeholder after a DB call,
+      // force it to produce a real summary using the last DB results.
+      if (effectiveDbOnly && dbQueried && isPlaceholderOnly(reply)) {
+        console.log('[Tool] dbOnly enforcement: placeholder-only reply detected — forcing summary');
+        aiMessages.push({ role: 'assistant', content: reply });
+        aiMessages.push({
+          role: 'user',
+          content: '[SYSTEM] Your previous reply was only a status placeholder (e.g., "[Querying...]"). The database results above are final. Now write the COMPLETE final answer to the user using ONLY those results — plain prose plus a markdown table where helpful. No SQL, no placeholders, no further queries.',
+        });
+        trimOldestToolRounds();
+        continue;
+      }
+
+      // dbOnly enforcement: if AI gave a final reply without ever querying DB
+      // and the user message isn't a pure greeting/meta question, force a query.
+      if (effectiveDbOnly && chatService.bizDbConnected && !dbQueried) {
+        const isGreetingOrMeta = /^\s*(hi|hello|hey|thanks|thank\s+you|bye|goodbye|ok|okay|what\s+model|who\s+are\s+you|what\s+are\s+you)[\s!.?]*$/i.test(String(finalQuery || '').trim());
+        if (!isGreetingOrMeta) {
+          console.log('[Tool] dbOnly enforcement: AI skipped DB query — nudging to use [QUERY_DB]');
+          aiMessages.push({ role: 'assistant', content: reply });
+          aiMessages.push({
+            role: 'user',
+            content: '[SYSTEM] DB-ONLY MODE is ACTIVE. You answered without querying the database. You MUST use [QUERY_DB]...[/QUERY_DB] to fetch live data from the business DB before answering. If you do not know the schema, call [GET_SCHEMA:table_name] first. Do not answer from training data.',
+          });
+          trimOldestToolRounds();
+          continue;
+        }
+      }
+
       // Controller-specific: DISTINCT-only placeholder detection (not in stream handler)
       if (dbOnly && dbQueried && lastSqlQuery) {
         const isDistinctOnly = /SELECT\s+DISTINCT\s+/i.test(lastSqlQuery) &&
@@ -411,8 +441,8 @@ const sendMessage = async (req, res) => {
     // Strip leftover tool-call tags
     finalReply = stripToolTags(finalReply);
 
-    // Fallback: if AI exhausted rounds but DID query DB, show raw DB results
-    if (dbQueried && lastDbResultBlock && consecutiveZeroResults < 4 && (!finalReply || finalReply.length < 20)) {
+    // Fallback: only if AI literally gave us nothing usable after stripping
+    if (dbQueried && lastDbResultBlock && consecutiveZeroResults < 4 && (!finalReply || finalReply.trim().length < 5)) {
       finalReply = buildFallbackDbReply(lastDbResultBlock);
     }
 
@@ -474,7 +504,7 @@ const sendMessage = async (req, res) => {
     });
 
     // Safety net: strip tool call syntax from final reply in dbOnly mode
-    if (bizDbConnected() && effectiveDbOnly && finalReply) {
+    if (chatService.bizDbConnected && effectiveDbOnly && finalReply) {
       finalReply = stripToolTags(finalReply, { stripSqlBlocks: true });
     }
 
