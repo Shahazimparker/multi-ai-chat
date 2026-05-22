@@ -71,12 +71,27 @@ app.use(morgan('dev'));                        // request logging
 app.use(express.json({ limit: '10mb' }));     // parse JSON bodies (10MB for RAG docs)
 app.use(csrfProtection);                      // CSRF token validation on mutating routes
 
-// ── CORS — update FRONTEND_URL in .env for production ─────
+// ── CORS — allow local dev + production (set FRONTEND_URL in Vercel env vars) ──
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5000',
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  origin: (origin, cb) => {
+    // Allow requests with no origin (server-to-server, curl, health checks, etc.)
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.some(o => origin.startsWith(o))) return cb(null, true);
+    cb(new Error(`Origin ${origin} not allowed by CORS`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
 }));
+
+// ── Handle OPTIONS preflight explicitly (required by Vercel serverless) ──
+app.options('*', (req, res) => res.sendStatus(204));
 
 // ── Health check (used by Vercel / uptime monitors) ────────
 app.get('/api/health', (req, res) => {
