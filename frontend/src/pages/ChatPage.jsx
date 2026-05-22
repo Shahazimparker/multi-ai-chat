@@ -241,6 +241,8 @@ const ChatPage = () => {
           xhr.open('POST', `${baseUrl}/upload/file`);
           xhr.timeout = 600000; // 10 minutes — large ZIPs take time
           if (authTokenForUpload) xhr.setRequestHeader('Authorization', `Bearer ${authTokenForUpload}`);
+          const csrfToken = sessionStorage.getItem('csrf_token');
+          if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
 
           // Upload byte progress
           xhr.upload.onprogress = (e) => {
