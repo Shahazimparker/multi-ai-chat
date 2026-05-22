@@ -111,6 +111,21 @@ const findGetSchemaMatch = (reply) => {
   if (!m) m = reply.match(/<GET_SCHEMA>([^<]+)<\/GET_SCHEMA>/);
   if (!m) m = reply.match(/<DB_SCHEMA_REQUEST>\s*([^<]+?)\s*<\/DB_SCHEMA_REQUEST>/i);
   if (!m) m = reply.match(/\[DB_SCHEMA_REQUEST:?\s*([^\]]+)\]/i);
+  if (!m) m = reply.match(/<request>\s*<method>Get_Schema<\/method>\s*<params>\s*<table>([^<]+)<\/table>\s*<\/params>\s*<\/requests?>/i);
+  // Flexible <request type="...">payload={"tables":["..."]} or similar JSON payloads
+  if (!m) {
+    const reqMatch = reply.match(/<request[^>]*>[\s\S]*?<\/request>/i);
+    if (reqMatch) {
+      const tablesJSON = reqMatch[0].match(/["']tables["']\s*:\s*\[([^\]]+)\]/i);
+      if (tablesJSON) {
+        // Extract just the table names from ["table1", "table2"]
+        const tables = tablesJSON[1].match(/["']([^"']+)["']/g);
+        if (tables) {
+          m = [reqMatch[0], tables.map(t => t.replace(/["']/g, '')).join(', ')];
+        }
+      }
+    }
+  }
   if (!m) m = reply.match(/<request_label>Get\s+Schema<\/request_label>\s*<request_text>([^<]+)<\/request_text>/i);
   return m;
 };
@@ -412,6 +427,7 @@ const stripToolTags = (text, opts = {}) => {
     /^\s*<GET_SCHEMA>[^<]+<\/GET_SCHEMA>/,
     /^\s*<DB_SCHEMA_REQUEST>[\s\S]*?<\/DB_SCHEMA_REQUEST>/i,
     /^\s*\[DB_SCHEMA_REQUEST:?[^\]]+\]/i,
+    /^\s*<request[^>]*>[\s\S]*?<\/request>/i,
     /^\s*<request_label>Get\s+Schema<\/request_label>\s*<request_text>[^<]+<\/request_text>/i,
     /^\s*\[SEARCH_FILES:query=[^\]]+\]/,
     /^\s*\[GET_FILE:id=[^\]]+\]/,
