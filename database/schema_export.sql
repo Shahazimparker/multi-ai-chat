@@ -912,6 +912,22 @@ CREATE INDEX IF NOT EXISTS idx_uploaded_files_embedding ON uploaded_files USING 
 CREATE INDEX IF NOT EXISTS idx_rag_chunks_embedding ON rag_chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS idx_uploaded_files_rag_embedding ON uploaded_files_rag USING hnsw (embedding vector_cosine_ops);
 
+-- ── Atomic token increment function (fixes race condition) ──
+CREATE OR REPLACE FUNCTION increment_user_tokens(
+  user_id UUID,
+  token_amount INTEGER
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  UPDATE users
+  SET used_tokens = used_tokens + token_amount
+  WHERE id = user_id;
+END;
+$$;
+
 
 
 

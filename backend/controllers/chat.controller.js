@@ -308,7 +308,15 @@ const sendMessage = async (req, res) => {
     // Tool-call loop: AI can search files, request full content, or query business DB
     const MAX_TOOL_ROUNDS = effectiveDbOnly ? 24 : 6;
     const TOOL_ROUND_START = aiMessages.length;
-    const MAX_TOOL_TOKENS = Math.floor(promptBudget.maxPromptTokens * 0.5);
+    // Dynamic tool-loop cap: 65% when deep into DB exploration (dbQueryCount will grow), else 50%
+    const getMaxToolTokens = (currentDbQueryCount) => {
+      if (currentDbQueryCount > 5) {
+        return Math.floor(promptBudget.maxPromptTokens * 0.65);
+      }
+      return Math.floor(promptBudget.maxPromptTokens * 0.5);
+    };
+
+    let MAX_TOOL_TOKENS = getMaxToolTokens(dbQueryCount);
 
     const trimOldestToolRounds = () => {
       const estimatedToolTokens = estimateMessagesTokens(aiMessages.slice(TOOL_ROUND_START));
@@ -353,7 +361,11 @@ const sendMessage = async (req, res) => {
         if (toolResult.lastSqlQuery) lastSqlQuery = toolResult.lastSqlQuery;
         if (toolResult.lastDbResultBlock) lastDbResultBlock = toolResult.lastDbResultBlock;
         consecutiveZeroResults = toolResult.consecutiveZeroResults || 0;
-        if (toolResult.dbQueryCount !== undefined) dbQueryCount = toolResult.dbQueryCount;
+        if (toolResult.dbQueryCount !== undefined) {
+          dbQueryCount = toolResult.dbQueryCount;
+          // Recalculate tool token cap after dbQueryCount update
+          MAX_TOOL_TOKENS = getMaxToolTokens(dbQueryCount);
+        }
         trimOldestToolRounds();
 
         // Break on 4+ consecutive zero results
@@ -452,10 +464,7 @@ const sendMessage = async (req, res) => {
     // ── 11. Update user token usage (after successful persistence) ──
     if (user) {
       console.log(`[TokenTracking] AI=${totalAITokens} Embedding=${totalEmbeddingTokens} InputMsg=${estimatedInputTokens} Total=${billableTokens}`);
-      await supabase
-        .from('users')
-        .update({ used_tokens: user.used_tokens + billableTokens })
-        .eq('id', user.id);
+      await supabase.rpc('increment_user_tokens', { user_id: user.id, token_amount: billableTokens });
     }
 
     // ── 13. Log to analytics ─────────────────────────────────

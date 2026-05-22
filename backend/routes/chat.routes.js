@@ -24,6 +24,14 @@ const {
   buildFallbackDbReply,
   classifyError,
 } = require('../services/chat.service');
+const { dispatchToAI } = require('../services/ai/dispatcher.service');
+const { getCachedResponse, getSemanticCachedResponse } = require('../services/cache.service');
+const { buildRAGContext, embedText } = require('../services/rag.service');
+const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
+const { searchUserFilesRAG, getFileContent, listUserFiles } = require('../services/fileUpload.service');
+const { queryBusinessDB, getTableSchema } = require('../services/businessDb.service');
+const { createPromptBudget, estimateTokens, estimateMessagesTokens } = require('../services/tokenBudget.service');
+const { logAnalytics } = require('../services/analytics.service');
 
 
 // Rate limit: 30 requests/minute per IP
@@ -88,12 +96,12 @@ router.get('/provider-models/:provider', async (req, res) => {
 });
 
 // POST /api/chat/message
-router.post('/message', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['message']), sendMessage);
+router.post('/message', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['message', 'image', 'providerModelId', 'modelId', 'memoryMode']), sendMessage);
 /**
  * POST /api/chat/stream
  * Streaming response using Server-Sent Events
  */
-router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['message']), async (req, res) => {
+router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['message', 'image', 'providerModelId', 'modelId', 'memoryMode']), async (req, res) => {
   req.setTimeout(0);
   res.setTimeout(0);
   const startTime = Date.now();
@@ -128,20 +136,6 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     // Send initial connection confirmation
     res.write('data: {"status": "connected"}\n\n');
 
-    // Import all the same services as chat endpoint
-    const { MODELS } = require('../config/models');
-    const { dispatchToAI } = require('../services/ai/dispatcher.service');
-    const { getCachedResponse } = require('../services/cache.service');
-    const { buildRAGContext, embedText } = require('../services/rag.service');
-    const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
-    const { searchUserFilesRAG, getFileContent, listUserFiles } = require('../services/fileUpload.service');
-    const { queryBusinessDB, getTableSchema } = require('../services/businessDb.service');
-    const {
-      createPromptBudget,
-      estimateTokens,
-      estimateMessagesTokens,
-    } = require('../services/tokenBudget.service');
-
     const modelConfig = MODELS[modelId];
     const effectiveModelConfig = providerModelId
       ? { ...modelConfig, model: providerModelId }
@@ -174,45 +168,60 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     let fileResults = [];
     let totalFileCount = 0;
 
-    if (ragEnabled) {
-      // Check if user has uploaded files for this topic
-      const { count } = await supabase
-        .from('uploaded_files_rag')
-        .select('id', { count: 'exact' })
-        .eq('user_id', user?.id)
-        .eq('topic_id', topicId);
-
-      if (count > 0) {
-        console.log('[RAG] Files found:', count);
-
-        ragContext = await buildRAGContext(
-          message,
-          'openrouter',
-          abortController.signal,
-          null,
-          { tokenBudget: promptBudget.ragTokens, topicId, userId: user?.id }
-        );
-        console.log('[RAG] Context:', ragContext.slice(0, 100));
-
-        // HYBRID: Get ALL files for the topic (no limit, no similarity filter)
-        const fileData = await listUserFiles(user?.id, topicId);
-        fileResults = fileData.files || [];
-        totalFileCount = fileData.totalCount || 0;
-        console.log('[RAG] FileResults count:', fileResults.length, 'total:', totalFileCount);
-
-      }
-    }
-
-    // Compress long queries
+    // Compress long queries (moved before embedding for reuse)
     const compressResult = await maybeCompressQuery(message, abortController.signal);
     const streamQuery = typeof compressResult === 'string' ? compressResult : compressResult.query;
     const compressTokens = typeof compressResult === 'string' ? 0 : (compressResult.tokensUsed || 0);
     let totalEmbeddingTokens = 0;
 
-    // Generate query embedding to track token cost
+    // Generate query embedding ONCE — reused for semantic cache + RAG
+    let queryVector = null;
     if (ragEnabled) {
+      if (abortController.signal.aborted) throw { name: 'AbortError' };
       const embedResult = await embedText(streamQuery, 'openrouter', 3, abortController.signal, user?.id);
-      if (embedResult) totalEmbeddingTokens += embedResult.tokensUsed;
+      if (embedResult) {
+        queryVector = embedResult.vector;
+        totalEmbeddingTokens += embedResult.tokensUsed;
+      }
+
+      // Semantic cache lookup (same embedding vector)
+      if (!dbOnly) {
+        const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, 0.92, user?.id, topicId);
+        if (semanticCachedReply) {
+          res.write(`data: ${JSON.stringify({
+            type: 'cached',
+            reply: semanticCachedReply,
+            tokensUsed: 0,
+            cacheHit: true,
+            topicId: topicId || null,
+          })}\n\n`);
+          res.write('data: {"type": "done"}\n\n');
+          res.end();
+
+          // Log analytics asynchronously
+          logAnalytics({
+            userId: user?.id, query: message, modelId, tokensUsed: 0,
+            isAnonymous, cacheHit: true, responseTimeMs: Date.now() - startTime,
+          }).catch(err => console.error('[Analytics] Error:', err));
+          return;
+        }
+      }
+
+      // RAG context — reuse same queryVector (no internal embedding call)
+      if (topicId) {
+        ragContext = await buildRAGContext(
+          streamQuery,
+          'openrouter',
+          abortController.signal,
+          queryVector,
+          { tokenBudget: promptBudget.ragTokens, topicId, userId: user?.id }
+        );
+
+        // HYBRID: Get ALL files for the topic (no limit, no similarity filter)
+        const fileData = await listUserFiles(user?.id, topicId);
+        fileResults = fileData.files || [];
+        totalFileCount = fileData.totalCount || 0;
+      }
     }
 
     const { context: historyContext, summaryTokens: historySummaryTokens, _debug } = await buildContextMessages(
@@ -490,10 +499,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
 
         // ✅ UPDATE USER TOKEN COUNT ONLY IF MESSAGES SAVED SUCCESSFULLY
         if (user) {
-          const { error: userError } = await supabase
-            .from('users')
-            .update({ used_tokens: user.used_tokens + billableTokens })
-            .eq('id', user.id);
+          const { error: userError } = await supabase.rpc('increment_user_tokens', { user_id: user.id, token_amount: billableTokens });
 
           if (userError) {
             console.error('[Stream] User update error:', userError.message);
@@ -524,7 +530,6 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     }
 
     // Log analytics asynchronously (fire-and-forget is fine here)
-    const { logAnalytics } = require('../services/analytics.service');
     logAnalytics({
       userId: user?.id,
       query: message,

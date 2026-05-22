@@ -16,29 +16,46 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// ── Attach JWT token to every request ─────────────────────
+// ── Attach JWT + CSRF token to every request ──────────────
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('auth_token') ||
     sessionStorage.getItem('auth_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
+
+  // Attach CSRF token for mutating requests
+  const csrfToken = sessionStorage.getItem('csrf_token');
+  if (csrfToken && ['post', 'put', 'delete', 'patch'].includes(config.method)) {
+    config.headers['X-CSRF-Token'] = csrfToken;
+  }
   return config;
 });
 
 // ── Global response error handling ─────────────────────────
 let isRedirecting = false; // guards against redirect loops across multiple tabs
+let redirectTimeout = null;
+
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401 && !isRedirecting) {
-      // Already on login page — don't loop
+    if (error.response?.status === 401) {
+      // Always clear stale tokens — prevents them from being re-sent on next requests
+      localStorage.removeItem('auth_token');
+      sessionStorage.removeItem('auth_token');
+      sessionStorage.removeItem('csrf_token');
+
+      // Already on login page — just clear tokens, don't redirect
       if (window.location.pathname === '/login') {
         return Promise.reject(error);
       }
-      isRedirecting = true;
-      localStorage.removeItem('auth_token');
-      sessionStorage.removeItem('auth_token');
-      sessionStorage.setItem('logged_out', 'true'); // signal other tabs
-      window.location.href = '/login';
+
+      if (!isRedirecting) {
+        isRedirecting = true;
+        sessionStorage.setItem('logged_out', 'true'); // signal other tabs
+        window.location.href = '/login';
+
+        // Safety: reset flag after 3s if redirect failed (e.g., SPA router intercepted)
+        redirectTimeout = setTimeout(() => { isRedirecting = false; }, 3000);
+      }
     }
     return Promise.reject(error);
   }

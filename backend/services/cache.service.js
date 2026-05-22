@@ -36,11 +36,13 @@ const getCachedResponse = async (query, modelId, userId = null, topicId = null) 
   const { data } = await queryBuilder.maybeSingle();
 
   if (data) {
+    // Fire increment asynchronously — catch errors to prevent unhandled rejection
     supabase
       .from('query_cache')
       .update({ hit_count: (data.hit_count || 0) + 1, last_hit_at: new Date().toISOString() })
       .eq('query_hash', hash)
-      .then(() => {});
+      .then(() => {})
+      .catch(err => console.warn('[Cache] Hit counter update failed:', err.message));
 
     console.log('[Cache] HIT for query hash:', hash.slice(0, 8));
     return data.response_text;
@@ -73,7 +75,8 @@ const getSemanticCachedResponse = async (queryEmbedding, modelId, threshold = 0.
       .from('query_cache')
       .update({ hit_count: (hit.hit_count || 0) + 1, last_hit_at: new Date().toISOString() })
       .eq('id', hit.id)
-      .then(() => {});
+      .then(() => {})
+      .catch(err => console.warn('[Cache] Semantic hit counter update failed:', err.message));
 
     console.log('[Cache] SEMANTIC HIT:', Math.round((hit.similarity || 0) * 100), '%');
     return hit.response_text;

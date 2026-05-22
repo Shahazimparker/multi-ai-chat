@@ -160,9 +160,14 @@ const login = async (req, res) => {
       { expiresIn: expiresInSeconds }
     );
 
+    // Generate CSRF token for defense-in-depth
+    const { generateCsrfToken } = require('../middleware/csrf');
+    const csrfToken = generateCsrfToken();
+
     // Return user info (no sensitive fields)
     res.json({
       token,
+      csrfToken,
       user: {
         id: user.id,
         username: user.username,

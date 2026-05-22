@@ -198,7 +198,9 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
       const textToSummarize = latestSummary
         ? `Existing summary:\n${latestSummary.content}\n\nNewer conversation:\n${olderText}`
         : olderText;
-      const summaryResult = await summarizeMemory(textToSummarize, signal, newQuery);
+      // Dynamic word limit: complex/long conversations get 650 words, default 450
+      const summaryWordLimit = (complexityScore >= 7 || turnCount > 15) ? 650 : 450;
+      const summaryResult = await summarizeMemory(textToSummarize, signal, newQuery, summaryWordLimit);
       const { summary, provider, model } = summaryResult;
       summaryTokens = summaryResult.tokensUsed || 0;
       await saveTopicSummary({ topicId, userId, summary, provider, model });

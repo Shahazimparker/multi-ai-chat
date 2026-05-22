@@ -9,6 +9,23 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 
+// ── Sanitize filename: strip path traversal, null bytes, CRLF ──
+const sanitizeFilename = (name) => {
+  if (!name || typeof name !== 'string') return 'untitled';
+  // Strip path separators and drive letters
+  let clean = name
+    .replace(/[/\\]/g, '_')           // path separators → _
+    .replace(/\0/g, '')               // null bytes
+    .replace(/[\r\n]/g, '')           // CRLF injection
+    .replace(/^[a-zA-Z]:/, '')        // Windows drive letter (C:)
+    .replace(/\.\./g, '')             // parent dir traversal
+    .replace(/["']/g, '');            // quotes (header injection)
+  // Collapse multiple underscores and trim
+  clean = clean.replace(/_+/g, '_').replace(/^_|_$/g, '');
+  // Fallback if everything was stripped
+  return clean || 'untitled';
+};
+
 // ── Upload session store — tracks active uploads for cancel, status polling, and resume ──
 // Value: { controller, status, progress, message, phase, result, error }
 const uploadSessions = new Map();
@@ -82,7 +99,7 @@ if (!fs.existsSync(uploadDir)) {
 const storage = multer.diskStorage({
   destination: uploadDir,
   filename: (req, file, cb) => {
-    cb(null, `${Date.now()}-${file.originalname}`);
+    cb(null, `${Date.now()}-${sanitizeFilename(file.originalname)}`);
   },
 });
 
@@ -205,19 +222,15 @@ router.post('/file', requireAuth, uploadTimeout, upload.single('file'), async (r
       sendProgress
     );
 
-    // ── Deduct embedding tokens ──
+    // ── Deduct embedding tokens (atomic — no race condition) ──
     if (result.tokensUsed > 0) {
-      const { data: user } = await supabase
-        .from('users')
-        .select('used_tokens')
-        .eq('id', req.user.id)
-        .single();
-
-      if (user) {
-        await supabase
-          .from('users')
-          .update({ used_tokens: user.used_tokens + result.tokensUsed })
-          .eq('id', req.user.id);
+      const { error: tokenErr } = await supabase.rpc('increment_user_tokens', {
+        user_id: req.user.id,
+        token_amount: result.tokensUsed,
+      });
+      if (tokenErr) {
+        console.warn('[Upload] Token deduction failed:', tokenErr.message);
+      } else {
         console.log(`[Upload] Deducted ${result.tokensUsed} tokens for file embedding`);
       }
     }
@@ -238,6 +251,16 @@ router.post('/file', requireAuth, uploadTimeout, upload.single('file'), async (r
     const isAbort = err.name === 'AbortError' || err.name === 'CanceledError' || err.message === 'Upload cancelled by user';
     updateSession({ status: isAbort ? 'aborted' : 'error', error: err.message });
     console.error(`[Upload] ${isAbort ? 'Aborted' : 'Error'}:`, err.message);
+
+    // Safety-net: ensure temp file is cleaned even if service-layer cleanup was missed
+    if (req.file?.path) {
+      try {
+        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      } catch (cleanupErr) {
+        console.warn('[Upload] Failed to clean temp file:', cleanupErr.message);
+      }
+    }
+
     if (!res.writableEnded && !res.destroyed) {
       try {
         res.write(`data: ${JSON.stringify({ type: isAbort ? 'aborted' : 'error', error: err.message || 'File upload failed' })}\n\n`);
@@ -370,11 +393,12 @@ router.get('/download/:fileId', requireAuth, async (req, res) => {
 
     // If original binary data exists, serve it with correct MIME type
     if (fileData.original_file_data) {
-      const mime = getMimeType(fileName);
+      const safeName = sanitizeFilename(fileName);
+      const mime = getMimeType(safeName);
       const bin = fileData.original_file_data;
-      console.log(`[Download] fileId=${fileId} fileName=${fileName} binType=${typeof bin} binLen=${bin?.length || bin?.byteLength || '?'} isString=${typeof bin === 'string'} first100=${typeof bin === 'string' ? bin.slice(0, 100) : 'NOT STRING'}`);
+      console.log(`[Download] fileId=${fileId} fileName=${safeName} binType=${typeof bin} binLen=${bin?.length || bin?.byteLength || '?'} isString=${typeof bin === 'string'} first100=${typeof bin === 'string' ? bin.slice(0, 100) : 'NOT STRING'}`);
       res.setHeader('Content-Type', mime);
-      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
       // bin can be base64 string, Buffer, or bytea hex — normalize
       if (typeof bin === 'string' && /^[A-Za-z0-9+/=]+$/.test(bin)) {
         console.log('[Download] Decoding as base64');
@@ -390,9 +414,10 @@ router.get('/download/:fileId', requireAuth, async (req, res) => {
     }
 
     // Fallback: serve extracted text
+    const safeName = sanitizeFilename(fileName);
     const content = fileData.original_content || fileData.llm_analysis || '';
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}.txt"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}.txt"`);
     res.send(content);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -409,7 +434,8 @@ router.post('/generate-file', requireAuth, async (req, res) => {
     if (!fileName || !content) {
       return res.status(400).json({ error: 'fileName and content are required' });
     }
-    const result = await saveGeneratedFile(req.user.id, topicId || null, fileName, content, fileType);
+    const safeFileName = sanitizeFilename(fileName);
+    const result = await saveGeneratedFile(req.user.id, topicId || null, safeFileName, content, fileType);
     if (!result) {
       return res.status(500).json({ error: 'Failed to save generated file' });
     }

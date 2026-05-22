@@ -38,21 +38,30 @@ const cancelableDelay = (ms, signal) => new Promise((resolve, reject) => {
 // - When full, least recently used 5% of entries are evicted (true LRU).
 // - Periodic background cleanup runs every 15 minutes for stale TTL entries.
 const MAX_CACHE_SIZE = 5000;
-const EVICT_PERCENT = 0.05; // evict only 5% at a time (gentler under high load)
 const embeddingCache = new Map();
-const CACHE_TTL = 60 * 60 * 1000; // 1 hour TTL
+const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hour TTL
 
-/** Evict least recently used entries when cache exceeds MAX_CACHE_SIZE */
+/** Evict least recently used entries to bring cache back under MAX_CACHE_SIZE */
 const enforceMaxCacheSize = () => {
   if (embeddingCache.size <= MAX_CACHE_SIZE) return;
 
-  // Convert to array, sort by lastAccessed (ascending), evict oldest 5%
+  // Convert to array, sort by lastAccessed (ascending) + hits (ascending tiebreaker)
   const entries = [...embeddingCache.entries()]
-    .sort((a, b) => (a[1].lastAccessed || 0) - (b[1].lastAccessed || 0));
+    .sort((a, b) => {
+      const la = (a[1].lastAccessed || 0) - (b[1].lastAccessed || 0);
+      if (la !== 0) return la;
+      return (a[1].hits || 0) - (b[1].hits || 0); // prefer keeping high-hit entries
+    });
 
-  const deleteCount = Math.ceil(MAX_CACHE_SIZE * EVICT_PERCENT);
+  // Evict exactly what's needed to get back under the cap (preserve as much context as possible)
+  const excess = embeddingCache.size - MAX_CACHE_SIZE;
+  // Evict at least 50 at a time (batch efficiency), but never more than the excess
+  const deleteCount = Math.max(50, excess);
   for (let i = 0; i < deleteCount && i < entries.length; i++) {
     embeddingCache.delete(entries[i][0]);
+  }
+  if (deleteCount > 0) {
+    console.log(`[RAG] LRU eviction: removed ${deleteCount} entries (${embeddingCache.size} remain)`);
   }
 };
 

@@ -33,11 +33,14 @@ export const AuthProvider = ({ children }) => {
   // ── Login ──────────────────────────────────────────────────
   const login = useCallback(async (username, password, rememberMe = false) => {
     const res = await api.post('/auth/login', { username, password });
-    const { token, user: userData } = res.data;
+    const { token, csrfToken, user: userData } = res.data;
 
     // rememberMe → localStorage (persists); else sessionStorage
     if (rememberMe) localStorage.setItem('auth_token', token);
     else            sessionStorage.setItem('auth_token', token);
+
+    // CSRF token — always sessionStorage (cleared on tab close)
+    if (csrfToken) sessionStorage.setItem('csrf_token', csrfToken);
 
     setUser(userData);
     return userData;
@@ -47,6 +50,7 @@ export const AuthProvider = ({ children }) => {
   const logout = useCallback(() => {
     localStorage.removeItem('auth_token');
     sessionStorage.removeItem('auth_token');
+    sessionStorage.removeItem('csrf_token');
     setUser(null);
   }, []);
 

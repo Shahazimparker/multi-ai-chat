@@ -33,17 +33,23 @@ const initSentry = (app) => {
   console.log('✅ Sentry initialized for error tracking');
 };
 
-const sentryRequestHandler = () => Sentry.Handlers.requestHandler();
-const sentryTracingHandler = () => Sentry.Handlers.tracingHandler();
-const sentryErrorHandler = () => Sentry.Handlers.errorHandler({
-  shouldHandleError(error) {
-    // Capture all errors with status code 500 or higher
-    if (error.status >= 500) {
-      return true;
-    }
-    return true;
-  },
-});
+const sentryRequestHandler = () => {
+  if (!process.env.SENTRY_DSN) return (req, res, next) => next();
+  return Sentry.Handlers.requestHandler();
+};
+const sentryTracingHandler = () => {
+  if (!process.env.SENTRY_DSN) return (req, res, next) => next();
+  return Sentry.Handlers.tracingHandler();
+};
+const sentryErrorHandler = () => {
+  if (!process.env.SENTRY_DSN) return (err, req, res, next) => next();
+  return Sentry.Handlers.errorHandler({
+    shouldHandleError(error) {
+      const status = error.status || error.statusCode || 500;
+      return status >= 500;
+    },
+  });
+};
 
 module.exports = {
   initSentry,

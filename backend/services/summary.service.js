@@ -47,7 +47,7 @@ const SUMMARY_MODELS = [
   },
 ];
 
-const summaryPrompt = (text, strict = false, currentQuery = '') => {
+const summaryPrompt = (text, strict = false, currentQuery = '', wordLimit = 450) => {
   const topicFocus = currentQuery
     ? `\n- FOCUS on information relevant to the user's current interest: "${currentQuery}". Prioritize preserving facts, preferences, and context related to this topic.\n`
     : '\n';
@@ -58,7 +58,7 @@ Rules:
 - CRITICAL: Preserve ALL personal information about the user — their name, job/profession, skills, preferences, location, goals, and any personal context they shared.
 - Keep technical facts, model names, decisions, and unresolved questions.
 - Do NOT be generic. Include specific names, technologies, numbers, and details.
-- Keep it under 450 words.
+- Keep it under ${wordLimit} words.
 - Use compact bullet points.${topicFocus}${strict ? '- VALIDATION RETRY: explicitly preserve important names, acronyms, unresolved questions, and repeated technical/business keywords from the source.\n- Include at least 3 concrete entities or keywords that appear in the source when available.' : ''}
 
 Conversation:
@@ -67,11 +67,14 @@ ${text}`
 };
 
 /**
- * Estimate token usage for a summary call: input prompt + expected output (~600 tokens)
+ * Estimate token usage for a summary call: input prompt + expected output tokens
+ * @param {string} text
+ * @param {boolean} strict
+ * @param {number} wordLimit - max words for summary output (default 450 → ~585 tokens, 650 → ~845 tokens)
  */
-const estimateSummaryTokens = (text, strict = false) => {
-  const inputTokens = estimateTokens(summaryPrompt(text, strict));
-  const outputTokens = 600; // max 450 words ≈ 585 tokens, rounded up
+const estimateSummaryTokens = (text, strict = false, wordLimit = 450) => {
+  const inputTokens = estimateTokens(summaryPrompt(text, strict, '', wordLimit));
+  const outputTokens = Math.ceil(wordLimit * 1.3); // ~1.3 tokens per word
   return inputTokens + outputTokens;
 };
 
@@ -110,7 +113,7 @@ const isSummaryQualityAcceptable = (sourceText, summaryText) => {
   return overlapCount >= Math.min(3, sourceTerms.length) && keepsQuestionSignal;
 };
 
-const summarizeWithCerebras = async ({ model, apiKey, text, strict = false }) => {
+const summarizeWithCerebras = async ({ model, apiKey, text, strict = false, wordLimit = 450 }) => {
   const res = await fetch('https://api.cerebras.ai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -119,7 +122,7 @@ const summarizeWithCerebras = async ({ model, apiKey, text, strict = false }) =>
     },
     body: JSON.stringify({
       model,
-      messages: [{ role: 'user', content: summaryPrompt(text, strict) }],
+      messages: [{ role: 'user', content: summaryPrompt(text, strict, '', wordLimit) }],
       temperature: 0.2,
       max_tokens: 1000,
     }),
@@ -127,10 +130,10 @@ const summarizeWithCerebras = async ({ model, apiKey, text, strict = false }) =>
 
   if (!res.ok) throw new Error(`Cerebras summary failed: ${res.status} ${await res.text()}`);
   const data = await res.json();
-  return { summary: data.choices?.[0]?.message?.content?.trim(), tokensUsed: data.usage?.total_tokens || estimateSummaryTokens(text, strict) };
+  return { summary: data.choices?.[0]?.message?.content?.trim(), tokensUsed: data.usage?.total_tokens || estimateSummaryTokens(text, strict, wordLimit) };
 };
 
-const summarizeWithOpenRouter = async ({ model, apiKey, text, strict = false }, signal = null) => {
+const summarizeWithOpenRouter = async ({ model, apiKey, text, strict = false, wordLimit = 450 }, signal = null) => {
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     signal,
@@ -140,7 +143,7 @@ const summarizeWithOpenRouter = async ({ model, apiKey, text, strict = false }, 
     },
     body: JSON.stringify({
       model,
-      messages: [{ role: 'user', content: summaryPrompt(text, strict) }],
+      messages: [{ role: 'user', content: summaryPrompt(text, strict, '', wordLimit) }],
       temperature: 0.2,
       max_tokens: 1000,
     }),
@@ -148,15 +151,15 @@ const summarizeWithOpenRouter = async ({ model, apiKey, text, strict = false }, 
 
   if (!res.ok) throw new Error(`OpenRouter summary failed: ${res.status}`);
   const data = await res.json();
-  return { summary: data.choices?.[0]?.message?.content?.trim(), tokensUsed: data.usage?.total_tokens || estimateSummaryTokens(text, strict) };
+  return { summary: data.choices?.[0]?.message?.content?.trim(), tokensUsed: data.usage?.total_tokens || estimateSummaryTokens(text, strict, wordLimit) };
 };
 
 
-const summarizeWithGemini = async ({ model, apiKey, text, strict = false }, signal = null) => {
+const summarizeWithGemini = async ({ model, apiKey, text, strict = false, wordLimit = 450 }, signal = null) => {
   const genAI = new GoogleGenerativeAI(apiKey);
   const geminiModel = genAI.getGenerativeModel({ model });
 
-  const resultPromise = geminiModel.generateContent(summaryPrompt(text, strict));
+  const resultPromise = geminiModel.generateContent(summaryPrompt(text, strict, '', wordLimit));
 
   const result = await Promise.race([
     resultPromise,
@@ -167,11 +170,11 @@ const summarizeWithGemini = async ({ model, apiKey, text, strict = false }, sign
   ]);
 
   const summary = result.response.text().trim();
-  const tokensUsed = result.response?.usageMetadata?.totalTokenCount || estimateSummaryTokens(text, strict);
+  const tokensUsed = result.response?.usageMetadata?.totalTokenCount || estimateSummaryTokens(text, strict, wordLimit);
   return { summary, tokensUsed };
 };
 
-const summarizeWithMistral = async ({ model, apiKey, text, strict = false }, signal = null) => {
+const summarizeWithMistral = async ({ model, apiKey, text, strict = false, wordLimit = 450 }, signal = null) => {
   const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
     method: 'POST',
     signal,
@@ -181,7 +184,7 @@ const summarizeWithMistral = async ({ model, apiKey, text, strict = false }, sig
     },
     body: JSON.stringify({
       model,
-      messages: [{ role: 'user', content: summaryPrompt(text, strict) }],
+      messages: [{ role: 'user', content: summaryPrompt(text, strict, '', wordLimit) }],
       temperature: 0.2,
       max_tokens: 1000,
     }),
@@ -189,7 +192,7 @@ const summarizeWithMistral = async ({ model, apiKey, text, strict = false }, sig
 
   if (!res.ok) throw new Error(`Mistral summary failed: ${res.status} ${await res.text()}`);
   const data = await res.json();
-  return { summary: data.choices?.[0]?.message?.content?.trim(), tokensUsed: data.usage?.total_tokens || estimateSummaryTokens(text, strict) };
+  return { summary: data.choices?.[0]?.message?.content?.trim(), tokensUsed: data.usage?.total_tokens || estimateSummaryTokens(text, strict, wordLimit) };
 };
 
 const fallbackSummary = (text) => {
@@ -200,7 +203,7 @@ const fallbackSummary = (text) => {
     .slice(0, 1200);
 };
 
-const summarizeMemory = async (text, signal = null, currentQuery = '') => {
+const summarizeMemory = async (text, signal = null, currentQuery = '', wordLimit = 450) => {
   // If a current query is provided, inject it as topic focus instruction
   const topicPrefixed = currentQuery
     ? `[Focus on information relevant to: "${currentQuery}"]\n\n${text}`
@@ -214,13 +217,13 @@ const summarizeMemory = async (text, signal = null, currentQuery = '') => {
         let result;
 
         if (cfg.provider === 'openrouter') {
-          result = await summarizeWithOpenRouter({ ...cfg, text: topicPrefixed, strict }, signal);
+          result = await summarizeWithOpenRouter({ ...cfg, text: topicPrefixed, strict, wordLimit }, signal);
         } else if (cfg.provider === 'cerebras') {
-          result = await summarizeWithCerebras({ ...cfg, text: topicPrefixed, strict }, signal);
+          result = await summarizeWithCerebras({ ...cfg, text: topicPrefixed, strict, wordLimit }, signal);
         } else if (cfg.provider === 'gemini') {
-          result = await summarizeWithGemini({ ...cfg, text: topicPrefixed, strict }, signal);
+          result = await summarizeWithGemini({ ...cfg, text: topicPrefixed, strict, wordLimit }, signal);
         } else if (cfg.provider === 'mistral') {
-          result = await summarizeWithMistral({ ...cfg, text: topicPrefixed, strict }, signal);
+          result = await summarizeWithMistral({ ...cfg, text: topicPrefixed, strict, wordLimit }, signal);
         }
 
         if (result?.summary && isSummaryQualityAcceptable(topicPrefixed, result.summary)) {
@@ -230,7 +233,7 @@ const summarizeMemory = async (text, signal = null, currentQuery = '') => {
             provider: cfg.provider,
             model: cfg.model,
             fallback: false,
-            tokensUsed: result.tokensUsed || estimateSummaryTokens(topicPrefixed, strict),
+            tokensUsed: result.tokensUsed || estimateSummaryTokens(topicPrefixed, strict, wordLimit),
           };
         }
 

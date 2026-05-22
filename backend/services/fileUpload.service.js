@@ -351,8 +351,16 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
         });
 
       if (ragError) throw ragError;
-      // RPC returns SETOF uuid (scalar UUIDs directly), extract the first one
-      const insertedId = Array.isArray(ragData) ? ragData[0] : ragData;
+      // Supabase RPC returns SETOF uuid as [{ insert_rag_document: 'uuid' }], extract properly
+      let insertedId;
+      if (Array.isArray(ragData)) {
+        const first = ragData[0];
+        insertedId = (typeof first === 'object' && first !== null)
+          ? Object.values(first)[0]
+          : first;
+      } else {
+        insertedId = ragData;
+      }
       ragRecord = { id: insertedId };
 
       if (chunks.length > 1) {
@@ -398,10 +406,10 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
       // Clean up partial data on abort
       if (isAbort) {
       if (ragRecord?.id) {
-        supabase.from('uploaded_files_rag').delete().eq('id', ragRecord.id).then().catch(() => {});
+        await supabase.from('uploaded_files_rag').delete().eq('id', ragRecord.id);
       }
       if (fileRecord?.id) {
-        supabase.from('uploaded_files').delete().eq('id', fileRecord.id).then().catch(() => {});
+        await supabase.from('uploaded_files').delete().eq('id', fileRecord.id);
       }
     }
     throw err;
@@ -583,9 +591,11 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
  */
 const processUploadedFile = async (filePath, fileName, fileType, userId, topicId, modelId, signal = null, ragEnabled = true, onProgress = null) => {
 
-  if (signal?.aborted) throw new Error('Upload cancelled by user');
-
   try {
+    if (signal?.aborted) {
+      cleanupTempFile(filePath);
+      throw new Error('Upload cancelled by user');
+    }
     console.log(`[FileUpload] Processing: ${fileName}`);
 
     if (fileType === 'zip') {
@@ -914,6 +924,7 @@ const saveGeneratedFile = async (userId, topicId, fileName, content, fileType) =
         file_name: finalName,
         file_type: fileType || 'generated',
         original_content: content,
+        llm_analysis: content,
         user_id: userId,
         topic_id: topicId,
         created_at: new Date().toISOString(),

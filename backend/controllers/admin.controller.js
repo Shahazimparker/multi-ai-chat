@@ -97,16 +97,55 @@ const updateUser = async (req, res) => {
 
 // ── DELETE /api/admin/users/:id — delete user ─────────────
 const deleteUser = async (req, res) => {
-  const { id } = req.params;
+  try {
+    const { id } = req.params;
 
-  // Prevent self-deletion
-  if (id === req.user.id) {
-    return res.status(400).json({ error: 'Cannot delete your own account' });
+    // Prevent self-deletion
+    if (id === req.user.id) {
+      return res.status(400).json({ error: 'Cannot delete your own account' });
+    }
+
+    // Fetch topic IDs owned by this user for cascade cleanup
+    const { data: userTopics } = await supabase
+      .from('topics')
+      .select('id')
+      .eq('user_id', id);
+    const topicIds = userTopics?.map(t => t.id) || [];
+
+    // 1. Delete query_cache for user's topics
+    if (topicIds.length) {
+      await supabase.from('query_cache').delete().in('topic_id', topicIds);
+    }
+
+    // 2. Delete messages
+    if (topicIds.length) {
+      await supabase.from('messages').delete().in('topic_id', topicIds);
+    }
+
+    // 3. Delete uploaded_files (cascades to rag_chunks)
+    await supabase.from('uploaded_files').delete().eq('user_id', id);
+
+    // 4. Delete uploaded_files_rag
+    await supabase.from('uploaded_files_rag').delete().eq('user_id', id);
+
+    // 5. Delete code_files
+    await supabase.from('code_files').delete().eq('user_id', id);
+
+    // 6. Delete rag_documents
+    await supabase.from('rag_documents').delete().eq('user_id', id);
+
+    // 7. Delete topics
+    await supabase.from('topics').delete().eq('user_id', id);
+
+    // 8. Finally delete the user
+    const { error } = await supabase.from('users').delete().eq('id', id);
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.json({ message: 'User deleted' });
+  } catch (err) {
+    console.error('[Admin] Delete user error:', err.message);
+    res.status(500).json({ error: err.message });
   }
-
-  const { error } = await supabase.from('users').delete().eq('id', id);
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ message: 'User deleted' });
 };
 
 // ── POST /api/admin/users/:id/reset-tokens — reset quota ──

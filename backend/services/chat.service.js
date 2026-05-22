@@ -30,8 +30,8 @@ const ensureBizDbInit = async () => {
   return { bizDbConnected, bizDbSchemaText, bizDbMinimalSchemaText };
 };
 
-// Init on module load
-ensureBizDbInit();
+// Init on module load — catch to prevent unhandled promise rejection
+ensureBizDbInit().catch(err => console.warn('[BizDB] Module init deferred:', err.message));
 
 // ── Query Safety Limits ──────────────────────────────────────
 const MAX_DB_QUERIES = 12;  // Max queries per conversation
@@ -390,25 +390,62 @@ const processToolCall = async ({
 };
 
 // ── Final reply cleanup ───────────────────────────────────
+// Only strips tool blocks from the BEGINNING of the reply (where AI places
+// tool calls before its answer). Tool-like syntax in the middle/end of the
+// reply is left alone — it's user-visible content (e.g. explanation of how
+// to use the tool).
 const stripToolTags = (text, opts = {}) => {
   if (!text) return text;
   const { stripSqlBlocks = false } = opts;
 
-  let result = text
-    .replace(/\[QUERY_DB\]\s*(?:<SQL_QUERY>\s*)?[\s\S]*?\s*(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/g, '')
-    .replace(/<QUERY_DB>\s*(?:<SQL_QUERY>\s*)?[\s\S]*?\s*(?:<\/SQL_QUERY>\s*)?[\s\S]*?\[\/QUERY_DB\]/g, '')
-    .replace(/<QUERY_DB>\s*(?:<SQL_QUERY>\s*)?[\s\S]*?\s*<\/QUERY_DB>/g, '')
-    .replace(/<query>\s*[\s\S]*?\s*<\/query>/gi, '')
-    .replace(/<Function\s+id="query_db_\d+"\s*>[\s\S]*?<\/Function>/gi, '')
-    .replace(/\[\/QUERY_DB\]/g, '')
-    .replace(/<\/query>/gi, '')
-    .replace(/\[GET_SCHEMA:[^\]]+\]/g, '')
-    .replace(/<GET_SCHEMA:[^>]+>/g, '')  // Strip <GET_SCHEMA:table1, table2>
-    .replace(/<GET_SCHEMA>[^<]+<\/GET_SCHEMA>/g, '')
-    .replace(/<request_label>Get\s+Schema<\/request_label>\s*<request_text>[^<]+<\/request_text>/gi, '');
+  // Patterns that match a complete tool block at the START of the text
+  const TOOL_BLOCK_PATTERNS = [
+    /^\s*\[QUERY_DB\]\s*(?:<SQL_QUERY>\s*)?[\s\S]*?\s*(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/,
+    /^\s*<QUERY_DB>\s*(?:<SQL_QUERY>\s*)?[\s\S]*?\s*(?:<\/SQL_QUERY>\s*)?[\s\S]*?\[\/QUERY_DB\]/,
+    /^\s*<QUERY_DB>\s*(?:<SQL_QUERY>\s*)?[\s\S]*?\s*<\/QUERY_DB>/,
+    /^\s*<query>\s*[\s\S]*?\s*<\/query>/i,
+    /^\s*<Function\s+id="query_db_\d+"\s*>[\s\S]*?<\/Function>/i,
+    /^\s*\[GET_SCHEMA:[^\]]+\]/,
+    /^\s*<GET_SCHEMA:[^>]+>/,
+    /^\s*<GET_SCHEMA>[^<]+<\/GET_SCHEMA>/,
+    /^\s*<request_label>Get\s+Schema<\/request_label>\s*<request_text>[^<]+<\/request_text>/i,
+    /^\s*\[SEARCH_FILES:query=[^\]]+\]/,
+    /^\s*\[GET_FILE:id=[^\]]+\]/,
+  ];
 
-  if (stripSqlBlocks) {
-    result = result.replace(/```sql[\s\S]*?```/g, '');
+  // Orphan closing tags at the start (no opening tag — AI forgot it)
+  const ORPHAN_CLOSING = [
+    /^\s*\[\/QUERY_DB\]/,
+    /^\s*<\/QUERY_DB>/,
+    /^\s*<\/query>/i,
+    /^\s*<\/SQL_QUERY>/,
+    /^\s*<\/Function>/i,
+  ];
+
+  let result = text;
+
+  // Strip complete tool blocks from the beginning in a loop
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const pattern of TOOL_BLOCK_PATTERNS) {
+      const match = result.match(pattern);
+      if (match) {
+        result = result.slice(match[0].length);
+        changed = true;
+        break; // restart patterns from the beginning
+      }
+    }
+  }
+
+  // Strip any orphan closing tags at the new beginning
+  for (const pattern of ORPHAN_CLOSING) {
+    const match = result.match(pattern);
+    if (match) result = result.slice(match[0].length);
+  }
+
+  if (stripSqlBlocks && /^\s*```sql/.test(result)) {
+    result = result.replace(/^```sql[\s\S]*?```/, '').trimStart();
   }
 
   return result.trim();

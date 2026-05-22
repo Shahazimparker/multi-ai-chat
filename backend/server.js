@@ -41,14 +41,21 @@ const adminRoutes   = require('./routes/admin.routes');
 const historyRoutes = require('./routes/history.routes');
 const uploadRoutes  = require('./routes/upload.routes');
 
+// ── CSRF protection ────────────────────────────────────────
+const { csrfProtection } = require('./middleware/csrf');
+
 // ── Periodic cache cleanup ─────────────────────────────────
 const { cleanupStaleCache } = require('./services/cache.service');
 const CACHE_CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // 24h
 setInterval(() => {
-  cleanupStaleCache(30, 2); // delete entries >30d old with <2 hits
+  cleanupStaleCache(30, 2).catch(err =>
+    console.warn('[Cache] Periodic cleanup failed:', err.message)
+  );
 }, CACHE_CLEANUP_INTERVAL);
 // Run once on startup too
-cleanupStaleCache(30, 2);
+cleanupStaleCache(30, 2).catch(err =>
+  console.warn('[Cache] Startup cleanup failed:', err.message)
+);
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
@@ -62,12 +69,13 @@ app.use(sentryTracingHandler());
 app.use(helmet());                            // sets secure HTTP headers
 app.use(morgan('dev'));                        // request logging
 app.use(express.json({ limit: '10mb' }));     // parse JSON bodies (10MB for RAG docs)
+app.use(csrfProtection);                      // CSRF token validation on mutating routes
 
 // ── CORS — update FRONTEND_URL in .env for production ─────
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
 }));
 
 // ── Health check (used by Vercel / uptime monitors) ────────

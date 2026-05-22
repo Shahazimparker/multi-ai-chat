@@ -50,48 +50,16 @@ const deleteTopic = async (req, res) => {
 
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-    // DELETE related documents from RAG
-    await supabase
-      .from('rag_documents')
-      .delete()
-      .eq('topic_id', topicId);
+    // Use Supabase RPC for atomic topic deletion (all-or-nothing)
+    const { error } = await supabase.rpc('delete_topic_cascade', {
+      p_topic_id: topicId,
+      p_user_id: user.id,
+    });
 
-    // DELETE query_cache entries scoped to this topic
-    await supabase
-      .from('query_cache')
-      .delete()
-      .eq('topic_id', topicId);
-
-    // DELETE messages
-    await supabase
-      .from('messages')
-      .delete()
-      .eq('topic_id', topicId);
-
-    // DELETE uploaded_files (chunk-level RAG) — cascades to rag_chunks
-    await supabase
-      .from('uploaded_files')
-      .delete()
-      .eq('topic_id', topicId);
-
-    // DELETE uploaded_files_rag (legacy file-level RAG)
-    await supabase
-      .from('uploaded_files_rag')
-      .delete()
-      .eq('topic_id', topicId);
-
-    // DELETE code_files
-    await supabase
-      .from('code_files')
-      .delete()
-      .eq('topic_id', topicId);
-
-    // DELETE topic (last — FK references depend on it)
-    await supabase
-      .from('topics')
-      .delete()
-      .eq('id', topicId)
-      .eq('user_id', user.id);
+    if (error) {
+      console.error('[History] Delete error:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
 
     res.json({ success: true, message: 'Topic and related data deleted' });
   } catch (err) {
