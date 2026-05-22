@@ -10,6 +10,9 @@ const cors     = require('cors');
 const helmet   = require('helmet');
 const morgan   = require('morgan');
 
+// ── Sentry configuration ──
+const { initSentry, sentryRequestHandler, sentryTracingHandler, sentryErrorHandler, Sentry } = require('./config/sentry');
+
 // ── JWT_SECRET validation on startup ──
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
   console.error('[FATAL] JWT_SECRET must be at least 32 characters long');
@@ -23,10 +26,12 @@ if (process.env.JWT_SECRET === 'your_super_secret_jwt_key_min_32_chars_change_th
 // ── Global crash logging ──
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught Exception:', err);
+  if (Sentry) Sentry.captureException(err);
   process.exit(1);
 });
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+  if (Sentry) Sentry.captureException(reason);
 });
 
 // ── Route imports ──────────────────────────────────────────
@@ -47,6 +52,11 @@ cleanupStaleCache(30, 2);
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
+
+// ── Initialize Sentry (must be before other middleware) ────
+initSentry(app);
+app.use(sentryRequestHandler());
+app.use(sentryTracingHandler());
 
 // ── Security & logging middleware ──────────────────────────
 app.use(helmet());                            // sets secure HTTP headers
@@ -76,6 +86,9 @@ app.use('/api/upload',  uploadRoutes);   // file upload, search, delete
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
+
+// ── Sentry error handler (must be before other error handlers) ──
+app.use(sentryErrorHandler());
 
 // ── Global error handler ────────────────────────────────────
 app.use((err, req, res, _next) => {

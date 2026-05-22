@@ -7,6 +7,7 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../config/supabase');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { sanitizeBody } = require('../middleware/sanitize');
 const {
   getUsers, createUser, updateUser, deleteUser, resetTokens, getAnalytics, unlockLogin, lockLogin,
 } = require('../controllers/admin.controller');
@@ -15,8 +16,8 @@ const {
 router.use(requireAuth, requireAdmin);
 
 router.get('/users', getUsers);
-router.post('/users', createUser);
-router.put('/users/:id', updateUser);
+router.post('/users', sanitizeBody(['email', 'username']), createUser);
+router.put('/users/:id', sanitizeBody(['email', 'username']), updateUser);
 router.delete('/users/:id', deleteUser);
 router.post('/users/:id/reset-tokens', resetTokens);
 router.get('/analytics', getAnalytics);

@@ -3,14 +3,15 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
+    "@sentry/react": "^8.40.0",
     "@supabase/supabase-js": "^2.39.7",
-    "axios": "^1.6.8",
+    "axios": "^1.7.9",
     "lucide-react": "^0.383.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1",
-    "react-router-dom": "^6.22.3",
-    "react-scripts": "^5.0.1",
+    "react-router-dom": "^6.28.0",
+    "react-scripts": "5.0.1",
     "react-syntax-highlighter": "^16.1.1",
     "recharts": "^2.12.3",
     "remark-gfm": "^4.0.0"

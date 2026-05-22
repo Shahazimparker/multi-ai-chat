@@ -8,6 +8,7 @@ const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const { sendMessage } = require('../controllers/chat.controller');
 const { tokenCheck } = require('../middleware/tokenCheck');
+const { sanitizeBody } = require('../middleware/sanitize');
 const { MODELS } = require('../config/models');
 const { getProviderModels } = require('../services/modelCatalog.service');
 const supabase = require('../config/supabase');
@@ -87,12 +88,12 @@ router.get('/provider-models/:provider', async (req, res) => {
 });
 
 // POST /api/chat/message
-router.post('/message', chatLimiter, optionalAuth, tokenCheck, sendMessage);
+router.post('/message', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['message']), sendMessage);
 /**
  * POST /api/chat/stream
  * Streaming response using Server-Sent Events
  */
-router.post('/stream', chatLimiter, optionalAuth, tokenCheck, async (req, res) => {
+router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['message']), async (req, res) => {
   req.setTimeout(0);
   res.setTimeout(0);
   const startTime = Date.now();

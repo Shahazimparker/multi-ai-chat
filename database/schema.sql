@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS users (
   per_query_limit INTEGER DEFAULT 2000,                 -- max tokens per single query
   session_minutes INTEGER DEFAULT 60,                   -- session duration in minutes
   expires_at      TIMESTAMPTZ,                          -- account expiry (NULL = never)
+  locked_until    TIMESTAMPTZ,                          -- account lock expiry (NULL = not locked)
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
@@ -371,3 +372,72 @@ VALUES (
 -- ADD: locked_until for brute-force/admin lock persistence
 -- ─────────────────────────────────────────────
 ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ;
+
+-- ============================================================
+-- PERFORMANCE INDEXES
+-- ============================================================
+
+-- ── Users table indexes ────────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active) WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS idx_users_expires_at ON users(expires_at) WHERE expires_at IS NOT NULL;
+
+-- ── Topics table indexes ───────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_topics_user_id ON topics(user_id);
+CREATE INDEX IF NOT EXISTS idx_topics_updated_at ON topics(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_topics_user_updated ON topics(user_id, updated_at DESC);
+
+-- ── Messages table indexes ─────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_messages_topic_id ON messages(topic_id);
+CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_topic_created ON messages(topic_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_is_summary ON messages(is_summary) WHERE is_summary = true;
+
+-- ── Query cache table indexes ──────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_query_cache_hash ON query_cache(query_hash);
+CREATE INDEX IF NOT EXISTS idx_query_cache_model ON query_cache(model);
+CREATE INDEX IF NOT EXISTS idx_query_cache_user_id ON query_cache(user_id);
+CREATE INDEX IF NOT EXISTS idx_query_cache_topic_id ON query_cache(topic_id);
+CREATE INDEX IF NOT EXISTS idx_query_cache_last_hit ON query_cache(last_hit_at DESC);
+CREATE INDEX IF NOT EXISTS idx_query_cache_hit_count ON query_cache(hit_count DESC);
+
+-- ── Query analytics table indexes ──────────────────────────
+CREATE INDEX IF NOT EXISTS idx_analytics_user_id ON query_analytics(user_id);
+CREATE INDEX IF NOT EXISTS idx_analytics_created_at ON query_analytics(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_analytics_model ON query_analytics(model);
+CREATE INDEX IF NOT EXISTS idx_analytics_is_anonymous ON query_analytics(is_anonymous);
+CREATE INDEX IF NOT EXISTS idx_analytics_cache_hit ON query_analytics(cache_hit);
+
+-- ── RAG documents table indexes ────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_rag_docs_provider ON rag_documents(provider);
+CREATE INDEX IF NOT EXISTS idx_rag_docs_created_at ON rag_documents(created_at DESC);
+
+-- ── Uploaded files table indexes ───────────────────────────
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_user_id ON uploaded_files(user_id);
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_topic_id ON uploaded_files(topic_id);
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_provider ON uploaded_files(provider);
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_created_at ON uploaded_files(created_at DESC);
+
+-- ── RAG chunks table indexes ───────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_rag_chunks_file_id ON rag_chunks(file_id);
+CREATE INDEX IF NOT EXISTS idx_rag_chunks_provider ON rag_chunks(provider);
+
+-- ── Uploaded files RAG table indexes ───────────────────────
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_rag_user_id ON uploaded_files_rag(user_id);
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_rag_topic_id ON uploaded_files_rag(topic_id);
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_rag_hash ON uploaded_files_rag(file_hash);
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_rag_created_at ON uploaded_files_rag(created_at DESC);
+
+-- ── Sessions table indexes ──────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
+
+-- ── Vector similarity indexes (HNSW for fast similarity search) ──
+CREATE INDEX IF NOT EXISTS idx_rag_docs_embedding ON rag_documents USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS idx_query_cache_embedding ON query_cache USING hnsw (query_embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_embedding ON uploaded_files USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS idx_rag_chunks_embedding ON rag_chunks USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_rag_embedding ON uploaded_files_rag USING hnsw (embedding vector_cosine_ops);

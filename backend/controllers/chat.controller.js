@@ -33,6 +33,7 @@ const {
   stripToolTags,
   buildFallbackDbReply,
   classifyError,
+  bizDbConnected,
 } = require('../services/chat.service');
 
 const {
@@ -464,7 +465,7 @@ const sendMessage = async (req, res) => {
     });
 
     // Safety net: strip tool call syntax from final reply in dbOnly mode
-    if (bizDbConnected && effectiveDbOnly && finalReply) {
+    if (bizDbConnected() && effectiveDbOnly && finalReply) {
       finalReply = stripToolTags(finalReply, { stripSqlBlocks: true });
     }
 
