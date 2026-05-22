@@ -369,6 +369,11 @@
   .input-area {
     padding: 12px 14px 16px;
   }
+  .pending-file-tag {
+    max-width: 140px;
+    font-size: 0.68rem;
+    padding: 2px 6px;
+  }
 }
 
 .chat-error {
@@ -476,6 +481,57 @@
 .memory-limit-control input:focus {
   border-color: var(--border-hover);
   outline: none;
+}
+
+/* ── Pending files list (multi-file) ─────────────────────── */
+.pending-files-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.pending-file-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: rgba(124, 58, 237, 0.15);
+  border: 1px solid rgba(124, 58, 237, 0.3);
+  border-radius: 6px;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.8);
+  white-space: nowrap;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-pill {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.remove-file-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.remove-file-btn:hover {
+  background: rgba(239, 68, 68, 0.4);
+  color: #fff;
 }
 
 .input-box {

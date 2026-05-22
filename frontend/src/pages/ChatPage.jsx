@@ -31,7 +31,7 @@ const ChatPage = () => {
   const [sidebarRefresh, setSidebarRefresh] = useState(0);
   const [error, setError] = useState('');
 
-  const [pendingFile, setPendingFile] = useState(null);
+  const [pendingFiles, setPendingFiles] = useState([]);
   const [pendingImage, setPendingImage] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadMessage, setUploadMessage] = useState('');
@@ -210,13 +210,103 @@ const ChatPage = () => {
     setError('');
   };
 
-  // Send message
-  const sendMessage = useCallback(async (msgText, file, image, isRetry = false) => {
-    let finalMessage = String(msgText).trim();
-    const fileToUpload = file;
+  // Helper: upload a single file via XHR with SSE progress
+  const uploadSingleFile = async (file, topicIdToUse) => {
+    setUploadProgress(0);
+    setUploadMessage('');
 
-    setFailedMessage({ text: finalMessage, file: fileToUpload, image });
-    setPendingFile(null);
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('modelId', model.id);
+    formData.append('ragEnabled', ragEnabled);
+    if (topicIdToUse) formData.append('topicId', topicIdToUse);
+
+    const baseUrl = process.env.NODE_ENV === 'production'
+      ? 'https://multi-ai-chat-backend.vercel.app/api'
+      : 'http://localhost:5000/api';
+    const authToken = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+
+    return await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${baseUrl}/upload/file`);
+      xhr.timeout = 600000;
+      if (authToken) xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
+      const csrfToken = sessionStorage.getItem('csrf_token');
+      if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) setUploadProgress(Math.round((e.loaded / e.total) * 100));
+      };
+
+      let parsedLen = 0;
+      xhr.onreadystatechange = () => {
+        if (xhr.readyState === 3 || xhr.readyState === 4) {
+          const chunk = xhr.responseText.substring(parsedLen);
+          parsedLen = xhr.responseText.length;
+          for (const line of chunk.split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === 'init' && data.sessionId) {
+                uploadSessionIdRef.current = data.sessionId;
+                sessionStorage.setItem('uploadSessionId', data.sessionId);
+              }
+              if (data.type === 'error') window.__uploadSseError = data.error;
+              if (data.type === 'progress' && typeof data.percent === 'number') {
+                setUploadProgress(data.percent);
+                if (data.message) setUploadMessage(data.message);
+              }
+            } catch (e) {}
+          }
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const sseError = window.__uploadSseError;
+          window.__uploadSseError = null;
+          let result = null;
+          let lastError = null;
+          for (const line of xhr.responseText.split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === 'done') result = data;
+              if (data.type === 'error') lastError = data.error;
+            } catch (e) {}
+          }
+          if (sseError || lastError) reject(new Error(sseError || lastError || 'Upload failed'));
+          else resolve(result || { fileName: file.name });
+        } else {
+          let errMsg = 'Upload failed';
+          try { const j = JSON.parse(xhr.responseText); if (j.error) errMsg = j.error; }
+          catch (_) {
+            for (const line of xhr.responseText.split('\n')) {
+              if (!line.startsWith('data: ')) continue;
+              try { const d = JSON.parse(line.slice(6)); if (d.type === 'error') errMsg = d.error; } catch (e) {}
+            }
+          }
+          reject(new Error(errMsg));
+        }
+      };
+
+      xhr.onerror = () => reject(new Error('Network error'));
+      xhr.ontimeout = () => reject(new Error('Upload timed out. Try a smaller file.'));
+      xhr.onabort = () => reject(new DOMException('Aborted', 'AbortError'));
+
+      if (uploadAbortRef.current?.signal) {
+        uploadAbortRef.current.signal.addEventListener('abort', () => xhr.abort());
+      }
+      xhr.send(formData);
+    });
+  };
+
+  // Send message
+  const sendMessage = useCallback(async (msgText, filesArr, image, isRetry = false) => {
+    let finalMessage = String(msgText).trim();
+    const files = filesArr || [];
+
+    setFailedMessage({ text: finalMessage, files, image });
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -226,10 +316,10 @@ const ChatPage = () => {
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setError('');
 
-    const fileName = fileToUpload?.name;
-    // If both text and file exist, show both
-    const userMsgContent = fileName
-      ? (finalMessage ? `${finalMessage}\n📎 ${fileName}` : `📎 ${fileName}`)
+    // Build user message content
+    const fileNames = files.map(f => f.name);
+    const userMsgContent = fileNames.length > 0
+      ? (finalMessage ? `${finalMessage}\n${fileNames.map(n => `📎 ${n}`).join('\n')}` : fileNames.map(n => `📎 ${n}`).join('\n'))
       : finalMessage;
     if (!isRetry) {
       setMessages(prev => [...prev, { role: 'user', content: userMsgContent, created_at: new Date().toISOString() }]);
@@ -239,164 +329,52 @@ const ChatPage = () => {
     try {
       let topicIdToUse = activeTopic?.id || null;
 
-      if (fileToUpload) {
-        setUploadProgress(0);
-
-        // Show uploading status — preserve text if user typed something
+      // Upload all files sequentially
+      const uploadedResults = [];
+      for (const f of files) {
         setMessages(prev => {
           const updated = [...prev];
           const last = updated[updated.length - 1];
           if (last && last.role === 'user') {
+            const doneList = uploadedResults.map(r => `📎 ✅ \`${r.fileName}\``).join('\n');
+            const stillUploading = files.slice(uploadedResults.length).map(n => `📎 \`${n.name}\``).join('\n');
             const textPart = finalMessage ? `${finalMessage}\n` : '';
-            updated[updated.length - 1] = { ...last, content: `${textPart}📎 ⏳ Uploading \`${fileName}\`...` };
+            updated[updated.length - 1] = { ...last, content: `${textPart}${doneList}${doneList ? '\n' : ''}${stillUploading}\n⏳ Uploading \`${f.name}\`...` };
           }
           return updated;
         });
 
-        const formData = new FormData();
-        formData.append('file', fileToUpload);
-        formData.append('modelId', model.id);
-        formData.append('ragEnabled', ragEnabled);
-        if (topicIdToUse) formData.append('topicId', topicIdToUse);
-
-        // ── XHR-based upload with SSE progress streaming ──
-        const baseUrl = process.env.NODE_ENV === 'production'
-          ? 'https://multi-ai-chat-backend.vercel.app/api'
-          : 'http://localhost:5000/api';
-        const authTokenForUpload =
-          localStorage.getItem('auth_token') ||
-          sessionStorage.getItem('auth_token');
-
-        const uploadResult = await new Promise((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open('POST', `${baseUrl}/upload/file`);
-          xhr.timeout = 600000; // 10 minutes — large ZIPs take time
-          if (authTokenForUpload) xhr.setRequestHeader('Authorization', `Bearer ${authTokenForUpload}`);
-          const csrfToken = sessionStorage.getItem('csrf_token');
-          if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
-
-          // Upload byte progress
-          xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable) {
-              const pct = Math.round((e.loaded / e.total) * 100);
-              setUploadProgress(pct);
-            }
-          };
-
-          // Incremental SSE parsing via readystatechange — progress (processing) + error/done
-          let parsedLen = 0;
-          xhr.onreadystatechange = () => {
-            if (xhr.readyState === 3 || xhr.readyState === 4) {
-              const chunk = xhr.responseText.substring(parsedLen);
-              parsedLen = xhr.responseText.length;
-              const lines = chunk.split('\n');
-              for (const line of lines) {
-                if (!line.startsWith('data: ')) continue;
-                try {
-                  const data = JSON.parse(line.slice(6));
-                  if (data.type === 'init' && data.sessionId) {
-                    uploadSessionIdRef.current = data.sessionId;
-                    sessionStorage.setItem('uploadSessionId', data.sessionId);
-                  }
-                  if (data.type === 'error') {
-                    window.__uploadSseError = data.error;
-                  }
-                  if (data.type === 'progress' && typeof data.percent === 'number') {
-                    // After upload hits 100%, switch to server-side processing percent
-                    setUploadProgress(data.percent);
-                    if (data.message) setUploadMessage(data.message);
-                  }
-                } catch (e) { /* ignore parse errors on partial lines */ }
-              }
-            }
-          };
-
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              // Check if an SSE error event was received
-              const sseError = window.__uploadSseError;
-              window.__uploadSseError = null;
-
-              // Find last 'done' SSE event for the result
-              const allLines = xhr.responseText.split('\n');
-              let result = null;
-              let lastError = null;
-              for (const line of allLines) {
-                if (!line.startsWith('data: ')) continue;
-                try {
-                  const data = JSON.parse(line.slice(6));
-                  if (data.type === 'done') result = data;
-                  if (data.type === 'error') lastError = data.error;
-                } catch (e) {}
-              }
-              if (sseError || lastError) {
-                reject(new Error(sseError || lastError || 'Upload failed'));
-              } else {
-                resolve(result || { fileName: fileName || 'unknown' });
-              }
-            } else {
-              // Try to extract error: SSE event or JSON response
-              let errMsg = 'Upload failed';
-              try {
-                // Try JSON first (pre-SSE errors like unsupported type, auth)
-                const json = JSON.parse(xhr.responseText);
-                if (json.error) errMsg = json.error;
-              } catch (_) {
-                // Fallback to SSE event parsing
-                for (const line of xhr.responseText.split('\n')) {
-                  if (!line.startsWith('data: ')) continue;
-                  try {
-                    const data = JSON.parse(line.slice(6));
-                    if (data.type === 'error') errMsg = data.error;
-                  } catch (e) {}
-                }
-              }
-              reject(new Error(errMsg));
-            }
-          };
-
-          xhr.onerror = () => reject(new Error('Network error'));
-          xhr.ontimeout = () => reject(new Error('Upload timed out. Try a smaller file.'));
-          xhr.onabort = () => reject(new DOMException('Aborted', 'AbortError'));
-
-          if (uploadController.signal) {
-            uploadController.signal.addEventListener('abort', () => xhr.abort());
-          }
-
-          xhr.send(formData);
-        });
-
-        sessionStorage.removeItem('uploadSessionId');
-        setUploadedFiles(prev => [...prev, uploadResult]);
-        setTimeout(() => { setUploadProgress(0); setUploadMessage(''); }, 5000);
-
-        // Update user message to show upload complete — preserve text
-        setMessages(prev => {
-          const updated = [...prev];
-          const last = updated[updated.length - 1];
-          if (last && last.role === 'user') {
-            const textPart = finalMessage ? `${finalMessage}\n` : '';
-            updated[updated.length - 1] = { ...last, content: `${textPart}📎 ✅ \`${fileName}\` uploaded` };
-          }
-          return updated;
-        });
-
-        // HYBRID: Don't inject file content into message — AI sees file names via listUserFiles
-        // and uses SEARCH_FILES / GET_FILE tools to access content on demand
-        // Preserve user's original text + append file reference (was overwriting before!)
-        finalMessage = finalMessage
-          ? `${finalMessage}\n[File uploaded: ${uploadResult.fileName}]`
-          : `[File uploaded: ${uploadResult.fileName}]`;
+        const result = await uploadSingleFile(f, topicIdToUse);
+        uploadedResults.push(result);
+        setUploadedFiles(prev => [...prev, result]);
       }
 
+      sessionStorage.removeItem('uploadSessionId');
+      setTimeout(() => { setUploadProgress(0); setUploadMessage(''); }, 3000);
+
+      // Update user message to show all uploads complete
+      setMessages(prev => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last && last.role === 'user') {
+          const doneList = uploadedResults.map(r => `📎 ✅ \`${r.fileName}\``).join('\n');
+          const textPart = finalMessage ? `${finalMessage}\n` : '';
+          updated[updated.length - 1] = { ...last, content: `${textPart}${doneList}` };
+        }
+        return updated;
+      });
+
+      // Append file references to message
+      if (uploadedResults.length > 0) {
+        const refs = uploadedResults.map(r => `[File uploaded: ${r.fileName}]`).join('\n');
+        finalMessage = finalMessage ? `${finalMessage}\n${refs}` : refs;
+      }
+
+      // ── Send to AI ──
       const apiUrl = process.env.NODE_ENV === 'production'
         ? 'https://multi-ai-chat-backend.vercel.app/api/chat/stream'
         : 'http://localhost:5000/api/chat/stream';
-
-      const authToken =
-        localStorage.getItem('auth_token') ||
-        sessionStorage.getItem('auth_token');
-
+      const authToken = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
       const headers = { 'Content-Type': 'application/json' };
       if (authToken) headers.Authorization = `Bearer ${authToken}`;
 
@@ -405,7 +383,7 @@ const ChatPage = () => {
         headers,
         body: JSON.stringify({
           message: finalMessage,
-          image: image,
+          image,
           topicId: topicIdToUse,
           modelId: model.id,
           providerModelId,
@@ -430,11 +408,8 @@ const ChatPage = () => {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
         const text = decoder.decode(value);
-        const lines = text.split('\n');
-
-        for (const line of lines) {
+        for (const line of text.split('\n')) {
           if (!line.startsWith('data: ')) continue;
           try {
             const data = JSON.parse(line.slice(6));
@@ -459,34 +434,25 @@ const ChatPage = () => {
               });
               break;
             }
-          } catch (e) { }
+          } catch (e) {}
         }
       }
 
-      // ── Save AI-generated file code blocks ──────────────────
+      // ── Save AI-generated file code blocks ──
       const generatedFiles = [];
       if (fullReply) {
         const fileBlockRegex = /```(\w+)\n([\s\S]*?)```/g;
-        const fileLangs = new Set([
-          'html','htm','js','jsx','ts','tsx','css','scss','sass','less',
-          'json','xml','yaml','yml','md','svg','py','rb','php','java',
-          'c','cpp','h','hpp','cs','go','rs','swift','kt','sql','r',
-          'sh','bash','ps1','bat','pl','lua',
-        ]);
+        const fileLangs = new Set(['html','htm','js','jsx','ts','tsx','css','json','xml','md','svg','py','sql','sh']);
         let fileMatch;
         let fileIdx = 0;
         while ((fileMatch = fileBlockRegex.exec(fullReply)) !== null) {
           const lang = fileMatch[1];
           if (fileLangs.has(lang)) {
             const content = fileMatch[2].trim();
-            const ext = lang === 'jsx' ? 'jsx' : lang === 'tsx' ? 'tsx' : lang === 'htm' ? 'html' : lang;
-            const fileName = `generated_${fileIdx + 1}.${ext}`;
+            const ext = lang === 'htm' ? 'html' : lang;
             try {
               const res = await api.post('/upload/generate-file', {
-                topicId: topicIdToUse,
-                fileName,
-                content,
-                fileType: lang,
+                topicId: topicIdToUse, fileName: `generated_${fileIdx + 1}.${ext}`, content, fileType: lang,
               });
               if (res.data?.file) generatedFiles.push(res.data.file);
             } catch (e) { console.error('[saveGeneratedFile]', e); }
@@ -502,9 +468,7 @@ const ChatPage = () => {
       });
 
       if (generatedFiles.length > 0) setSidebarRefresh(p => p + 1);
-
-      setPendingImage(null);
-      setFailedMessage(null); // clear failed data on success
+      setFailedMessage(null);
 
       if (metadata.topicId && !activeTopic) {
         setActiveTopic({ id: metadata.topicId });
@@ -519,9 +483,7 @@ const ChatPage = () => {
         setMessages(prev => {
           const updated = [...prev];
           const last = updated[updated.length - 1];
-          if (last && last.role === 'assistant') {
-            updated[updated.length - 1] = { ...last, streaming: false };
-          }
+          if (last && last.role === 'assistant') updated[updated.length - 1] = { ...last, streaming: false };
           return updated;
         });
         return;
@@ -529,7 +491,6 @@ const ChatPage = () => {
       const msg = err.response?.data?.error || err.message || 'Something went wrong.';
       setError(msg);
       setMessages(prev => [...prev, { role: 'assistant', content: `❌ Error: ${msg}` }]);
-      // failedMessage kept so retry can use it
     } finally {
       setLoading(false);
       setUploadProgress(0);
@@ -544,39 +505,36 @@ const ChatPage = () => {
     if (!loading && messageQueue.length > 0) {
       const [next, ...rest] = messageQueue;
       setMessageQueue(rest);
-      sendMessage(next.text, next.file, next.image);
+      sendMessage(next.text, next.files, next.image);
     }
   }, [loading, messageQueue, sendMessage]);
 
   const handleSend = useCallback(async () => {
-    if (!input.trim() && !pendingFile) return;
+    if (!input.trim() && pendingFiles.length === 0) return;
 
     if (loading) {
-      setMessageQueue(prev => [...prev, { text: input, file: pendingFile, image: pendingImage }]);
+      setMessageQueue(prev => [...prev, { text: input, files: [...pendingFiles], image: pendingImage }]);
       setInput('');
-      setPendingFile(null);
+      setPendingFiles([]);
       setPendingImage(null);
       return;
     }
 
     setInput('');
-    setPendingFile(null);
+    const filesToSend = [...pendingFiles];
+    setPendingFiles([]);
     setPendingImage(null);
-    await sendMessage(input, pendingFile, pendingImage);
+    await sendMessage(input, filesToSend, pendingImage);
 
-
-    // Process queue after send completes
-
-  }, [input, pendingFile, pendingImage, loading, sendMessage]);
+  }, [input, pendingFiles, pendingImage, loading, sendMessage]);
 
   const handleRetry = useCallback(() => {
     if (!failedMessage) return;
-    const { text, file, image } = failedMessage;
+    const { text, files, image } = failedMessage;
     setFailedMessage(null);
     setError('');
-    // Remove the last failed assistant message before re-sending
     setMessages(prev => prev[prev.length - 1]?.role === 'assistant' ? prev.slice(0, -1) : prev);
-    sendMessage(text, file, image, true);
+    sendMessage(text, files, image, true);
   }, [failedMessage, sendMessage]);
 
   const removeFromQueue = useCallback((index) => {
@@ -837,20 +795,24 @@ const ChatPage = () => {
           <div className="input-box">
             <FileUpload
               topicId={activeTopic?.id}
-              onFileSelect={setPendingFile}
+              onFileSelect={(files) => setPendingFiles(prev => [...prev, ...files])}
               disabled={loading || !model}
             />
 
-            {pendingFile && (
-              <div className="pending-file-tag">
-                <span className="file-pill">📎 {pendingFile.name}</span>
-                <button
-                  className="remove-file-btn"
-                  onClick={() => setPendingFile(null)}
-                  title="Remove attachment"
-                >
-                  &times;
-                </button>
+            {pendingFiles.length > 0 && (
+              <div className="pending-files-list">
+                {pendingFiles.map((f, i) => (
+                  <div key={i} className="pending-file-tag">
+                    <span className="file-pill">📎 {f.name}</span>
+                    <button
+                      className="remove-file-btn"
+                      onClick={() => setPendingFiles(prev => prev.filter((_, idx) => idx !== i))}
+                      title="Remove attachment"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -879,7 +841,7 @@ const ChatPage = () => {
             <button
               className={`send-btn ${loading ? 'stop-btn' : ''}`}
               onClick={loading ? handleStop : handleSend}
-              disabled={loading ? false : (!input.trim() && !pendingFile) || !model}
+              disabled={loading ? false : (!input.trim() && pendingFiles.length === 0) || !model}
             >
               {loading ? <StopCircle size={18} /> : <Send size={18} />}
             </button>

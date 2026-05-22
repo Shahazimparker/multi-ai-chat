@@ -9,38 +9,37 @@ const FileUpload = ({ onFileSelect, disabled }) => {
   const [showUploader, setShowUploader] = useState(false);
 
   const handleFileSelect = (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      onFileSelect?.(file);
+    const files = e.target.files;
+    if (files?.length > 0) {
+      onFileSelect?.(Array.from(files));
     }
     setShowUploader(false);
-    e.target.value = ''; // Reset so the same file can be re-selected if removed
+    e.target.value = '';
   };
 
   return (
     <div className="file-upload">
-      {/* Upload Button */}
       <button
         className="upload-trigger icon-pin"
         onClick={() => setShowUploader(!showUploader)}
         disabled={disabled}
-        title="Attach file"
+        title="Attach files"
       >
         <Paperclip size={20} />
       </button>
 
-      {/* Upload Input (Hidden) */}
       {showUploader && (
         <div className="upload-input-wrapper">
           <input
             type="file"
+            multiple
             accept=".pdf,.txt,.doc,.docx,.jpg,.jpeg,.png,.zip,.js,.ts,.py,.java,.cpp,.go,.rb,.cjs,.mjs,.html,.json,.css,.xml,.yml,.yaml,.md,.sql,.sh,.bat,.php,.rs,.swift,.kt,.vue,.svelte,.*"
             onChange={handleFileSelect}
             id="file-input"
             style={{ display: 'none' }}
           />
           <label htmlFor="file-input" className="file-label">
-            📁 Click to select a file
+            📁 Click to select files (multi-select supported)
           </label>
         </div>
       )}
