@@ -22,6 +22,7 @@ import FileUpload from '../components/chat/FileUpload';
 const ChatPage = () => {
   const { refreshTokenStats } = useAuth();
 
+  const [models, setModels] = useState([]);   // all available models from API
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -107,6 +108,36 @@ const ChatPage = () => {
     poll();
     return () => { cancelled = true; };
   }, []);
+
+  // ── Fetch available models list ──────────────────────────────────
+  useEffect(() => {
+    api.get('/chat/models')
+      .then(res => setModels(res.data.models || []))
+      .catch(() => {});
+  }, []);
+
+  // ── Auto-switch to deepseek-v4-pro-erp when Only DB is toggled ON ──
+  const prevModelRef = useRef(null);
+
+  useEffect(() => {
+    if (dbOnly) {
+      // Save current model before switching
+      if (model && model.id !== 'deepseek-v4-pro-erp') {
+        prevModelRef.current = model;
+      }
+      // Switch to ERP model if not already selected
+      if (!model || model.id !== 'deepseek-v4-pro-erp') {
+        const erpModel = models.find(m => m.id === 'deepseek-v4-pro-erp');
+        if (erpModel) setModel(erpModel);
+      }
+    } else {
+      // Only DB OFF — restore previous model (if any)
+      if (prevModelRef.current) {
+        setModel(prevModelRef.current);
+        prevModelRef.current = null;
+      }
+    }
+  }, [dbOnly]);
 
   // Track if user is near the bottom of the messages area
   const handleScroll = useCallback(() => {

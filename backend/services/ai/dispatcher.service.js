@@ -40,7 +40,7 @@ const dispatchToAI = async (modelConfig, messages, signal = null) => {
     case 'openrouter': return callOpenRouter(model, apiKey, messages, signal);
     case 'together': return callTogether(model, apiKey, messages, signal);
     case 'anyapi': return callAnyAPI(model, apiKey, messages, signal);
-    case 'deepseek': return calldeepseekAPI(model, apiKey, messages, signal);
+    case 'deepseek': return calldeepseekAPI(model, apiKey, messages, signal, modelConfig);
 
     default:
       throw new Error(`Unknown AI provider: ${provider}`);

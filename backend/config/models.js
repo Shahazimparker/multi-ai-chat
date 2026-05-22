@@ -6,6 +6,70 @@
 
 const MODELS = {
 
+  // ── DeepSeek AI ────────────────────────────────────────────
+  'deepseek-v4-flash': {
+    label: 'DeepSeek V4 Flash — Fast (Paid)',
+    provider: 'deepseek',
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    model: 'deepseek-v4-flash',
+    paid: true,
+    maxTokens: 64000,
+    reasoning: {
+      thinking: 'enabled',
+      reasoningEffort: 'high',
+    },
+  },
+  'deepseek-v4-flash-reasoning': {
+    label: 'DeepSeek V4 Flash — Reasoning (Paid)',
+    provider: 'deepseek',
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    model: 'deepseek-v4-flash',
+    paid: true,
+    maxTokens: 64000,
+    reasoning: {
+      thinking: 'enabled',
+      reasoningEffort: 'max',
+    },
+  },
+  'deepseek-v4-pro': {
+    label: 'DeepSeek V4 Pro — Fast (Paid)',
+    provider: 'deepseek',
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    model: 'deepseek-v4-pro',
+    paid: true,
+    maxTokens: 64000,
+    reasoning: {
+      thinking: 'enabled',
+      reasoningEffort: 'high',
+    },
+  },
+  'deepseek-v4-pro-reasoning': {
+    label: 'DeepSeek V4 Pro — Reasoning (Paid)',
+    provider: 'deepseek',
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    model: 'deepseek-v4-pro',
+    paid: true,
+    maxTokens: 64000,
+    reasoning: {
+      thinking: 'enabled',
+      reasoningEffort: 'max',
+    },
+  },
+  'deepseek-v4-pro-erp': {
+    label: 'DeepSeek V4 Pro — ERP (Paid)',
+    provider: 'deepseek',
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    model: 'deepseek-v4-pro',
+    paid: true,
+    maxTokens: 64000,
+    temperature: 0.2,
+    reasoning: {
+      thinking: 'enabled',
+      reasoningEffort: 'max',
+    },
+  },
+
+  // ── Groq / LLaMA ───────────────────────────────────────────
   'groq-mixtral': {
     label: 'Groq LLaMA 3.1 8B Instant (Free)',
     provider: 'groq',
@@ -14,7 +78,6 @@ const MODELS = {
     paid: false,
     maxTokens: 5999,
   },
-  // ── Groq (Ultra-fast inference) ───────────────────────────
   'groq-llama': {
     label: 'Groq LLaMA 3.3 70B (Free)',
     provider: 'groq',
@@ -60,24 +123,6 @@ const MODELS = {
     maxTokens: 5999,
   },
 
-  // ── DeepSeek AI ────────────────────────────────────────────
-  'deepseek-v4-flash': {
-    label: 'deepseek-v4-flash (Paid)',
-    provider: 'deepseek',
-    apiKey: process.env.DEEPSEEK_API_KEY,
-    model: 'deepseek-v4-flash',
-    paid: true,
-    maxTokens: 64000,  // Increased for complex SAP/ERP scenarios with multiple contexts
-  },
-  'deepseek-v4-pro': {
-    label: 'deepseek-v4-pro (Paid)',
-    provider: 'deepseek',
-    apiKey: process.env.DEEPSEEK_API_KEY,
-    model: 'deepseek-v4-pro',
-    paid: true,
-    maxTokens: 64000,  // Increased for complex SAP/ERP scenarios with multiple contexts
-  },
-
   // ── Anthropic Claude ──────────────────────────────────────
   'claude-haiku': {
     label: 'Claude Haiku (Fast, Paid)',
@@ -85,7 +130,7 @@ const MODELS = {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: 'claude-haiku-4-5-20251001',
     paid: true,
-    maxTokens: 100000,  // Claude supports 100K context for complex ERP scenarios
+    maxTokens: 100000,
   },
   'claude-sonnet': {
     label: 'Claude Sonnet (Smart, Paid)',
@@ -93,7 +138,7 @@ const MODELS = {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: 'claude-sonnet-4-6',
     paid: true,
-    maxTokens: 200000,  // Claude Sonnet supports 200K context
+    maxTokens: 200000,
   },
   'claude-opus': {
     label: 'Claude Opus (Best, Paid)',
@@ -101,7 +146,7 @@ const MODELS = {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: 'claude-opus-4-6',
     paid: true,
-    maxTokens: 200000,  // Claude Opus supports 200K context
+    maxTokens: 200000,
   },
 
   // ── OpenRouter (Live model list) ──────────────────────────
@@ -112,7 +157,7 @@ const MODELS = {
     model: 'openrouter',
     paid: true,
     unified: true,
-    maxTokens: 128000,  // OpenRouter meta-llama models support up to 128K
+    maxTokens: 128000,
     models: [],
   },
 };

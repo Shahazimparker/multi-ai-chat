@@ -63,24 +63,64 @@ const downloadFile = (content, filename, mimeType) => {
 };
 
 // ── FileCard — renders a downloadable file from AI-generated code ──
-const FileCard = ({ file, onPreview, onDownload }) => {
+const FileCard = ({ file, onDownload }) => {
+  const [previewOpen, setPreviewOpen] = React.useState(false);
+  const [fetchedContent, setFetchedContent] = React.useState(null);
+  const isHtml = file.file_type === 'html' || file.file_name?.endsWith('.html');
+  const displayContent = file.content || fetchedContent || '';
+
+  const togglePreview = () => {
+    const opening = !previewOpen;
+    setPreviewOpen(opening);
+    // Fetch content from server if file has file_id but no local content
+    if (opening && !file.content && !fetchedContent && file.file_id) {
+      const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+      fetch(`/upload/preview/${file.file_id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(res => res.ok ? res.json() : Promise.reject())
+        .then(data => setFetchedContent(data.content || ''))
+        .catch(() => setFetchedContent('[Preview unavailable]'));
+    }
+  };
+
   return (
-    <div className="file-card">
-      <div className="file-card-icon-wrap">
-        <FileText size={20} />
+    <div className="file-card-wrap">
+      <div className="file-card">
+        <div className="file-card-icon-wrap">
+          <FileText size={20} />
+        </div>
+        <div className="file-card-info">
+          <span className="file-card-name">{file.file_name}</span>
+          <span className="file-card-type">{file.file_type?.toUpperCase() || 'FILE'}</span>
+        </div>
+        <div className="file-card-actions">
+          <button
+            className={`file-card-btn preview-btn ${previewOpen ? 'active' : ''}`}
+            onClick={togglePreview}
+            title="Preview"
+          >
+            <ExternalLink size={13} />
+          </button>
+          <button className="file-card-btn" onClick={() => onDownload(file)} title="Download">
+            <Download size={13} />
+          </button>
+        </div>
       </div>
-      <div className="file-card-info">
-        <span className="file-card-name">{file.file_name}</span>
-        <span className="file-card-type">{file.file_type?.toUpperCase() || 'FILE'}</span>
-      </div>
-      <div className="file-card-actions">
-        <button className="file-card-btn preview-btn" onClick={() => onPreview(file)} title="Preview">
-          <ExternalLink size={13} />
-        </button>
-        <button className="file-card-btn" onClick={() => onDownload(file)} title="Download">
-          <Download size={13} />
-        </button>
-      </div>
+      {previewOpen && (
+        <div className="file-preview-inline">
+          {isHtml ? (
+            <iframe
+              srcDoc={displayContent}
+              title={file.file_name}
+              sandbox="allow-scripts"
+              className="file-preview-iframe"
+            />
+          ) : (
+            <pre className="file-preview-code">{displayContent || 'Loading...'}</pre>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -194,44 +234,40 @@ const MessageBubble = ({ message, onSidebarRefresh }) => {
         const codeText = String(children).replace(/\n$/, '');
 
         // If this code block language is a file type, show as FileCard
-        if (FILE_LANGUAGES.has(lang) && message.generatedFiles?.length > 0) {
+        if (FILE_LANGUAGES.has(lang)) {
           const idx = fileCodeBlockIdx.current++;
-          const file = message.generatedFiles[idx];
-          if (file) {
-            const handlePreview = async (f) => {
+          // Prefer server-backed file if available, else build client-side file object
+          const serverFile = message.generatedFiles?.[idx];
+          const fileName = serverFile?.file_name || `generated.${lang}`;
+          const file = serverFile
+            ? { ...serverFile, content: serverFile.content || codeText }
+            : { file_name: fileName, file_type: lang, content: codeText };
+          const handleDownload = (f) => {
+            if (f.file_id) {
               const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
-              try {
-                const res = await fetch(`/upload/preview/${f.file_id}`, {
-                  headers: { Authorization: `Bearer ${token}` },
-                });
-                if (!res.ok) return alert('Preview failed');
-                const data = await res.json();
-                const w = window.open('', '_blank');
-                w.document.write(`<pre style="font:14px/1.5 monospace;padding:20px">${data.content}</pre>`);
-                w.document.title = data.file_name;
-              } catch { alert('Preview failed'); }
-            };
-            const handleDownload = async (f) => {
-              const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
-              try {
-                const res = await fetch(`/upload/download/${f.file_id}`, {
-                  headers: { Authorization: `Bearer ${token}` },
-                });
-                if (!res.ok) return alert('Download failed');
-                const blob = await res.blob();
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                // Use the Content-Disposition filename from server if available
-                const cd = res.headers.get('Content-Disposition');
-                const match = cd && cd.match(/filename="?(.+?)"?$/);
-                a.download = match ? match[1] : (f.file_name || 'file');
-                a.click();
-                URL.revokeObjectURL(url);
-              } catch { alert('Download failed'); }
-            };
-            return <FileCard file={file} onPreview={handlePreview} onDownload={handleDownload} />;
-          }
+              fetch(`/upload/download/${f.file_id}`, {
+                headers: { Authorization: `Bearer ${token}` },
+              })
+                .then(res => {
+                  if (!res.ok) return Promise.reject();
+                  const cd = res.headers.get('Content-Disposition');
+                  const filenameMatch = cd?.match(/filename="?(.+?)"?$/);
+                  return res.blob().then(blob => ({ blob, filename: filenameMatch?.[1] }));
+                })
+                .then(({ blob, filename }) => {
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = filename || f.file_name || 'file';
+                  a.click();
+                  URL.revokeObjectURL(url);
+                })
+                .catch(() => alert('Download failed'));
+            } else {
+              downloadFile(f.content, f.file_name, 'text/plain;charset=utf-8');
+            }
+          };
+          return <FileCard file={file} onDownload={handleDownload} />;
         }
 
         if (lang === 'csv') {
@@ -258,20 +294,7 @@ const MessageBubble = ({ message, onSidebarRefresh }) => {
     },
   }), [tableCSVList, csvCodeBlocks, message.generatedFiles]);
 
-  // Preview/download helpers for generated files (Auth header, no token in URL)
-  const handleFilePreview = async (f) => {
-    const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
-    try {
-      const res = await fetch(`/upload/preview/${f.file_id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return alert('Preview failed');
-      const data = await res.json();
-      const w = window.open('', '_blank');
-      w.document.write(`<pre style="font:14px/1.5 monospace;padding:20px">${data.content}</pre>`);
-      w.document.title = data.file_name;
-    } catch { alert('Preview failed'); }
-  };
+  // Download helper for generated files
   const handleFileDownload = async (f) => {
     const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
     try {
@@ -319,7 +342,6 @@ const MessageBubble = ({ message, onSidebarRefresh }) => {
                 <FileCard
                   key={f.file_id || i}
                   file={f}
-                  onPreview={handleFilePreview}
                   onDownload={handleFileDownload}
                 />
               ))}
