@@ -69,9 +69,8 @@ app.use(sentryTracingHandler());
 app.use(helmet());                            // sets secure HTTP headers
 app.use(morgan('dev'));                        // request logging
 app.use(express.json({ limit: '10mb' }));     // parse JSON bodies (10MB for RAG docs)
-app.use(csrfProtection);                      // CSRF token validation on mutating routes
 
-// ── CORS — allow local dev + production (set FRONTEND_URL in Vercel env vars) ──
+// ── CORS — MUST run before CSRF so error responses get CORS headers ──
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5000',
@@ -92,6 +91,9 @@ app.use(cors({
 
 // ── Handle OPTIONS preflight explicitly (required by Vercel serverless) ──
 app.options('*', (req, res) => res.sendStatus(204));
+
+// ── CSRF token validation on mutating routes (AFTER CORS so error responses get CORS headers) ──
+app.use(csrfProtection);
 
 // ── Health check (used by Vercel / uptime monitors) ────────
 app.get('/api/health', (req, res) => {

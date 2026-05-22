@@ -42,8 +42,9 @@ const csrfProtection = (req, res, next) => {
     return next();
   }
 
-  // Also skip for health checks and non-authenticated routes
+  // Also skip for health checks and auth routes (login generates the CSRF token)
   if (req.path === '/api/health') return next();
+  if (req.path === '/api/auth/login') return next();
 
   const csrfToken = req.headers['x-csrf-token'];
 
