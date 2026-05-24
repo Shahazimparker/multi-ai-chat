@@ -1001,3 +1001,63 @@
   .float-orb:nth-child(2) { width: 18px; height: 18px; }
   .float-orb:nth-child(3) { width: 14px; height: 14px; }
 }
+
+/* ── Scroll to bottom button ─────────────────────────────── */
+.scroll-to-bottom-btn {
+  position: sticky;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px var(--shadow-md);
+  transition: all 0.25s ease;
+  margin: 0 auto;
+  flex-shrink: 0;
+  backdrop-filter: blur(12px);
+}
+
+.scroll-to-bottom-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+  transform: translateX(-50%) translateY(-2px);
+  box-shadow: 0 8px 24px var(--shadow-lg);
+}
+
+.scroll-to-bottom-btn:active {
+  transform: translateX(-50%) scale(0.92);
+}
+
+/* Light theme */
+:root[data-theme="light"] .scroll-to-bottom-btn {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(148, 163, 184, 0.4);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+:root[data-theme="light"] .scroll-to-bottom-btn:hover {
+  background: #ffffff;
+  border-color: rgba(99, 102, 241, 0.5);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+/* Hide on mobile when sidebar is hidden — already enough tap targets */
+@media (max-width: 768px) {
+  .scroll-to-bottom-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 18px;
+    bottom: 10px;
+  }
+}

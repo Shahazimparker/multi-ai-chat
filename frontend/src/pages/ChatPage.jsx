@@ -27,6 +27,7 @@ const ChatPage = () => {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [model, setModel] = useState(null);   // selected AI model object
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [activeTopic, setActiveTopic] = useState(null);
   const [sidebarRefresh, setSidebarRefresh] = useState(0);
   const [error, setError] = useState('');
@@ -139,12 +140,17 @@ const ChatPage = () => {
     }
   }, [dbOnly]);
 
+  const scrollToBottom = () => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
   // Track if user is near the bottom of the messages area
   const handleScroll = useCallback(() => {
     const el = messagesAreaRef.current;
     if (!el) return;
     const threshold = 100; // px from bottom counts as "at bottom"
     isUserAtBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    setShowScrollBtn(!isUserAtBottom.current);
   }, []);
 
   // Auto-scroll only if user hasn't scrolled up
@@ -191,7 +197,7 @@ const ChatPage = () => {
 
 
 
-  // Load messages when switching topics
+  // Load messages when switching topics — also restore the model used for this topic
   const handleTopicSelect = async (topic) => {
     setActiveTopic(topic);
     setMessages([]);
@@ -202,6 +208,12 @@ const ChatPage = () => {
         created_at: m.created_at,
       })));
     } catch { setMessages([]); }
+
+    // Restore the model this topic was created with
+    if (topic.model && models.length > 0) {
+      const matched = models.find(m => m.id === topic.model);
+      if (matched) setModel(matched);
+    }
   };
 
   const handleNewChat = () => {
@@ -445,14 +457,62 @@ const ChatPage = () => {
         const fileLangs = new Set(['html','htm','js','jsx','ts','tsx','css','json','xml','md','svg','py','sql','sh']);
         let fileMatch;
         let fileIdx = 0;
+
+        // Extract a meaningful name from code content
+        const extractFileName = (code, lang, idx) => {
+          const ext = lang === 'htm' ? 'html' : lang;
+          const lines = code.split('\n');
+          const firstLine = lines[0]?.trim() || '';
+          const secondLine = lines[1]?.trim() || '';
+
+          // 1. HTML <title> tag
+          if (lang === 'html' || lang === 'htm') {
+            const titleMatch = code.match(/<title>([^<]+)<\/title>/i);
+            if (titleMatch) return `${titleMatch[1].trim().replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, '_')}.${ext}`;
+          }
+
+          // 2. Single-line comment describing purpose (first line)
+          const commentMatch = firstLine.match(/^(?:\/\/|#|<!--?|%)\s*(.+)/);
+          const commentMatch2 = secondLine.match(/^(?:\/\/|#|<!--?|%)\s*(.+)/);
+          const descComment = commentMatch?.[1] || commentMatch2?.[1];
+          if (descComment) {
+            const name = descComment.trim().replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, '_').substring(0, 40);
+            if (name.length > 3) return `${name}.${ext}`;
+          }
+
+          // 3. Named declarations: function, class, const, let, var, def, export default
+          const namePatterns = [
+            /(?:export\s+)?(?:default\s+)?(?:function\s+|fn\s+)(\w+)/,
+            /(?:export\s+)?(?:default\s+)?class\s+(\w+)/,
+            /(?:export\s+)?(?:default\s+)?(?:const|let|var)\s+(\w+)/,
+            /def\s+(\w+)/,
+            /(?:export\s+)?default\s+(\w+)/,
+          ];
+          for (const pattern of namePatterns) {
+            const match = code.match(pattern);
+            if (match) return `${match[1]}.${ext}`;
+          }
+
+          // 4. CSS: extract first selector name
+          if (lang === 'css') {
+            const selMatch = code.match(/\.([\w-]+)\s*\{/);
+            if (selMatch) return `${selMatch[1]}.css`;
+          }
+
+          // 5. Fallback: descriptive name based on lang + idx
+          const labels = { html: 'page', js: 'script', jsx: 'component', ts: 'module', tsx: 'component', css: 'styles', json: 'data', xml: 'config', md: 'document', svg: 'graphic', py: 'script', sql: 'query', sh: 'script' };
+          return `${labels[lang] || 'file'}_${idx + 1}.${ext}`;
+        };
+
         while ((fileMatch = fileBlockRegex.exec(fullReply)) !== null) {
           const lang = fileMatch[1];
           if (fileLangs.has(lang)) {
             const content = fileMatch[2].trim();
             const ext = lang === 'htm' ? 'html' : lang;
+            const fileName = extractFileName(content, lang, fileIdx);
             try {
               const res = await api.post('/upload/generate-file', {
-                topicId: topicIdToUse, fileName: `generated_${fileIdx + 1}.${ext}`, content, fileType: lang,
+                topicId: topicIdToUse, fileName, content, fileType: lang,
               });
               if (res.data?.file) generatedFiles.push(res.data.file);
             } catch (e) { console.error('[saveGeneratedFile]', e); }
@@ -706,6 +766,12 @@ const ChatPage = () => {
             </div>
           )}
 
+          {/* Scroll to bottom button */}
+          {showScrollBtn && messages.length > 0 && (
+            <button className="scroll-to-bottom-btn" onClick={scrollToBottom} title="Scroll to bottom">
+              ↓
+            </button>
+          )}
           <div ref={bottomRef} />
         </div>
 

@@ -484,9 +484,9 @@ const sendMessage = async (req, res) => {
           { topic_id: resolvedTopicId, user_id: user.id, role: 'assistant', content: finalReply, model: modelId, tokens_used: billableTokens },
         ]);
 
-        // Update topic timestamp
+        // Update topic timestamp + model (so it reflects the latest model used)
         await supabase.from('topics')
-          .update({ updated_at: new Date().toISOString() })
+          .update({ updated_at: new Date().toISOString(), model: modelId })
           .eq('id', resolvedTopicId);
       }
     }

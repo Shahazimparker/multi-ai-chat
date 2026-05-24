@@ -523,10 +523,10 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
         persistError = msgError;
         console.error('[Stream] Message insert error:', msgError.message);
       } else {
-        // Only update topic timestamp if messages saved
+        // Update topic timestamp + model (reflects latest model used)
         const { error: topicError } = await supabase
           .from('topics')
-          .update({ updated_at: new Date().toISOString() })
+          .update({ updated_at: new Date().toISOString(), model: modelId })
           .eq('id', resolvedTopicId);
 
         if (topicError) {
