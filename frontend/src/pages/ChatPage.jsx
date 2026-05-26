@@ -415,7 +415,7 @@ const ChatPage = () => {
       let metadata = {};
       let streamingText = '';
 
-      setMessages(prev => [...prev, { role: 'assistant', content: '', streaming: true, created_at: new Date().toISOString() }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: '', streaming: true, statusMessage: null, created_at: new Date().toISOString() }]);
 
       while (true) {
         const { done, value } = await reader.read();
@@ -426,11 +426,21 @@ const ChatPage = () => {
           try {
             const data = JSON.parse(line.slice(6));
             if (data.type === 'error') { setError(data.error); break; }
+            if (data.type === 'status' && data.tool === 'web_search') {
+              setMessages(prev => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last && last.role === 'assistant') {
+                  updated[updated.length - 1] = { ...last, statusMessage: data.message || 'Searching the web...', streaming: true };
+                }
+                return updated;
+              });
+            }
             if (data.type === 'chunk') {
               streamingText += data.text;
               setMessages(prev => {
                 const updated = [...prev];
-                updated[updated.length - 1] = { ...updated[updated.length - 1], content: streamingText };
+                updated[updated.length - 1] = { ...updated[updated.length - 1], content: streamingText, statusMessage: null };
                 return updated;
               });
             } else if (data.type === 'done') {
@@ -441,7 +451,7 @@ const ChatPage = () => {
               metadata = { cacheHit: true, tokensUsed: 0 };
               setMessages(prev => {
                 const updated = [...prev];
-                updated[updated.length - 1] = { ...updated[updated.length - 1], content: fullReply, ...metadata, streaming: false };
+                updated[updated.length - 1] = { ...updated[updated.length - 1], content: fullReply, ...metadata, streaming: false, statusMessage: null };
                 return updated;
               });
               break;
@@ -523,7 +533,7 @@ const ChatPage = () => {
 
       setMessages(prev => {
         const updated = [...prev];
-        updated[updated.length - 1] = { ...updated[updated.length - 1], streaming: false, model: metadata.model, tokensUsed: metadata.tokensUsed, cacheHit: metadata.cacheHit, generatedFiles };
+        updated[updated.length - 1] = { ...updated[updated.length - 1], streaming: false, statusMessage: null, model: metadata.model, tokensUsed: metadata.tokensUsed, cacheHit: metadata.cacheHit, generatedFiles };
         return updated;
       });
 
@@ -543,11 +553,17 @@ const ChatPage = () => {
         setMessages(prev => {
           const updated = [...prev];
           const last = updated[updated.length - 1];
-          if (last && last.role === 'assistant') updated[updated.length - 1] = { ...last, streaming: false };
+          if (last && last.role === 'assistant') updated[updated.length - 1] = { ...last, streaming: false, statusMessage: null };
           return updated;
         });
         return;
       }
+      setMessages(prev => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last && last.role === 'assistant') updated[updated.length - 1] = { ...last, streaming: false, statusMessage: null };
+        return updated;
+      });
       const msg = err.response?.data?.error || err.message || 'Something went wrong.';
       setError(msg);
       setMessages(prev => [...prev, { role: 'assistant', content: `❌ Error: ${msg}` }]);

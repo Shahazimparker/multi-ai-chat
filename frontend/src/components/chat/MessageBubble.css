@@ -78,6 +78,45 @@
   transition: all 0.3s ease;
 }
 
+.tool-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.28);
+}
+
+:root[data-theme="light"] .tool-status-pill {
+  color: rgba(51, 65, 85, 0.9);
+  background: rgba(99, 102, 241, 0.08);
+  border-color: rgba(99, 102, 241, 0.2);
+}
+
+.tool-status-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #7dd3fc;
+  animation: toolSpin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+:root[data-theme="light"] .tool-status-spinner {
+  border-color: rgba(71, 85, 105, 0.18);
+  border-top-color: #2563eb;
+}
+
+@keyframes toolSpin {
+  to { transform: rotate(360deg); }
+}
+
 /* Markdown inside assistant bubble */
 .msg-bubble.assistant p          { margin: 0 0 10px; }
 .msg-bubble.assistant p:last-child{ margin-bottom: 0; }

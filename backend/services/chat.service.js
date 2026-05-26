@@ -192,6 +192,7 @@ const processToolCall = async ({
   fetchedSchemaTables,
   consecutiveZeroResults = 0,
   dbQueryCount = 0,
+  onStatus = null,
 }) => {
   // ── SEARCH_FILES tool ──
   const searchMatch = findSearchFileMatch(reply);
@@ -263,7 +264,14 @@ const processToolCall = async ({
   const webSearchMatch = findWebSearchMatch(reply);
   if (webSearchMatch) {
     const query = webSearchMatch[1].trim();
+    onStatus?.({
+      type: 'status',
+      tool: 'web_search',
+      message: `Searching the web for "${query}"...`,
+    });
+    console.log(`[Tool] Web search requested: "${query}"`);
     const results = await searchWeb(query);
+    console.log(`[Tool] Web search returned ${results.length} result(s) for "${query}"`);
     
     const resultBlock = results.length > 0
       ? `[WEB SEARCH RESULTS for "${query}"]\n${results.map(r => `- [${r.title}](${r.url}): ${r.snippet}`).join('\n')}\n[END WEB SEARCH RESULTS]\n\nNow answer the user's question based on these results.`

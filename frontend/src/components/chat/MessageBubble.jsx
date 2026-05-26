@@ -322,6 +322,13 @@ const MessageBubble = ({ message, onSidebarRefresh }) => {
       </div>
       
       <div className="msg-bubble">
+        {message.statusMessage && (
+          <div className="tool-status-pill">
+            <span className="tool-status-spinner" />
+            <span>{message.statusMessage}</span>
+          </div>
+        )}
+
         {message.role === 'assistant' ? (
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}

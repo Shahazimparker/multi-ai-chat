@@ -249,8 +249,10 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     // ── Business DB schema injection ──
     const { bizDbDirective } = buildBizDbDirective(effectiveDbOnly);
 
+    const generalToolsDirective = `\n\n## General Tools\nYou have access to the following tools. To use them, output EXACTLY the tags below:\n1. Web Search: [WEB_SEARCH:query="your search query"]\n2. Execute JS Code: [EXECUTE_CODE]console.log("hello");[/EXECUTE_CODE]\nWait for the tool result to be provided in the next user message before answering.`;
+
     // Build AI messages
-    const systemPrompt = `You are a helpful AI assistant.${ragContext ? '\n\n[CONTEXT FROM DOCUMENTS]\n' + ragContext : ''}${fileContext ? '\n\n' + fileContext : ''}${bizDbDirective}`;
+    const systemPrompt = `You are a helpful AI assistant.${ragContext ? '\n\n[CONTEXT FROM DOCUMENTS]\n' + ragContext : ''}${fileContext ? '\n\n' + fileContext : ''}${bizDbDirective}${generalToolsDirective}`;
     const aiMessages = [
       { role: 'system', content: systemPrompt },
     ];
@@ -322,6 +324,15 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
         fetchedSchemaTables,
         consecutiveZeroResults,
         dbQueryCount,
+        onStatus: (statusEvent) => {
+          if (!res.writableEnded && !res.destroyed) {
+            try {
+              res.write(`data: ${JSON.stringify(statusEvent)}\n\n`);
+            } catch (writeErr) {
+              console.warn('[Stream] Failed to write tool status event:', writeErr.message);
+            }
+          }
+        },
       });
 
       if (toolResult.handled) {
