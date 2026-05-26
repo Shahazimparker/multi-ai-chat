@@ -11,6 +11,7 @@ import LoginPage        from './pages/LoginPage';
 import ChatPage         from './pages/ChatPage';
 import AdminPage        from './pages/AdminPage';
 import AnonymousPage    from './pages/AnonymousPage';
+import FinancePage      from './pages/Finance/FinancePage';
 
 // ── Protected route wrapper ────────────────────────────────
 const ProtectedRoute = ({ children, adminOnly = false }) => {
@@ -26,6 +27,7 @@ const AppRoutes = () => (
     <Route path="/login"     element={<LoginPage />} />
     <Route path="/anonymous" element={<AnonymousPage />} />
     <Route path="/chat"      element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
+    <Route path="/finance"   element={<ProtectedRoute><FinancePage /></ProtectedRoute>} />
     <Route path="/admin"     element={<ProtectedRoute adminOnly><AdminPage /></ProtectedRoute>} />
     <Route path="*"          element={<Navigate to="/login" replace />} />
   </Routes>

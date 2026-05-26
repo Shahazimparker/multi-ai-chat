@@ -2,11 +2,12 @@
 // FILE: frontend/src/components/chat/Sidebar.jsx
 // PURPOSE: Left sidebar — New Chat, collapsible Chats & Artifacts
 //          sections top, Recent chats below divider, user footer.
+//          Added Chat/Finance nav buttons with active state.
 // ============================================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { PlusCircle, MessageSquare, Trash2, Pencil, Check, X, LogOut, Settings, FileText, Clock, ChevronRight, Search, Download } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import ThemeToggle from '../layout/ThemeToggle';
 import api from '../../config/api';
@@ -17,6 +18,8 @@ const RECENT_COUNT = 3;
 const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
   const { user, logout }      = useAuth();
   const navigate              = useNavigate();
+  const location              = useLocation();
+  const isFinancePage         = location.pathname === '/finance';
   const [topics,  setTopics]  = useState([]);
   const [editing, setEditing] = useState(null);
   const [editVal, setEditVal] = useState('');
@@ -105,7 +108,6 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
       const url = URL.createObjectURL(new Blob([res.data]));
       const a = document.createElement('a');
       a.href = url;
-      // Use Content-Disposition filename from server if available
       const cd = res.headers?.['content-disposition'];
       const match = cd && cd.match(/filename="?(.+?)"?$/);
       a.download = match ? match[1] : art.name;
@@ -130,7 +132,6 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
     }
   }, []);
 
-  // Fetch user's uploaded files (cross-chat) when component mounts or refreshTrigger changes
   useEffect(() => {
     if (!user) return;
     api.get('/upload/files')
@@ -184,7 +185,6 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
 
   return (
     <aside className="sidebar" ref={sidebarRef} style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
-      {/* Resize handle — draggable vertical bar on the right edge */}
       <div
         className="sidebar-resize-handle"
         onMouseDown={handleResizeMouseDown}
@@ -208,6 +208,28 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
         <button className="new-chat-btn" onClick={onNewChat}>
           <PlusCircle size={16} />
           New Chat
+        </button>
+
+        {/* Chat button */}
+        <button
+          className={`finance-nav-btn ${!isFinancePage ? 'nav-btn-active' : ''}`}
+          onClick={() => navigate('/chat')}
+          title="AI Chat"
+          style={!isFinancePage ? { background: 'linear-gradient(135deg, rgba(0,112,242,0.15), rgba(0,112,242,0.08))', borderColor: 'rgba(0,112,242,0.5)' } : {}}
+        >
+          <span className="finance-nav-icon">💬</span>
+          Chat
+        </button>
+
+        {/* Finance AI button */}
+        <button
+          className={`finance-nav-btn ${isFinancePage ? 'nav-btn-active' : ''}`}
+          onClick={() => navigate('/finance')}
+          title="Finance AI — SAP S/4HANA Intelligence"
+          style={isFinancePage ? { background: 'linear-gradient(135deg, rgba(0,112,242,0.15), rgba(14,191,161,0.12))', borderColor: 'rgba(14,191,161,0.5)', color: '#0EBFA1' } : {}}
+        >
+          <span className="finance-nav-icon">💰</span>
+          Finance AI
         </button>
 
         {/* ── Chats section (collapsible) ── */}
@@ -273,7 +295,6 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
           </div>
           {artifactsOpen && (
             <div className="sidebar-items">
-              {/* Search bar */}
               <div className="artifact-search-wrap">
                 <Search size={13} className="artifact-search-icon" />
                 <input
@@ -285,7 +306,6 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
                   onClick={e => e.stopPropagation()}
                 />
               </div>
-              {/* Filtered list */}
               {filteredArtifacts.length === 0 ? (
                 <p className="sidebar-empty-msg">No matching docs</p>
               ) : (
@@ -297,18 +317,10 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
                       <span className="artifact-size">{art.size}</span>
                     </div>
                     <div className="artifact-actions">
-                      <button
-                        className="artifact-dl-btn"
-                        onClick={e => handleArtifactDownload(e, art)}
-                        title="Download"
-                      >
+                      <button className="artifact-dl-btn" onClick={e => handleArtifactDownload(e, art)} title="Download">
                         <Download size={12} />
                       </button>
-                      <button
-                        className="artifact-del-btn"
-                        onClick={e => handleArtifactDelete(e, art)}
-                        title="Delete"
-                      >
+                      <button className="artifact-del-btn" onClick={e => handleArtifactDelete(e, art)} title="Delete">
                         <Trash2 size={12} />
                       </button>
                     </div>

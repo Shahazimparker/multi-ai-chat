@@ -2,12 +2,13 @@
 // FILE: frontend/src/components/chat/MobileNav.jsx
 // PURPOSE: Mobile navigation drawer — collapsible Chats & Artifacts
 //          sections with search, Recent below divider.
+//          Added Chat/Finance nav buttons with active state.
 // ============================================================
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Menu, X, PlusCircle, MessageSquare, LogOut, Settings, Trash2, Pencil, Check, FileText, Clock, ChevronRight, Search, Download } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../../config/api';
 import ThemeToggle from '../layout/ThemeToggle';
 import './MobileNav.css';
@@ -17,6 +18,8 @@ const RECENT_COUNT = 3;
 const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
+    const location = useLocation();
+    const isFinancePage = location.pathname === '/finance';
     const [isOpen, setIsOpen] = useState(false);
     const [topics, setTopics] = useState([]);
     const [editing, setEditing] = useState(null);
@@ -28,7 +31,6 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
 
     const [artifacts, setArtifacts] = useState([]);
 
-    // ── Artifact preview ──
     const handleArtifactPreview = useCallback(async (art) => {
         try {
             const res = await api.get(`/upload/preview/${art.id}`);
@@ -70,7 +72,6 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
             const url = URL.createObjectURL(new Blob([res.data]));
             const a = document.createElement('a');
             a.href = url;
-            // Use Content-Disposition filename from server if available
             const cd = res.headers?.['content-disposition'];
             const match = cd && cd.match(/filename="?(.+?)"?$/);
             a.download = match ? match[1] : art.name;
@@ -202,6 +203,28 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
                         New Chat
                     </button>
 
+                    {/* Chat button */}
+                    <button
+                        type="button"
+                        className="mobile-finance-nav-btn"
+                        onClick={() => { navigate('/chat'); setIsOpen(false); }}
+                        style={!isFinancePage ? { background: 'linear-gradient(135deg, rgba(0,112,242,0.15), rgba(0,112,242,0.08))', borderColor: 'rgba(0,112,242,0.5)' } : {}}
+                    >
+                        <span style={{ fontSize: '16px' }}>💬</span>
+                        Chat
+                    </button>
+
+                    {/* Finance AI button */}
+                    <button
+                        type="button"
+                        className="mobile-finance-nav-btn"
+                        onClick={() => { navigate('/finance'); setIsOpen(false); }}
+                        style={isFinancePage ? { background: 'linear-gradient(135deg, rgba(0,112,242,0.15), rgba(14,191,161,0.12))', borderColor: 'rgba(14,191,161,0.5)', color: '#0EBFA1' } : {}}
+                    >
+                        <span style={{ fontSize: '16px' }}>💰</span>
+                        Finance AI
+                    </button>
+
                     {/* ── Chats section (collapsible) ── */}
                     <div className="mobile-section">
                         <div className="mobile-section-label collapsible" onClick={() => setChatsOpen(!chatsOpen)}>
@@ -288,30 +311,30 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
                                     <p className="mobile-empty-msg">No matching docs</p>
                                 ) : (
                                     filteredArtifacts.map(art => (
-                                                        <div key={art.id} className="mobile-artifact-item" onClick={() => handleArtifactPreview(art)}>
-                                                            <FileText size={14} className="mobile-artifact-icon" />
-                                                            <div className="mobile-artifact-content">
-                                                                <span className="mobile-artifact-name">{art.name}</span>
-                                                                <span className="mobile-artifact-size">{art.size}</span>
-                                                            </div>
-                                                            <div className="mobile-artifact-actions">
-                                                                <button
-                                                                    className="mobile-artifact-dl-btn"
-                                                                    onClick={e => handleArtifactDownload(e, art)}
-                                                                    title="Download"
-                                                                >
-                                                                    <Download size={12} />
-                                                                </button>
-                                                                <button
-                                                                    className="mobile-artifact-del-btn"
-                                                                    onClick={e => handleArtifactDelete(e, art)}
-                                                                    title="Delete"
-                                                                >
-                                                                    <Trash2 size={12} />
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    ))
+                                        <div key={art.id} className="mobile-artifact-item" onClick={() => handleArtifactPreview(art)}>
+                                            <FileText size={14} className="mobile-artifact-icon" />
+                                            <div className="mobile-artifact-content">
+                                                <span className="mobile-artifact-name">{art.name}</span>
+                                                <span className="mobile-artifact-size">{art.size}</span>
+                                            </div>
+                                            <div className="mobile-artifact-actions">
+                                                <button
+                                                    className="mobile-artifact-dl-btn"
+                                                    onClick={e => handleArtifactDownload(e, art)}
+                                                    title="Download"
+                                                >
+                                                    <Download size={12} />
+                                                </button>
+                                                <button
+                                                    className="mobile-artifact-del-btn"
+                                                    onClick={e => handleArtifactDelete(e, art)}
+                                                    title="Delete"
+                                                >
+                                                    <Trash2 size={12} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))
                                 )}
                             </div>
                         )}
