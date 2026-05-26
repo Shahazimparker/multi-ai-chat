@@ -19,6 +19,7 @@ const { compressPrompt } = require('../services/compress.service');
 const { getSemanticCachedResponse, setCachedResponse } = require('../services/cache.service');
 const { buildRAGContext, embedText } = require('../services/rag.service');
 const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
+const { embedAndStoreMessage, searchMemory } = require('../services/memory.service');
 const { listUserFiles } = require('../services/fileUpload.service');
 const { logAnalytics } = require('../services/analytics.service');
 const chatService = require('../services/chat.service');
@@ -250,6 +251,16 @@ const sendMessage = async (req, res) => {
       abortController.signal
     );
 
+    // ── 8.5 RAG-based cross-chat memory (accurate mode only) ──
+    let memoryContext = '';
+    if (ragEnabled && memoryMode === 'accurate' && queryVector && user?.id) {
+      memoryContext = await searchMemory(queryVector, user.id, {
+        excludeTopicId: resolvedTopicId,
+        topK: 5,
+        threshold: 0.5,
+      });
+    }
+
     // ── 9. Build final AI message payload ───────────────────
     const aiMessages = [];
 
@@ -269,6 +280,10 @@ const sendMessage = async (req, res) => {
     }
     if (fileContext) {
       aiMessages.push({ role: 'system', content: `## File Context\n${fileContext}` });
+    }
+    // RAG-based cross-chat memory (accurate mode only)
+    if (memoryContext) {
+      aiMessages.push({ role: 'system', content: memoryContext });
     }
 
     // History context (if same topic)
@@ -460,6 +475,9 @@ const sendMessage = async (req, res) => {
     }
 
     // ── 12. Save messages to DB (logged-in users only) ────────
+    let savedUserMessageId = null;
+    let savedAssistantMessageId = null;
+
     if (!isAnonymous) {
       // Create new topic if none provided
       if (!resolvedTopicId) {
@@ -479,15 +497,54 @@ const sendMessage = async (req, res) => {
 
       if (resolvedTopicId) {
         // Save user message + assistant reply
-        await supabase.from('messages').insert([
+        const { data: savedMessages, error: msgError } = await supabase.from('messages').insert([
           { topic_id: resolvedTopicId, user_id: user.id, role: 'user', content: message, model: modelId, tokens_used: estimatedInputTokens },
           { topic_id: resolvedTopicId, user_id: user.id, role: 'assistant', content: finalReply, model: modelId, tokens_used: billableTokens },
-        ]);
+        ]).select('id, role');
+
+        if (!msgError && savedMessages) {
+          for (const m of savedMessages) {
+            if (m.role === 'user') savedUserMessageId = m.id;
+            if (m.role === 'assistant') savedAssistantMessageId = m.id;
+          }
+        }
 
         // Update topic timestamp + model (so it reflects the latest model used)
         await supabase.from('topics')
           .update({ updated_at: new Date().toISOString(), model: modelId })
           .eq('id', resolvedTopicId);
+      }
+    }
+
+    // ── 12.5 Embed messages for RAG-based cross-chat memory ──
+    // Only in accurate mode — tracks embedding tokens for billing
+    if (!isAnonymous && resolvedTopicId && memoryMode === 'accurate') {
+      const embedPromises = [];
+      if (savedUserMessageId) {
+        embedPromises.push(
+          embedAndStoreMessage({
+            userId: user.id, topicId: resolvedTopicId,
+            messageId: savedUserMessageId, role: 'user',
+            content: message, provider: modelConfig.provider,
+          }).catch(err => { console.warn('[Memory] User msg embed failed:', err.message); return 0; })
+        );
+      }
+      if (savedAssistantMessageId) {
+        embedPromises.push(
+          embedAndStoreMessage({
+            userId: user.id, topicId: resolvedTopicId,
+            messageId: savedAssistantMessageId, role: 'assistant',
+            content: finalReply, provider: modelConfig.provider,
+          }).catch(err => { console.warn('[Memory] Asst msg embed failed:', err.message); return 0; })
+        );
+      }
+      if (embedPromises.length > 0) {
+        const results = await Promise.all(embedPromises);
+        const memoryEmbedTokens = results.reduce((sum, t) => sum + (t || 0), 0);
+        if (memoryEmbedTokens > 0) {
+          totalEmbeddingTokens += memoryEmbedTokens;
+          console.log(`[Memory] Embedding tokens: ${memoryEmbedTokens}`);
+        }
       }
     }
 
