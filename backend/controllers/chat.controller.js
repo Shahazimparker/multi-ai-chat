@@ -272,7 +272,9 @@ const sendMessage = async (req, res) => {
 
     const { bizDbDirective } = buildBizDbDirective(effectiveDbOnly);
 
-    const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}${bizDbDirective}\n\nRules:\n- Format ABAP, SQL, JSON, XML code in \`\`\` blocks with language label ONLY if the user explicitly asks for code/SQL.\n- Use tables for structured data (configuration, field mappings) when presenting DB results.\n- Use bullet points for better clarity.\n- When explaining errors, show the error first, then root cause, then fix.`;
+    const generalToolsDirective = `\n\n## General Tools\nYou have access to the following tools. To use them, output EXACTLY the tags below:\n1. Web Search: [WEB_SEARCH:query="your search query"]\n2. Execute JS Code: [EXECUTE_CODE]console.log("hello");[/EXECUTE_CODE]\nWait for the tool result to be provided in the next user message before answering.`;
+
+    const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}${bizDbDirective}${generalToolsDirective}\n\nRules:\n- Format ABAP, SQL, JSON, XML code in \`\`\` blocks with language label ONLY if the user explicitly asks for code/SQL.\n- Use tables for structured data (configuration, field mappings) when presenting DB results.\n- Use bullet points for better clarity.\n- When explaining errors, show the error first, then root cause, then fix.`;
     aiMessages.push({ role: 'system', content: staticSystem });
     // Dynamic parts — NOT cacheable (change per request)
     if (ragContext) {

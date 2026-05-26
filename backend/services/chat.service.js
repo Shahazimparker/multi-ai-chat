@@ -8,6 +8,8 @@
 const { buildRAGContext, embedText } = require('./rag.service');
 const { searchUserFilesRAG, getFileContent, listUserFiles } = require('./fileUpload.service');
 const { queryBusinessDB, getTableSchema } = require('./businessDb.service');
+const { searchWeb } = require('./tools/webSearch.service');
+const { executeCode } = require('./tools/codeExecute.service');
 
 // ── Shared module-level Business DB state ──────────────────
 let bizDbConnected = null;
@@ -104,6 +106,8 @@ const buildFileContext = (fileResults, totalFileCount) => {
 // ── Tool-call detection helpers ───────────────────────────
 const findSearchFileMatch = (reply) => reply.match(/\[SEARCH_FILES:query=([^\]]+)\]/);
 const findGetFileMatch = (reply) => reply.match(/\[GET_FILE:id=([^\]]+)\]/);
+const findWebSearchMatch = (reply) => reply.match(/\[WEB_SEARCH:query=(?:"|')([^"']+)(?:"|')\]/i) || reply.match(/\[WEB_SEARCH:([^\]]+)\]/i);
+const findExecuteCodeMatch = (reply) => reply.match(/\[EXECUTE_CODE\]([\s\S]*?)\[\/EXECUTE_CODE\]/i);
 
 const findGetSchemaMatch = (reply) => {
   let m = reply.match(/\[GET_SCHEMA:([^\]]+)\]/);
@@ -252,6 +256,52 @@ const processToolCall = async ({
       lastSqlQuery: '',
       consecutiveZeroResults, // preserve
       dbQueryCount, // preserve — non-DB tool
+    };
+  }
+
+  // ── WEB_SEARCH tool ──
+  const webSearchMatch = findWebSearchMatch(reply);
+  if (webSearchMatch) {
+    const query = webSearchMatch[1].trim();
+    const results = await searchWeb(query);
+    
+    const resultBlock = results.length > 0
+      ? `[WEB SEARCH RESULTS for "${query}"]\n${results.map(r => `- [${r.title}](${r.url}): ${r.snippet}`).join('\n')}\n[END WEB SEARCH RESULTS]\n\nNow answer the user's question based on these results.`
+      : `[WEB SEARCH RESULTS for "${query}"]\nNo results found.\n[END WEB SEARCH RESULTS]`;
+
+    return {
+      handled: true,
+      newMessages: [
+        { role: 'assistant', content: reply.replace(webSearchMatch[0], '').trim() || `[Searching web for "${query}"]` },
+        { role: 'user', content: resultBlock },
+      ],
+      embedTokens: 0,
+      dbQueried: false,
+      lastSqlQuery: '',
+      consecutiveZeroResults, // preserve
+      dbQueryCount, // preserve
+    };
+  }
+
+  // ── EXECUTE_CODE tool ──
+  const executeCodeMatch = findExecuteCodeMatch(reply);
+  if (executeCodeMatch) {
+    const code = executeCodeMatch[1].trim();
+    const result = await executeCode(code);
+    
+    const resultBlock = `[CODE EXECUTION RESULT]\n\`\`\`\n${result}\n\`\`\`\n[END CODE EXECUTION RESULT]\n\nNow answer the user's question based on this result.`;
+
+    return {
+      handled: true,
+      newMessages: [
+        { role: 'assistant', content: reply.replace(executeCodeMatch[0], '').trim() || `[Executing JavaScript code]` },
+        { role: 'user', content: resultBlock },
+      ],
+      embedTokens: 0,
+      dbQueried: false,
+      lastSqlQuery: '',
+      consecutiveZeroResults, // preserve
+      dbQueryCount, // preserve
     };
   }
 
@@ -431,6 +481,8 @@ const stripToolTags = (text, opts = {}) => {
     /^\s*<request_label>Get\s+Schema<\/request_label>\s*<request_text>[^<]+<\/request_text>/i,
     /^\s*\[SEARCH_FILES:query=[^\]]+\]/,
     /^\s*\[GET_FILE:id=[^\]]+\]/,
+    /^\s*\[WEB_SEARCH:[^\]]+\]/i,
+    /^\s*\[EXECUTE_CODE\][\s\S]*?\[\/EXECUTE_CODE\]/i,
   ];
 
   // Orphan closing tags at the start (no opening tag — AI forgot it)
