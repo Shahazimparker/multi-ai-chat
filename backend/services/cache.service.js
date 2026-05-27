@@ -7,6 +7,7 @@
 
 const crypto   = require('crypto');
 const supabase = require('../config/supabase');
+const { CHAT_SEMANTIC_CACHE_THRESHOLD } = require('../config/chatRuntime.config');
 
 /**
  * hashQuery — normalize and hash query+model for cache key.
@@ -37,12 +38,16 @@ const getCachedResponse = async (query, modelId, userId = null, topicId = null) 
 
   if (data) {
     // Fire increment asynchronously — catch errors to prevent unhandled rejection
-    supabase
-      .from('query_cache')
-      .update({ hit_count: (data.hit_count || 0) + 1, last_hit_at: new Date().toISOString() })
-      .eq('query_hash', hash)
-      .then(() => {})
-      .catch(err => console.warn('[Cache] Hit counter update failed:', err.message));
+    (async () => {
+      try {
+        await supabase
+          .from('query_cache')
+          .update({ hit_count: (data.hit_count || 0) + 1, last_hit_at: new Date().toISOString() })
+          .eq('query_hash', hash);
+      } catch (err) {
+        console.warn('[Cache] Hit counter update failed:', err.message);
+      }
+    })();
 
     console.log('[Cache] HIT for query hash:', hash.slice(0, 8));
     return data.response_text;
@@ -55,7 +60,7 @@ const getCachedResponse = async (query, modelId, userId = null, topicId = null) 
  * Filters by userId/topicId for topic-scoped isolation.
  * Works after the schema has query_embedding + match_query_cache; otherwise it no-ops.
  */
-const getSemanticCachedResponse = async (queryEmbedding, modelId, threshold = 0.92, userId = null, topicId = null) => {
+const getSemanticCachedResponse = async (queryEmbedding, modelId, threshold = CHAT_SEMANTIC_CACHE_THRESHOLD, userId = null, topicId = null) => {
   if (!queryEmbedding) return null;
 
   try {
@@ -71,12 +76,16 @@ const getSemanticCachedResponse = async (queryEmbedding, modelId, threshold = 0.
     if (error || !data?.length) return null;
 
     const hit = data[0];
-    supabase
-      .from('query_cache')
-      .update({ hit_count: (hit.hit_count || 0) + 1, last_hit_at: new Date().toISOString() })
-      .eq('id', hit.id)
-      .then(() => {})
-      .catch(err => console.warn('[Cache] Semantic hit counter update failed:', err.message));
+    (async () => {
+      try {
+        await supabase
+          .from('query_cache')
+          .update({ hit_count: (hit.hit_count || 0) + 1, last_hit_at: new Date().toISOString() })
+          .eq('id', hit.id);
+      } catch (err) {
+        console.warn('[Cache] Semantic hit counter update failed:', err.message);
+      }
+    })();
 
     console.log('[Cache] SEMANTIC HIT:', Math.round((hit.similarity || 0) * 100), '%');
     return hit.response_text;
@@ -130,18 +139,18 @@ const setCachedResponse = async (query, modelId, response, queryEmbedding = null
 const cleanupStaleCache = async (maxAgeDays = 30, minHits = 2) => {
   try {
     const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
-    const { data, error, count } = await supabase
+    const { data, error } = await supabase
       .from('query_cache')
       .delete()
       .lt('last_hit_at', cutoff)
       .lt('hit_count', minHits)
-      .select('id', { count: 'exact' });
+      .select('id');
 
     if (error) {
       console.warn('[Cache] Cleanup error:', error.message);
       return 0;
     }
-    const deleted = count || 0;
+    const deleted = Array.isArray(data) ? data.length : 0;
     if (deleted > 0) console.log(`[Cache] Cleaned ${deleted} stale entries (>${maxAgeDays}d, <${minHits} hits)`);
     return deleted;
   } catch (err) {

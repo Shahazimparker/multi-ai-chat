@@ -143,7 +143,9 @@ This document is the technical reference for the current codebase state.
 ### Key pages
 
 - `frontend/src/pages/LoginPage.jsx`
-- `frontend/src/pages/ChatPage.jsx`
+- `frontend/src/pages/ChatPage.jsx` - thin container that composes the chat hooks/components
+- `frontend/src/pages/hooks/useChatSession.js` - chat stream/session orchestration
+- `frontend/src/pages/hooks/useChatComposer.js` - draft input and attachment handling
 - `frontend/src/pages/AnonymousPage.jsx`
 - `frontend/src/pages/AdminPage.jsx`
 - `frontend/src/pages/Finance/FinancePage.jsx`
@@ -151,6 +153,11 @@ This document is the technical reference for the current codebase state.
 ### Key UI components
 
 - Chat UI: `frontend/src/components/chat/*`
+- Chat messages panel: `frontend/src/components/chat/ChatMessagesPanel.jsx`
+- Chat input panel: `frontend/src/components/chat/ChatInputPanel.jsx`
+- Memory controls: `frontend/src/components/chat/ChatMemoryControls.jsx`
+- Queue popover: `frontend/src/components/chat/ChatQueuePopover.jsx`
+- Upload progress: `frontend/src/components/chat/ChatUploadProgress.jsx`
 - Layout/theme/token bar: `frontend/src/components/layout/*`
 - Admin modal: `frontend/src/components/admin/UserModal.jsx`
 
@@ -165,7 +172,7 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
 
 **`uploaded_files_rag.topic_id` is `ON DELETE CASCADE` in the actual deployed schema** (`schema_export.sql`). This means Postgres auto-deletes file rows when their topic is deleted — but only for rows where `topic_id` is non-null and matches the deleted topic.
 
-**Known fix (ChatPage.jsx):** For new chats, `activeTopic` is null at send time. The backend creates the topic during the stream and returns `topicId` in the `done` SSE event. `topicIdToUse` is now updated from `metadata.topicId` before generated files are saved, so they are stored with the correct `topic_id`.
+**Known fix (useChatSession.js):** For new chats, `activeTopic` is null at send time. The backend creates the topic during the stream and returns `topicId` in the `done` SSE event. `topicIdToUse` is updated from `metadata.topicId` before generated files are saved, so they are stored with the correct `topic_id`.
 
 **Known fix (history.controller.js):** The `delete_topic_cascade` SQL function may not be deployed in all environments. `deleteTopic` now explicitly deletes from `uploaded_files_rag` and `uploaded_files` by `topic_id` before calling the RPC, guaranteeing file cleanup regardless of the deployed function version.
 

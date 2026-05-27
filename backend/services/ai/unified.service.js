@@ -4,9 +4,21 @@
 // ============================================================
 
 const OpenAI = require('openai');
+const OpenAIClient = /** @type {any} */ (OpenAI?.default || OpenAI);
 
+/**
+ * @param {{
+ *  baseURL: string,
+ *  apiKey: string,
+ *  modelName: string,
+ *  messages: Array,
+ *  system?: any,
+ *  signal?: AbortSignal|null
+ * }} options
+ * @returns {Promise<{text: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number}>}
+ */
 const callOpenAICompatible = async ({ baseURL, apiKey, modelName, messages, system, signal }) => {
-  const client = new OpenAI({
+  const client = new OpenAIClient({
     apiKey,
     baseURL,
     defaultHeaders: { 'HTTP-Referer': 'https://openrouter.ai' }

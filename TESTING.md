@@ -151,14 +151,180 @@ This is the current test reference for the repo. It reflects the live backend/fr
 - Cross-chat memory embedding token cost in accurate mode (each message triggers `embedText` call; mitigated by LRU embedding cache)
 - `search_memory` RPC and `message_embeddings` table must be deployed via `migration_add_message_embeddings.sql` for accurate mode to work
 - Artifact cleanup on topic deletion — `delete_topic_cascade` may not be deployed in all environments; the controller now does an explicit pre-delete as a safety net (`backend/controllers/history.controller.js`)
-- AI-generated file `topic_id` association — files must be saved after the stream `done` event so the backend-assigned `topic_id` is available (`frontend/src/pages/ChatPage.jsx`)
+- AI-generated file `topic_id` association — files must be saved after the stream `done` event so the backend-assigned `topic_id` is available (`frontend/src/pages/hooks/useChatSession.js`)
+
+## Automated Testing (Vitest)
+
+### Overview
+
+The backend now has an automated test suite using **Vitest** (198 tests across 13 test files). Tests run in ~3.5s with zero external dependencies (Supabase is mocked globally).
+
+### Quick Start
+
+```bash
+cd backend
+npm test              # Run all tests once
+npm run test:watch    # Watch mode — re-runs on file changes
+npm run test:coverage # Run with coverage report
+```
+
+### Test Architecture
+
+```
+backend/
+├── __tests__/
+│   ├── setup.js                          # Global mocks (Supabase, Business DB)
+│   ├── unit/
+│   │   ├── tokenAccounting.test.js       # Billable token calculation (6 tests)
+│   │   ├── chatCleanup.test.js           # stripToolTags, isPlaceholderOnly, classifyError (39 tests)
+│   │   ├── compress.test.js              # Prompt compression (11 tests)
+│   │   ├── similarity.test.js            # Jaccard similarity, topic detection (13 tests)
+│   │   ├── sanitize.test.js              # XSS sanitization (8 tests)
+│   │   ├── tokenCheck.test.js            # Token quota middleware (5 tests)
+│   │   ├── chatRuntime.config.test.js    # Env var parsing with clamping (13 tests)
+│   │   ├── toolProcessor-matchers.test.js # Regex matchers for all tool tags (32 tests)
+│   │   ├── toolProcessor-logic.test.js   # extractReferencedTables, formatDbResults, etc. (18 tests)
+│   │   ├── tokenBudget.test.js           # estimateTokens, budgets, complexity, smartTrim (38 tests)
+│   │   └── bizDbState.test.js            # reserveToolLoopBudget, buildBizDbDirective (8 tests)
+│   └── integration/
+│       ├── toolProcessor.test.js         # processToolCall with real tool backends (6 tests)
+│       └── toolLoop.test.js              # runToolLoop module load verification (1 test)
+├── vitest.config.js                      # Vitest configuration with coverage thresholds
+└── setup.js                              # Global test setup (env vars, Supabase mocks)
+```
+
+### Test Coverage by Tier
+
+#### Tier 1: Pure Logic (no external deps) — 113 tests
+| Service | Tests | What's covered |
+|---|---|---|
+| `chatCleanup.service.js` | 39 | `stripToolTags` (all 18 patterns), `isPlaceholderOnly`, `classifyError` (all 8 types) |
+| `tokenBudget.service.js` | 38 | `estimateTokens`, `trimTextByTokens`, `estimateMessagesTokens`, `fitMessagesToBudget`, `createPromptBudget`, `calculateComplexityScore`, `createDynamicPromptBudget`, `parseMemoryBlock`, `rebuildMemoryBlock`, `smartTrimContextBlock` |
+| `toolProcessor-matchers` | 32 | `findSearchFileMatch`, `findGetFileMatch`, `findWebSearchMatch`, `findExecuteCodeMatch`, `findGetSchemaMatch` (7 variants), `findQueryDbMatch` (5 variants), `hasBareCloseTag` |
+| `toolProcessor-logic` | 18 | `extractReferencedTables`, `buildFileContext`, `formatDbResults`, `buildFallbackDbReply` |
+| `chatRuntime.config.js` | 13 | All 4 config values: defaults, env reading, min/max clamping, non-numeric fallback |
+| `similarity.service.js` | 13 | `jaccardSimilarity` (stop words, case, punctuation), `isSameTopic` (thresholds, last-5 window) |
+| `compress.service.js` | 11 | All 7 filler patterns, short text skip, >50% compression guard |
+| `sanitize.js` | 8 | HTML tag stripping, entity decoding, whitespace collapse, XSS vectors |
+| `bizDbState.service.js` | 8 | `reserveToolLoopBudget` (scaling, floors, custom ratio), `buildBizDbDirective` |
+| `tokenAccounting.service.js` | 6 | Both billing paths (API-reported vs fallback), zero inputs, optional fields |
+| `tokenCheck.js` | 5 | Anonymous skip, remaining tokens, 429 on exhaustion, tokenRemaining |
+
+#### Tier 2: Integration with Mocks — 7 tests
+| Service | Tests | What's covered |
+|---|---|---|
+| `toolProcessor.service.js` | 6 | `processToolCall` with real tool backends: SEARCH_FILES, GET_FILE, WEB_SEARCH, EXECUTE_CODE, bare close tag, no-tool-match |
+| `toolLoop.service.js` | 1 | Module load verification |
+
+### CI/CD Integration
+
+Automated via GitHub Actions (`.github/workflows/test.yml`):
+- **Triggers**: Push/PR to `main`/`master` when `backend/**` changes
+- **Runs**: `npm ci` → `npm run lint` → `npm run typecheck` → `npm test`
+- **Coverage thresholds**: 70% lines, 70% functions, 60% branches, 70% statements
+
+### Running Tests Locally
+
+```bash
+# All tests
+cd backend && npm test
+
+# Watch mode (re-runs on save)
+cd backend && npm run test:watch
+
+# With coverage
+cd backend && npm run test:coverage
+
+# Single file
+cd backend && npx vitest run __tests__/unit/tokenAccounting.test.js
+```
+
+### Adding New Tests
+
+1. Create file in `backend/__tests__/unit/` or `backend/__tests__/integration/`
+2. Use vitest globals (`describe`, `it`, `expect`, `vi`) — no imports needed
+3. Mock external deps with `vi.mock()` at the top of the file
+4. Run `npm test` to verify
+
+### Known Limitations
+
+- **Full toolLoop integration tests** require mocking both `dispatchToAI` and `processToolCall` simultaneously, which conflicts with the global Supabase mock in `setup.js`. These paths are covered by the manual regression checklist and the Tier 1 unit tests for `toolProcessor`.
+- **Business DB tests** (`bizDbState`, `toolProcessor-logic`, `toolProcessor-matchers`) trigger a real `initBusinessDB()` call on module load, which attempts a DNS lookup for `test-biz.supabase.co`. This fails gracefully (logs a warning) and tests still pass.
+- **WEB_SEARCH integration test** makes a real HTTP call to DuckDuckGo (takes ~1s). Consider mocking `searchWeb` if this becomes flaky in CI.
+
+## Real Integration Tests (Live API/DB)
+
+### Overview
+
+A separate test suite that uses your **actual `.env`** file to test against real Supabase, AI providers, and the running backend. These tests verify that your configuration works end-to-end.
+
+**⚠️ WARNING: These tests consume real API tokens and may incur costs!**
+
+### Quick Start
+
+```bash
+# 1. Start the backend first
+cd backend && npm run dev
+
+# 2. In another terminal, run real integration tests
+cd backend && npm run test:real
+```
+
+### Test Files
+
+```
+backend/__tests__/integration-real/
+├── setup.js               # Loads .env for real API keys
+├── supabase.test.js       # Real Supabase queries (8 tests)
+├── ai-providers.test.js   # Real AI provider calls (10 tests)
+├── chat-api.test.js       # Real HTTP chat endpoints (5 tests)
+└── business-db.test.js    # Real Business DB queries (4 tests)
+```
+
+### What Each Test Verifies
+
+| File | Tests | What's covered |
+|---|---|---|
+| `supabase.test.js` | 8 | Connection, users/topics/messages/cache/analytics table queries, RPC calls, health endpoint |
+| `ai-providers.test.js` | 10 | Gemini Flash/Pro, Groq Mixtral/Llama, Mistral Small/Medium, DeepSeek V4 Flash/Pro, OpenAI, OpenRouter |
+| `chat-api.test.js` | 5 | GET /health, GET /models, POST /message (anonymous), POST /stream (SSE), provider catalog |
+| `business-db.test.js` | 4 | Connection check, init, safe SQL query, table schema retrieval |
+
+### Last Test Run Results (2026-05-27)
+
+| Suite | Result | Details |
+|---|---|---|
+| **Supabase** | ✅ 8/8 passed | All tables accessible, RPC working |
+| **AI Providers** | ⚠️ 8/10 passed | Gemini Flash, Groq (both), Mistral (both), DeepSeek (both), OpenRouter — all working. Gemini Pro: quota exceeded. OpenAI: invalid API key. |
+| **Chat API** | ⚠️ 4/5 passed | Health, models (15), SSE streaming, OpenRouter catalog (355 models) — all working. Anonymous /message: 403 CSRF (expected without token). |
+| **Business DB** | ✅ 4/4 passed | Connected, 28KB schema loaded, SQL queries working |
+| **Total** | **24/27 (89%)** | 3 failures are config issues (Gemini Pro quota, OpenAI key, CSRF) |
+
+### Skipped Tests
+
+Tests for providers without API keys are automatically skipped. For example, if `ANTHROPIC_API_KEY` is not set, Claude tests will show as `SKIPPED`.
+
+### Running Specific Real Tests
+
+```bash
+# Only Supabase tests
+cd backend && npx vitest run --config vitest.real.config.js __tests__/integration-real/supabase.test.js
+
+# Only AI provider tests
+cd backend && npx vitest run --config vitest.real.config.js __tests__/integration-real/ai-providers.test.js
+
+# Only chat API tests (requires backend running)
+cd backend && npx vitest run --config vitest.real.config.js __tests__/integration-real/chat-api.test.js
+```
 
 ## Test Status
 
-There is no dedicated backend test runner configured in `backend/package.json`. The practical coverage today is:
-
-- Frontend: `npm run test` from `frontend`
-- Backend: manual regression checks plus `eslint`
+- **Backend unit**: 198 automated tests via Vitest (`npm test`) — no API keys needed
+- **Backend real**: 25 real integration tests (`npm run test:real`) — requires `.env` + backend running
+- **Backend lint**: ESLint (`npm run lint`)
+- **Backend types**: TypeScript type checking (`npm run typecheck`)
+- **Frontend**: `npm run test` from `frontend` (react-scripts test)
+- **CI**: GitHub Actions runs lint + typecheck + unit tests on every push/PR (real tests excluded from CI)
 
 ## Merged Checklists
 

@@ -80,6 +80,13 @@ Frontend expects `REACT_APP_API_URL`; backend expects `JWT_SECRET`, `SUPABASE_UR
 - Testing and validation: [TESTING.md](./TESTING.md)
 - Management summary: [MANAGEMENT_PRESENTATION.md](./MANAGEMENT_PRESENTATION.md)
 
+## Frontend Chat Structure
+
+- `frontend/src/pages/ChatPage.jsx` is now a thin container that wires the chat UI together.
+- Session and stream orchestration live in `frontend/src/pages/hooks/useChatSession.js`.
+- Draft/input handling lives in `frontend/src/pages/hooks/useChatComposer.js`.
+- Chat UI is split into smaller components under `frontend/src/components/chat/` for messages, input controls, queue state, and upload progress.
+
 ## License
 
 MIT

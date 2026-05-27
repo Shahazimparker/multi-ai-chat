@@ -20,7 +20,7 @@ const { calldeepseekAPI } = require('./deepseek.service');
  * @param {Object} modelConfig  from config/models.js
  * @param {Array}  messages     [{role, content}]
  * @param {AbortSignal} signal  optional signal for cancellation
- * @returns {Object}            {text, tokensUsed}
+ * @returns {Promise<Object>}   {text, tokensUsed}
  */
 const dispatchToAI = async (modelConfig, messages, signal = null) => {
   const { provider, model, apiKey } = modelConfig;

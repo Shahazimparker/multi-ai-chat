@@ -66,7 +66,7 @@ const enforceMaxCacheSize = () => {
 };
 
 /** Periodic background cleanup: clear stale TTL entries so they don't accumulate */
-setInterval(() => {
+const cleanupTimer = setInterval(() => {
   const now = Date.now();
   let deleted = 0;
   for (const [key, value] of embeddingCache) {
@@ -78,7 +78,11 @@ setInterval(() => {
   if (deleted > 0) {
     console.log(`[RAG] Cache cleanup: removed ${deleted} stale entries (${embeddingCache.size} remain)`);
   }
-}, 15 * 60 * 1000).unref(); // .unref() so it doesn't keep Node process alive
+}, 15 * 60 * 1000);
+const cleanupTimerAny = /** @type {any} */ (cleanupTimer);
+if (cleanupTimerAny && typeof cleanupTimerAny.unref === 'function') {
+  cleanupTimerAny.unref(); // avoid keeping Node alive in long-running servers
+}
 
 const getCacheKey = (text, provider, userId = null) => {
   const hash = crypto.createHash('sha256').update(text).digest('hex');
@@ -119,7 +123,7 @@ const clearEmbeddingCache = () => {
  * @param {number} retries
  * @param {AbortSignal} signal
  * @param {string|null} userId - for cache isolation across users
- * @returns {Object|null} { vector: number[], tokensUsed: number } or null on failure
+ * @returns {Promise<Object|null>} { vector: number[], tokensUsed: number } or null on failure
  */
 const embedText = async (text, provider = 'openrouter', retries = 3, signal = null, userId = null) => {
   // Immediate check if already aborted
@@ -298,7 +302,7 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
  * @param {AbortSignal} signal
  * @param {string|null} userId   - REQUIRED for isolation (prevents cross-user leakage)
  * @param {string|null} topicId  - if provided, scopes search to a specific topic
- * @returns {Array}           [{title, content, similarity}]
+ * @returns {Promise<Array>}  [{title, content, similarity}]
  */
 const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = 'openrouter', signal = null, userId = null, topicId = null) => {
   // SAFETY GUARD: require at least userId to prevent global data leakage

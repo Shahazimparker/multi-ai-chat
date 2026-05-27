@@ -14,7 +14,7 @@
 
 const supabase = require('../config/supabase');
 const { MODELS } = require('../config/models');
-const { dispatchToAI } = require('../services/ai/dispatcher.service');
+const { CHAT_SEMANTIC_CACHE_THRESHOLD } = require('../config/chatRuntime.config');
 const { compressPrompt } = require('../services/compress.service');
 const { getSemanticCachedResponse, setCachedResponse } = require('../services/cache.service');
 const { buildRAGContext, embedText } = require('../services/rag.service');
@@ -22,20 +22,17 @@ const { buildContextMessages, maybeCompressQuery } = require('../services/contex
 const { embedAndStoreMessage, searchMemory } = require('../services/memory.service');
 const { listUserFiles } = require('../services/fileUpload.service');
 const { logAnalytics } = require('../services/analytics.service');
+const { calculateBillableTokens } = require('../services/tokenAccounting.service');
 const chatService = require('../services/chat.service');
 const {
-  MAX_DB_QUERIES,
-  MAX_CONSECUTIVE_ZERO_RESULTS,
   reserveToolLoopBudget,
-  extractReferencedTables,
   ensureBizDbInit,
   buildBizDbDirective,
   buildFileContext,
-  processToolCall,
+  runToolLoop,
   stripToolTags,
   buildFallbackDbReply,
   classifyError,
-  isPlaceholderOnly,
 } = chatService;
 
 const {
@@ -179,7 +176,7 @@ const sendMessage = async (req, res) => {
 
       // Skip semantic cache in dbOnly mode — business DB queries must always be fresh
       if (!dbOnly) {
-        const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, 0.92, user?.id, topicId);
+        const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, CHAT_SEMANTIC_CACHE_THRESHOLD, user?.id, topicId);
         if (semanticCachedReply) {
           await logAnalytics({
             userId: user?.id,
@@ -230,8 +227,11 @@ const sendMessage = async (req, res) => {
         listUserFiles(user?.id, topicId)
       ]);
       ragContext = ragCtx;
-      fileResults = fileData.files || [];
-      totalFileCount = fileData.totalCount || 0;
+      const normalizedFileData = Array.isArray(fileData)
+        ? { files: fileData, totalCount: fileData.length }
+        : (fileData || {});
+      fileResults = normalizedFileData.files || [];
+      totalFileCount = normalizedFileData.totalCount || fileResults.length;
     }
 
     // ── HYBRID APPROACH: File names only, tools for content ──
@@ -305,7 +305,7 @@ const sendMessage = async (req, res) => {
 
     // Accumulate embedding tokens from all embedText calls
     // Note: estimatedInputTokens covers the raw user message
-    let totalAITokens = 0;       // ← accumulates all dispatchToAI rounds
+    let totalAITokens = 0;
     const promptTokens = estimateMessagesTokens(aiMessages);
     if (user && promptTokens > user.per_query_limit) {
       return res.status(400).json({
@@ -325,136 +325,48 @@ const sendMessage = async (req, res) => {
 
     // Tool-call loop: AI can search files, request full content, or query business DB
     const MAX_TOOL_ROUNDS = effectiveDbOnly ? 24 : 6;
-    const TOOL_ROUND_START = aiMessages.length;
-    // Dynamic tool-loop cap: 65% when deep into DB exploration (dbQueryCount will grow), else 50%
-    const getMaxToolTokens = (currentDbQueryCount) => {
-      if (currentDbQueryCount > 5) {
-        return Math.floor(promptBudget.maxPromptTokens * 0.65);
-      }
-      return Math.floor(promptBudget.maxPromptTokens * 0.5);
-    };
-
-    let MAX_TOOL_TOKENS = getMaxToolTokens(dbQueryCount);
-
-    const trimOldestToolRounds = () => {
-      const estimatedToolTokens = estimateMessagesTokens(aiMessages.slice(TOOL_ROUND_START));
-      if (estimatedToolTokens <= MAX_TOOL_TOKENS) return;
-
-      while (aiMessages.length > TOOL_ROUND_START + 2) {
-        const oldPairTokens = estimateTokens(aiMessages[TOOL_ROUND_START].content || '') +
-          estimateTokens(aiMessages[TOOL_ROUND_START + 1].content || '') + 8;
-        aiMessages.splice(TOOL_ROUND_START, 2);
-        console.log(`[Tool] Trimmed oldest tool round (~${oldPairTokens} tokens) — ${aiMessages.length - TOOL_ROUND_START} tool messages remain`);
-        if (estimateMessagesTokens(aiMessages.slice(TOOL_ROUND_START)) <= MAX_TOOL_TOKENS) break;
-      }
-    };
-
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      console.log(`[Tool] Round ${round}/${MAX_TOOL_ROUNDS}`);
-      const result = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
-      reply = result.text;
-      tokensUsed = result.tokensUsed;
-      totalAITokens += tokensUsed || 0;
-      console.log(`[Tool] Reply length: ${reply.length}, Has [QUERY_DB]: ${reply.includes('[QUERY_DB]')}, Has <QUERY_DB>: ${reply.includes('<QUERY_DB>')}`);
-      if (abortController.signal.aborted) return;
-
-      // Use shared tool processor
-      const toolResult = await processToolCall({
-        reply,
-        aiMessages,
+    const loopResult = await runToolLoop({
+      effectiveModelConfig,
+      aiMessages,
+      abortController,
+      processToolCallArgs: {
         user,
         topicId,
         effectiveDbOnly,
         abortController,
         fetchedSchemaTables,
-        consecutiveZeroResults,
-        dbQueryCount,
-      });
+      },
+      effectiveDbOnly,
+      promptBudget,
+      maxToolRounds: MAX_TOOL_ROUNDS,
+      loggerPrefix: 'Tool',
+      getNudgeSourceText: () => finalQuery,
+      onNoToolCall: async ({ reply, aiMessages: loopMessages, trimOldestToolRounds, state }) => {
+        if (dbOnly && state.dbQueried && state.lastSqlQuery) {
+          const isDistinctOnly = /SELECT\s+DISTINCT\s+/i.test(state.lastSqlQuery) &&
+            !/\b(COUNT|SUM|AVG|MIN|MAX|GROUP\s+BY)\b/i.test(state.lastSqlQuery);
+          const replyHasPlaceholder = /[\t\n]-\s*[\t\n]/.test(reply) || /would\s+(you\s+)?(like|prefer)/i.test(reply);
+          const userAsksForMetrics = /count|how\s+many|total|number\s+of|status|list|all/i.test(finalQuery);
 
-      if (toolResult.handled) {
-        // Apply new messages from tool processor
-        aiMessages.push(...toolResult.newMessages);
-        totalEmbeddingTokens += toolResult.embedTokens || 0;
-        if (toolResult.dbQueried) dbQueried = true;
-        if (toolResult.lastSqlQuery) lastSqlQuery = toolResult.lastSqlQuery;
-        if (toolResult.lastDbResultBlock) lastDbResultBlock = toolResult.lastDbResultBlock;
-        consecutiveZeroResults = toolResult.consecutiveZeroResults || 0;
-        if (toolResult.dbQueryCount !== undefined) {
-          dbQueryCount = toolResult.dbQueryCount;
-          // Recalculate tool token cap after dbQueryCount update
-          MAX_TOOL_TOKENS = getMaxToolTokens(dbQueryCount);
+          if (isDistinctOnly && replyHasPlaceholder && userAsksForMetrics) {
+            loopMessages.push({ role: 'assistant', content: reply });
+            loopMessages.push({ role: 'user', content: '[SYSTEM] You queried DISTINCT values but the user asked for counts/metrics. Run a new query with COUNT(*) and GROUP BY to get actual numbers - no placeholders, no deferring.' });
+            trimOldestToolRounds();
+            return { continueLoop: true };
+          }
         }
-        trimOldestToolRounds();
-
-        // Break on 4+ consecutive zero results
-        if (consecutiveZeroResults >= MAX_CONSECUTIVE_ZERO_RESULTS) {
-          finalReply = reply.replace(/\[QUERY_DB\][\s\S]*?(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/g, '').trim() || 'No data found.';
-          console.log(`[Tool] ${MAX_CONSECUTIVE_ZERO_RESULTS} consecutive zero results — breaking tool loop`);
-          break;
-        }
-
-        // Break on max DB queries
-        if (dbQueryCount >= MAX_DB_QUERIES) {
-          if (!finalReply) finalReply = 'Maximum database queries reached.';
-          console.log(`[Tool] Max DB queries (${dbQueryCount}) reached — breaking tool loop`);
-          break;
-        }
-        continue;
-      }
-
-      // dbOnly enforcement: if AI gave only a placeholder after a DB call,
-      // force it to produce a real summary using the last DB results.
-      if (effectiveDbOnly && dbQueried && isPlaceholderOnly(reply)) {
-        console.log('[Tool] dbOnly enforcement: placeholder-only reply detected — forcing summary');
-        aiMessages.push({ role: 'assistant', content: reply });
-        aiMessages.push({
-          role: 'user',
-          content: '[SYSTEM] Your previous reply was only a status placeholder (e.g., "[Querying...]"). The database results above are final. Now write the COMPLETE final answer to the user using ONLY those results — plain prose plus a markdown table where helpful. No SQL, no placeholders, no further queries.',
-        });
-        trimOldestToolRounds();
-        continue;
-      }
-
-      // dbOnly enforcement: if AI gave a final reply without ever querying DB
-      // and the user message isn't a pure greeting/meta question, force a query.
-      if (effectiveDbOnly && chatService.bizDbConnected && !dbQueried) {
-        const isGreetingOrMeta = /^\s*(hi|hello|hey|thanks|thank\s+you|bye|goodbye|ok|okay|what\s+model|who\s+are\s+you|what\s+are\s+you)[\s!.?]*$/i.test(String(finalQuery || '').trim());
-        if (!isGreetingOrMeta) {
-          console.log('[Tool] dbOnly enforcement: AI skipped DB query — nudging to use [QUERY_DB]');
-          aiMessages.push({ role: 'assistant', content: reply });
-          aiMessages.push({
-            role: 'user',
-            content: '[SYSTEM] DB-ONLY MODE is ACTIVE. You answered without querying the database. You MUST use [QUERY_DB]...[/QUERY_DB] to fetch live data from the business DB before answering. If you do not know the schema, call [GET_SCHEMA:table_name] first. Do not answer from training data.',
-          });
-          trimOldestToolRounds();
-          continue;
-        }
-      }
-
-      // Controller-specific: DISTINCT-only placeholder detection (not in stream handler)
-      if (dbOnly && dbQueried && lastSqlQuery) {
-        const isDistinctOnly = /SELECT\s+DISTINCT\s+/i.test(lastSqlQuery) &&
-          !/\b(COUNT|SUM|AVG|MIN|MAX|GROUP\s+BY)\b/i.test(lastSqlQuery);
-        const replyHasPlaceholder = /[\t\n]-\s*[\t\n]/.test(reply) || /would\s+(you\s+)?(like|prefer)/i.test(reply);
-        const userAsksForMetrics = /count|how\s+many|total|number\s+of|status|list|all/i.test(finalQuery);
-
-        if (isDistinctOnly && replyHasPlaceholder && userAsksForMetrics) {
-          aiMessages.push({ role: 'assistant', content: reply });
-          aiMessages.push({ role: 'user', content: '[SYSTEM] You queried DISTINCT values but the user asked for counts/metrics. Run a new query with COUNT(*) and GROUP BY to get actual numbers — no placeholders, no deferring.' });
-          trimOldestToolRounds();
-          continue;
-        }
-      }
-
-      // No tool call — done
-      finalReply = reply;
-      break;
-    }
-
-    if (!finalReply) {
-      finalReply = reply || '';
-    }
-
+        return { finalReply: reply };
+      },
+    });
+    if (loopResult.aborted) return;
+    finalReply = loopResult.finalReply;
+    dbQueried = loopResult.dbQueried;
+    lastDbResultBlock = loopResult.lastDbResultBlock;
+    consecutiveZeroResults = loopResult.consecutiveZeroResults;
+    lastSqlQuery = loopResult.lastSqlQuery;
+    dbQueryCount = loopResult.dbQueryCount;
+    totalAITokens += loopResult.totalAITokens || 0;
+    totalEmbeddingTokens += loopResult.totalEmbeddingTokens || 0;
     // Strip leftover tool-call tags
     finalReply = stripToolTags(finalReply);
 
@@ -463,10 +375,15 @@ const sendMessage = async (req, res) => {
       finalReply = buildFallbackDbReply(lastDbResultBlock);
     }
 
-    // Prefer API-reported tokens (accurate). Fall back to estimate only if totalAITokens is 0.
-    const billableTokens = (totalAITokens > 0)
-      ? totalAITokens + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0)
-      : promptTokens + estimateTokens(finalReply) + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0);
+    const billableTokens = calculateBillableTokens({
+      totalAITokens,
+      promptTokens,
+      finalReply,
+      totalEmbeddingTokens,
+      estimatedInputTokens,
+      compressTokens,
+      historySummaryTokens,
+    });
 
     // Check if user aborted while AI was generating
     if (abortController.signal.aborted) return;
@@ -602,3 +519,4 @@ const sendMessage = async (req, res) => {
 };
 
 module.exports = { sendMessage };
+

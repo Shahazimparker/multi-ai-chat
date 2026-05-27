@@ -10,28 +10,25 @@ const { sendMessage } = require('../controllers/chat.controller');
 const { tokenCheck } = require('../middleware/tokenCheck');
 const { sanitizeBody } = require('../middleware/sanitize');
 const { MODELS } = require('../config/models');
+const { CHAT_SEMANTIC_CACHE_THRESHOLD } = require('../config/chatRuntime.config');
 const { getProviderModels } = require('../services/modelCatalog.service');
 const supabase = require('../config/supabase');
 const chatService = require('../services/chat.service');
 const {
-  MAX_DB_QUERIES,
-  MAX_CONSECUTIVE_ZERO_RESULTS,
   reserveToolLoopBudget,
   ensureBizDbInit,
   buildBizDbDirective,
   buildFileContext,
-  processToolCall,
+  runToolLoop,
   stripToolTags,
   buildFallbackDbReply,
   classifyError,
-  isPlaceholderOnly,
 } = chatService;
-const { dispatchToAI } = require('../services/ai/dispatcher.service');
 const { getCachedResponse, getSemanticCachedResponse } = require('../services/cache.service');
 const { buildRAGContext, embedText } = require('../services/rag.service');
 const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
-const { searchUserFilesRAG, getFileContent, listUserFiles } = require('../services/fileUpload.service');
-const { queryBusinessDB, getTableSchema } = require('../services/businessDb.service');
+const { listUserFiles } = require('../services/fileUpload.service');
+const { calculateBillableTokens } = require('../services/tokenAccounting.service');
 const { createPromptBudget, estimateTokens, estimateMessagesTokens } = require('../services/tokenBudget.service');
 const { logAnalytics } = require('../services/analytics.service');
 
@@ -191,7 +188,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
 
       // Semantic cache lookup (same embedding vector)
       if (!dbOnly) {
-        const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, 0.92, user?.id, topicId);
+        const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, CHAT_SEMANTIC_CACHE_THRESHOLD, user?.id, topicId);
         if (semanticCachedReply) {
           res.write(`data: ${JSON.stringify({
             type: 'cached',
@@ -224,8 +221,11 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
 
         // HYBRID: Get ALL files for the topic (no limit, no similarity filter)
         const fileData = await listUserFiles(user?.id, topicId);
-        fileResults = fileData.files || [];
-        totalFileCount = fileData.totalCount || 0;
+        const normalizedFileData = Array.isArray(fileData)
+          ? { files: fileData, totalCount: fileData.length }
+          : (fileData || {});
+        fileResults = normalizedFileData.files || [];
+        totalFileCount = normalizedFileData.totalCount || fileResults.length;
       }
     }
 
@@ -274,56 +274,25 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     let totalAITokens = 0;
 
     // ── Tool-call loop: AI can search files, request full content, or query business DB ──
-    let reply, tokensUsed, cacheCreationTokens = 0, cacheReadTokens = 0;
+    let cacheCreationTokens = 0, cacheReadTokens = 0;
     let finalReply = '';
     let billableTokens = 0;
     let dbQueried = false;
     let lastDbResultBlock = '';
     let consecutiveZeroResults = 0;
     let dbQueryCount = 0;
-    let dbOnlyNudged = false;
     const fetchedSchemaTables = new Set();
-
     const MAX_TOOL_ROUNDS = effectiveDbOnly ? 24 : 6;
-    const TOOL_ROUND_START = aiMessages.length;
-    const MAX_TOOL_TOKENS = Math.floor(promptBudget.maxPromptTokens * 0.5);
-
-    const trimOldestToolRounds = () => {
-      const estimatedToolTokens = estimateMessagesTokens(aiMessages.slice(TOOL_ROUND_START));
-      if (estimatedToolTokens <= MAX_TOOL_TOKENS) return;
-
-      while (aiMessages.length > TOOL_ROUND_START + 2) {
-        const oldPairTokens = estimateTokens(aiMessages[TOOL_ROUND_START].content || '') +
-                               estimateTokens(aiMessages[TOOL_ROUND_START + 1].content || '') + 8;
-        aiMessages.splice(TOOL_ROUND_START, 2);
-        console.log(`[Stream Tool] Trimmed oldest tool round (~${oldPairTokens} tokens) — ${aiMessages.length - TOOL_ROUND_START} tool messages remain`);
-        if (estimateMessagesTokens(aiMessages.slice(TOOL_ROUND_START)) <= MAX_TOOL_TOKENS) break;
-      }
-    };
-
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      console.log(`[Stream Tool] Round ${round}/${MAX_TOOL_ROUNDS}`);
-      const result = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
-      reply = result.text;
-      tokensUsed = result.tokensUsed;
-      totalAITokens += tokensUsed || 0;
-      cacheCreationTokens += result.cacheCreationTokens || 0;
-      cacheReadTokens += result.cacheReadTokens || 0;
-      console.log(`[Stream Tool] Reply length: ${reply.length}, Has [QUERY_DB]: ${reply.includes('[QUERY_DB]')}, Has <QUERY_DB>: ${reply.includes('<QUERY_DB>')}`);
-
-      if (abortController.signal.aborted) return;
-
-      // Use shared tool processor
-      const toolResult = await processToolCall({
-        reply,
-        aiMessages,
+    const loopResult = await runToolLoop({
+      effectiveModelConfig,
+      aiMessages,
+      abortController,
+      processToolCallArgs: {
         user,
         topicId,
         effectiveDbOnly,
         abortController,
         fetchedSchemaTables,
-        consecutiveZeroResults,
-        dbQueryCount,
         onStatus: (statusEvent) => {
           if (!res.writableEnded && !res.destroyed) {
             try {
@@ -333,79 +302,25 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
             }
           }
         },
-      });
-
-      if (toolResult.handled) {
-        aiMessages.push(...toolResult.newMessages);
-        totalEmbeddingTokens += toolResult.embedTokens || 0;
-        if (toolResult.dbQueried) dbQueried = true;
-        if (toolResult.lastDbResultBlock) lastDbResultBlock = toolResult.lastDbResultBlock;
-        consecutiveZeroResults = toolResult.consecutiveZeroResults || 0;
-        if (toolResult.dbQueryCount !== undefined) dbQueryCount = toolResult.dbQueryCount;
-        trimOldestToolRounds();
-
-        // Break on 4+ consecutive zero results
-        if (consecutiveZeroResults >= MAX_CONSECUTIVE_ZERO_RESULTS) {
-          finalReply = reply.replace(/\[QUERY_DB\][\s\S]*?(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/g, '').trim() || 'No data found.';
-          console.log(`[Stream Tool] ${MAX_CONSECUTIVE_ZERO_RESULTS} consecutive zero results — breaking tool loop`);
-          break;
-        }
-
-        // Break on max DB queries
-        if (dbQueryCount >= MAX_DB_QUERIES) {
-          if (!finalReply) finalReply = 'Maximum database queries reached.';
-          console.log(`[Stream Tool] Max DB queries (${dbQueryCount}) reached — breaking tool loop`);
-          break;
-        }
-        continue;
-      }
-
-      // dbOnly enforcement: if AI gave only a placeholder ("[Querying...]") after a DB call,
-      // force it to produce a real summary using the last DB results.
-      if (effectiveDbOnly && dbQueried && isPlaceholderOnly(reply)) {
-        console.log('[Stream Tool] dbOnly enforcement: placeholder-only reply detected — forcing summary');
-        aiMessages.push({ role: 'assistant', content: reply });
-        aiMessages.push({
-          role: 'user',
-          content: '[SYSTEM] Your previous reply was only a status placeholder (e.g., "[Querying...]"). The database results above are final. Now write the COMPLETE final answer to the user using ONLY those results — plain prose plus a markdown table where helpful. No SQL, no placeholders, no further queries.',
-        });
-        trimOldestToolRounds();
-        continue;
-      }
-
-      // dbOnly enforcement: if AI gave a final reply without ever querying DB
-      // and the user message isn't a pure greeting/meta question, force a query (once).
-      if (effectiveDbOnly && chatService.bizDbConnected && !dbQueried && !dbOnlyNudged) {
-        const isGreetingOrMeta = /^\s*(hi|hello|hey|thanks|thank\s+you|bye|goodbye|ok|okay|what\s+model|who\s+are\s+you|what\s+are\s+you)[\s!.?]*$/i.test(String(message || '').trim());
-        if (!isGreetingOrMeta) {
-          console.log('[Stream Tool] dbOnly enforcement: AI skipped DB query — nudging to use [QUERY_DB]');
-          aiMessages.push({ role: 'assistant', content: reply });
-          aiMessages.push({
-            role: 'user',
-            content: '[SYSTEM] DB-ONLY MODE is ACTIVE. You answered without querying the database. You MUST use [QUERY_DB]...[/QUERY_DB] to fetch live data from the business DB before answering. If you do not know the schema, call [GET_SCHEMA:table_name] first. Do not answer from training data.',
-          });
-          dbOnlyNudged = true;
-          trimOldestToolRounds();
-          continue;
-        }
-      }
-
-      // No tool call — done
-      finalReply = reply;
-      const finalReplyTokens = estimateTokens(finalReply);
-      billableTokens = (totalAITokens > 0)
-        ? totalAITokens + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0)
-        : promptTokens + finalReplyTokens + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0);
-      break;
-    }
-
-    if (!finalReply) {
-      finalReply = reply || '';
-      const finalReplyTokens = estimateTokens(finalReply);
-      billableTokens = (totalAITokens > 0)
-        ? totalAITokens + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0)
-        : promptTokens + finalReplyTokens + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0);
-    }
+      },
+      effectiveDbOnly,
+      promptBudget,
+      maxToolRounds: MAX_TOOL_ROUNDS,
+      loggerPrefix: 'Stream Tool',
+      getNudgeSourceText: () => message,
+      onAfterDispatch: async ({ result }) => {
+        cacheCreationTokens += result.cacheCreationTokens || 0;
+        cacheReadTokens += result.cacheReadTokens || 0;
+      },
+    });
+    if (loopResult.aborted) return;
+    finalReply = loopResult.finalReply;
+    dbQueried = loopResult.dbQueried;
+    lastDbResultBlock = loopResult.lastDbResultBlock;
+    consecutiveZeroResults = loopResult.consecutiveZeroResults;
+    dbQueryCount = loopResult.dbQueryCount;
+    totalAITokens += loopResult.totalAITokens || 0;
+    totalEmbeddingTokens += loopResult.totalEmbeddingTokens || 0;
 
     // Strip leftover tool-call syntax; strip ```sql blocks in dbOnly mode
     finalReply = stripToolTags(finalReply, { stripSqlBlocks: effectiveDbOnly });
@@ -414,6 +329,16 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     if (dbQueried && lastDbResultBlock && consecutiveZeroResults < 4 && (!finalReply || finalReply.trim().length < 5)) {
       finalReply = buildFallbackDbReply(lastDbResultBlock);
     }
+
+    billableTokens = calculateBillableTokens({
+      totalAITokens,
+      promptTokens,
+      finalReply,
+      totalEmbeddingTokens,
+      estimatedInputTokens,
+      compressTokens,
+      historySummaryTokens,
+    });
 
     // Send streamed response in chunks — section-aware speed
     // Text → slow (human-readable), Tables/Code blocks → fast
@@ -526,7 +451,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
           topic_id: resolvedTopicId,
           user_id: user.id,
           role: 'assistant',
-          content: finalReply || reply || '',
+          content: finalReply || '',
           model: modelId,
           tokens_used: billableTokens,
         }
@@ -623,3 +548,5 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
 });
 
 module.exports = router;
+
+

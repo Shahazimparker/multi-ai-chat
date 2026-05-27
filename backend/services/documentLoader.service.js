@@ -14,7 +14,7 @@ const XLSX = require('xlsx');
 // Supported file types and their loaders
 const SUPPORTED_FORMATS = {
   txt: 'text',
-  csv: 'text',
+  csv: 'spreadsheet',
   json: 'text',
   md: 'text',
   html: 'code',
@@ -44,7 +44,6 @@ const SUPPORTED_FORMATS = {
   yml: 'code',
   xlsx: 'spreadsheet',
   xls: 'spreadsheet',
-  csv: 'spreadsheet',
   pdf: 'pdf',
   doc: 'document',
   docx: 'document',
@@ -298,7 +297,7 @@ const ArchiveLoader = {
 
 /**
  * Load document based on file type
- * @param {Buffer} buffer - file content
+ * @param {any} buffer - file content
  * @param {string} fileName - original file name
  * @param {Function} visionApiCall - optional vision API function for images
  * @returns {Promise<{content: string, metadata: object}>}

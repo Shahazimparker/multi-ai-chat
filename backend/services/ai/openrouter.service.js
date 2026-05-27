@@ -5,6 +5,13 @@
 
 const { callOpenAICompatible } = require('./unified.service');
 
+/**
+ * @param {string} modelName
+ * @param {string} apiKey
+ * @param {Array} messages
+ * @param {AbortSignal|null} signal
+ * @returns {Promise<Object>}
+ */
 const callOpenRouter = async (modelName, apiKey, messages, signal = null) => {
   // Check if model supports cache
   const isClaudeModel = modelName.includes('claude');

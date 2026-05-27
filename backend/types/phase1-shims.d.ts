@@ -1,0 +1,60 @@
+declare const process: {
+  env: Record<string, string | undefined>;
+};
+
+declare module 'express-rate-limit' {
+  const rateLimit: any;
+  export = rateLimit;
+}
+
+declare module 'axios' {
+  const axios: any;
+  export = axios;
+}
+
+declare module 'crypto' {
+  const crypto: any;
+  export = crypto;
+}
+
+declare module '@google/generative-ai' {
+  export class GoogleGenerativeAI {
+    constructor(apiKey: string);
+    getGenerativeModel(config: any): any;
+  }
+}
+
+declare module 'fs' {
+  const fs: any;
+  export = fs;
+}
+
+declare module 'path' {
+  const path: any;
+  export = path;
+}
+
+declare module 'os' {
+  const os: any;
+  export = os;
+}
+
+declare module 'jszip' {
+  const JSZip: any;
+  export = JSZip;
+}
+
+declare module 'mammoth' {
+  const mammoth: any;
+  export = mammoth;
+}
+
+declare module 'pdf-parse' {
+  const pdfParse: any;
+  export = pdfParse;
+}
+
+declare module 'xlsx' {
+  const XLSX: any;
+  export = XLSX;
+}

@@ -1,0 +1,73 @@
+import React from 'react';
+
+const ChatMemoryControls = ({
+  memoryMode,
+  setMemoryMode,
+  historyLimit,
+  setHistoryLimit,
+  ragEnabled,
+  setRagEnabled,
+  dbOnly,
+  setDbOnly,
+  showAdvancedMemory,
+  setShowAdvancedMemory,
+}) => (
+  <div className="memory-controls">
+    <button
+      type="button"
+      className={`memory-mode-btn ${memoryMode === 'summarized' ? 'active' : ''}`}
+      onClick={() => {
+        setMemoryMode('summarized');
+        setHistoryLimit(5);
+        setRagEnabled(false);
+      }}
+    >
+      Summarized+
+    </button>
+    <button
+      type="button"
+      className={`memory-mode-btn ${memoryMode === 'accurate' ? 'active' : ''}`}
+      onClick={() => {
+        setMemoryMode('accurate');
+        setHistoryLimit(8);
+        setRagEnabled(true);
+      }}
+    >
+      Accurate+
+    </button>
+    <button type="button" className="memory-advanced-btn" onClick={() => setShowAdvancedMemory((prev) => !prev)}>
+      Advanced
+    </button>
+
+    <label className="memory-toggle-control">
+      <input type="checkbox" checked={dbOnly} onChange={(event) => setDbOnly(event.target.checked)} />
+      🔒 Only DB
+    </label>
+
+    {showAdvancedMemory && (
+      <>
+        <label className="memory-limit-control">
+          Last
+          <input
+            type="number"
+            min="2"
+            max="20"
+            value={historyLimit}
+            onChange={(event) => {
+              const value = parseInt(event.target.value, 10);
+              setHistoryLimit(Number.isNaN(value) ? 2 : Math.max(2, Math.min(20, value)));
+            }}
+          />
+          msgs
+        </label>
+
+        <label className="memory-toggle-control">
+          <input type="checkbox" checked={ragEnabled} onChange={(event) => setRagEnabled(event.target.checked)} />
+          RAG on
+        </label>
+      </>
+    )}
+  </div>
+);
+
+export default ChatMemoryControls;

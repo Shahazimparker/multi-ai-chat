@@ -188,6 +188,7 @@ const getTableSchemas = async (forceRefresh = false) => {
             data_type: c.data_type,
             is_nullable: c.is_nullable,
             max_length: c.character_maximum_length,
+            foreign_key: null,
           })) : [],
         });
       } catch {
@@ -388,7 +389,7 @@ const buildMinimalSchemaContext = async () => {
 /**
  * Get column schema for one or more specific tables
  * @param {string|string[]} tableNames - Table name or array of table names
- * @returns {string} Formatted schema text for the requested tables
+ * @returns {Promise<string>} Formatted schema text for the requested tables
  */
 const getTableSchema = async (tableNames) => {
   const schemas = await getTableSchemas();
@@ -420,7 +421,7 @@ const getTableSchema = async (tableNames) => {
 /**
  * Execute a read-only SQL query against the business DB
  * @param {string} sql - SELECT query to execute
- * @returns {Array} rows
+ * @returns {Promise<Array>} rows
  */
 const executeQuery = async (sql) => {
   return await executeRawSQL(sql);
@@ -483,7 +484,7 @@ let _initPromise = null;
 
 /**
  * Initialise the business DB connection state (idempotent — safe to call multiple times)
- * @returns {{ connected: boolean, schemaText: string, minimalSchemaText: string }}
+ * @returns {Promise<{ connected: boolean, schemaText: string, minimalSchemaText: string }>}
  */
 const initBusinessDB = async () => {
   if (_bizDbConnected !== null) {
