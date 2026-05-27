@@ -460,6 +460,9 @@ const ChatPage = () => {
         }
       }
 
+      // Use the topic ID returned by the backend (covers new chats where activeTopic was null at send time)
+      if (metadata.topicId) topicIdToUse = metadata.topicId;
+
       // ── Save AI-generated file code blocks ──
       const generatedFiles = [];
       if (fullReply) {

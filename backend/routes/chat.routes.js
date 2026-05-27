@@ -392,17 +392,19 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
 
       // No tool call — done
       finalReply = reply;
+      const finalReplyTokens = estimateTokens(finalReply);
       billableTokens = (totalAITokens > 0)
         ? totalAITokens + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0)
-        : promptTokens + estimateTokens(finalReply) + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0);
+        : promptTokens + finalReplyTokens + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0);
       break;
     }
 
     if (!finalReply) {
       finalReply = reply || '';
+      const finalReplyTokens = estimateTokens(finalReply);
       billableTokens = (totalAITokens > 0)
         ? totalAITokens + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0)
-        : promptTokens + estimateTokens(finalReply) + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0);
+        : promptTokens + finalReplyTokens + totalEmbeddingTokens + estimatedInputTokens + compressTokens + (historySummaryTokens || 0);
     }
 
     // Strip leftover tool-call syntax; strip ```sql blocks in dbOnly mode

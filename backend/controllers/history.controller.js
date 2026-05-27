@@ -50,6 +50,21 @@ const deleteTopic = async (req, res) => {
 
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
+    // Explicitly delete generated/uploaded files for this topic first.
+    // The uploaded_files_rag FK is ON DELETE SET NULL, so the RPC alone may leave
+    // orphaned rows if the deployed function predates the uploaded_files_rag cleanup step.
+    await supabase
+      .from('uploaded_files_rag')
+      .delete()
+      .eq('topic_id', topicId)
+      .eq('user_id', user.id);
+
+    await supabase
+      .from('uploaded_files')
+      .delete()
+      .eq('topic_id', topicId)
+      .eq('user_id', user.id);
+
     // Use Supabase RPC for atomic topic deletion (all-or-nothing)
     const { error } = await supabase.rpc('delete_topic_cascade', {
       p_topic_id: topicId,

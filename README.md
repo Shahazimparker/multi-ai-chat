@@ -1,6 +1,6 @@
 # Multi-AI Chat
 
-Unified AI chat platform with authentication, anonymous mode, file-aware chat (RAG), streaming responses, token controls, and admin analytics.
+Unified AI chat platform with authentication, anonymous mode, file-aware chat (RAG), streaming responses, token controls, and admin analytics. Now includes a **complete LangChain + LangGraph + LangSmith equivalent** framework built from scratch.
 
 ## Current Scope
 
@@ -15,11 +15,46 @@ Unified AI chat platform with authentication, anonymous mode, file-aware chat (R
 - Live provider model discovery for `openrouter`, `together`, `anyapi`
 - Chat endpoints: `/api/chat/message` and `/api/chat/stream` (SSE)
 - Authenticated and anonymous chat flows
-- Query cache (exact + semantic), RAG context, history summarization
+- Semantic query cache, RAG context, history summarization, cross-chat memory
 - File upload/search integration
 - Admin panel (users, quotas, analytics)
 - Theme toggle and finance route in frontend
 - Sentry integration (frontend + backend)
+
+## AI Framework (Custom LangChain + LangGraph + LangSmith)
+
+Complete ecosystem of 16+ microservices providing production-ready AI orchestration:
+
+### Core Services
+- **Document Loaders** — Load 40+ file formats (PDF, Word, Excel, Code, Images, Archives)
+- **Text Splitters** — 4 intelligent chunking strategies (recursive, semantic, sliding window, line-based)
+- **Vector Stores** — Multiple backends (PgVector, In-Memory, Hybrid) with unified interface
+- **Output Parsers** — 5 types (JSON, Markdown, CSV, Regex, Composite)
+- **Chains** — 6 types (Simple, Conditional, Parallel, Composer, Map, Loop)
+- **Agents** — ReAct pattern with dynamic tool selection and multi-turn reasoning
+- **Callbacks** — Lifecycle hooks for monitoring, cost tracking, metrics, errors
+
+### Advanced Services
+- **Retrievers** — 6 search strategies (Vector, BM25, Hybrid, Metadata, Reranker, Chained)
+- **Prompt Templates** — 8 types (Basic, FewShot, Chat, Conditional, Formatted, Role, Loop, Composer)
+- **Memory** — 6 in-process strategies (Buffer, Summary, Entity, TokenBuffer, Window, Combined) + cross-chat RAG memory (`embedAndStoreMessage`, `searchMemory`)
+- **Graph Workflows** — DAG-based execution with conditional routing and state management
+- **Human-in-the-Loop** — Approval checkpoints with state snapshots and audit trails
+- **Loop Management** — Cycle control (RefinementLoop, QueryLoop, ValidationLoop, PipelineLoop)
+
+### Orchestration & Intelligence
+- **Agent Orchestrator** — SmartAgent with dynamic tool selection, auto-looping, and refinement
+- **ReAct Pattern** — Structured reasoning with thought-action-observation cycles
+- **Multi-Agent** — AgentOrchestrator for coordinating multiple agents
+
+### Observability & Analysis
+- **Execution Tracer** — Complete step-by-step execution tracing with hierarchical nesting; wired into Agent and SmartAgent tool/LLM calls
+- **Flow Visibility** — Variable tracking, state diffing, dependency analysis
+- **Flow Analyzer** — Critical path, bottleneck detection, cycle detection, parallelization opportunities
+- **Flow Visualizer** — Mermaid diagrams (sequence, flowchart, state), heat maps, dependency graphs
+- **Flow Debugger** — Step-through debugging with breakpoints and variable watches
+- **Flow Dashboard** — Real-time metrics and performance dashboards
+- **Flow Optimizer** — Automatic optimization suggestions
 
 ## Quick Start
 

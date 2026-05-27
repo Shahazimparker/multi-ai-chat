@@ -160,6 +160,17 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
     await api.delete(`/history/topics/${id}`);
     setTopics(p => p.filter(t => t.id !== id));
     if (activeTopic?.id === id) onNewChat();
+    // Refresh artifacts — topic deletion also removes associated generated files from DB
+    try {
+      const res = await api.get('/upload/files');
+      const fileList = res.data?.files || [];
+      setArtifacts(fileList.map(f => ({
+        id: f.file_id,
+        name: f.file_name,
+        size: f.file_type || '',
+        created_at: f.created_at,
+      })));
+    } catch {}
   };
 
   const startEdit = (e, topic) => {

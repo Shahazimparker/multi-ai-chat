@@ -16,61 +16,29 @@ const { MODELS } = require('../config/models');
 const { dispatchToAI } = require('./ai/dispatcher.service');
 const { trimTextByTokens, estimateTokens } = require('./tokenBudget.service');
 const crypto = require('crypto');
+const { loadDocument } = require('./documentLoader.service');
+const { splitText } = require('./textSplitter.service');
 
 /**
  * chunkContent — split text into token-aware overlapping chunks
- * Uses estimateTokens() so each chunk stays within embedding model limits
+ * Uses TextSplitter service with optimal strategy per file type
  * @param {string} text
- * @param {number} maxTokens     max tokens per chunk (default 500 — safe for most embedding models)
- * @param {number} overlapTokens token overlap between chunks (default 50)
+ * @param {number} maxTokens     max tokens per chunk (default 500)
+ * @param {string} fileType      file type for optimal splitter selection (default 'text')
  * @returns {Array<string>}
  */
-const chunkContent = (text, maxTokens = 500, overlapTokens = 50) => {
+const chunkContent = (text, maxTokens = 500, fileType = 'text') => {
   if (!text) return [];
 
-  // If entire text fits in one chunk, return as-is
-  if (estimateTokens(text) <= maxTokens) return [text];
+  // Use TextSplitter with optimal strategy for file type
+  const chunks = splitText(text, fileType, {
+    maxTokens,
+    strategy: 'auto',
+    metadata: { fileType },
+  });
 
-  const chunks = [];
-  // Split into words, preserving whitespace for re-join
-  const words = text.split(/(\s+)/);
-  let startIdx = 0;
-
-  while (startIdx < words.length) {
-    let endIdx = startIdx;
-    let runningTokens = 0;
-
-    // Accumulate words until we hit maxTokens
-    while (endIdx < words.length) {
-      const wordTokens = estimateTokens(words[endIdx]);
-      if (runningTokens + wordTokens > maxTokens) break;
-      runningTokens += wordTokens;
-      endIdx++;
-    }
-
-    // If no progress, force at least one word to prevent infinite loop
-    if (endIdx === startIdx) {
-      endIdx = startIdx + 2; // push at least one word (with its trailing space)
-    }
-
-    // Build chunk from words[startIdx .. endIdx)
-    const chunk = words.slice(startIdx, endIdx).join('');
-    chunks.push(chunk);
-
-    if (endIdx >= words.length) break;
-
-    // Backtrack by overlapTokens worth of words for next chunk
-    let backtrackTokens = 0;
-    let backtrackIdx = endIdx;
-    while (backtrackIdx > startIdx) {
-      backtrackTokens += estimateTokens(words[backtrackIdx - 1]);
-      if (backtrackTokens > overlapTokens) break;
-      backtrackIdx--;
-    }
-    startIdx = Math.max(backtrackIdx, startIdx + 2); // ensure forward progress
-  }
-
-  return chunks;
+  // Return just the content (for backwards compatibility)
+  return chunks.map((chunk) => chunk.content);
 };
 
 const detectLanguage = (fileName) => {
@@ -172,43 +140,19 @@ const isSafeZipEntryName = (entryName) => {
 };
 
 /**
- * Extract text from different file types
+ * Extract text from different file types using DocumentLoader
+ * Keeps original file binary unchanged — loader only extracts text for AI
  */
 const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, fileName = '') => {
   try {
     if (signal?.aborted) return '';
 
-    if (fileType === 'txt' || fileType === 'csv') {
-      return buffer.toString('utf-8');
-    }
-
-    if (fileType === 'xlsx') {
-      if (signal?.aborted) return '';
-      const XLSX = require('xlsx');
-      const workbook = XLSX.read(buffer, { type: 'buffer' });
-      const sheets = [];
-      workbook.SheetNames.forEach(name => {
-        const sheet = workbook.Sheets[name];
-        const csv = XLSX.utils.sheet_to_csv(sheet);
-        sheets.push(`[Sheet: ${name}]\n${csv}`);
-      });
-      return sheets.join('\n\n');
-    }
-
-    if (fileType === 'image') {
-      if (signal?.aborted) return '';
-      const base64Image = buffer.toString('base64');
-      const ext = path.extname(fileName).toLowerCase();
-      const mimeTypeMap = {
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.png': 'image/png',
-      };
-      const mimeType = mimeTypeMap[ext] || 'image/jpeg';
+    // Vision API wrapper for images
+    const visionApiCall = async (base64Image, mimeType) => {
+      if (fileType !== 'image') return null;
 
       try {
         const { callOpenRouter } = require('./ai/openrouter.service');
-
         const result = await callOpenRouter(
           'google/gemini-2.0-flash-001',
           process.env.OPENROUTER_API_KEY,
@@ -228,51 +172,18 @@ const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, f
             ],
           }]
         );
-
         return result.text;
       } catch (err) {
         console.error('[Image] Vision API via OpenRouter failed:', err.message);
-        return `[Image: ${fileName}] - Could not extract text. File uploaded for reference.`;
+        return null;
       }
-    }
+    };
 
-    if (fileType === 'pdf') {
-      if (signal?.aborted) return '';
-      const data = await pdfParse(buffer);
-      return data.text;
-    }
-
-    if (fileType === 'doc') {
-      if (signal?.aborted) return '';
-      const result = await mammoth.extractRawText({ buffer });
-      return result.value;
-    }
-
-    if (fileType === 'code') {
-      return buffer.toString('utf-8');
-    }
-
-    // 'other' — best-effort text extraction for unknown file types
-    if (fileType === 'other') {
-      if (signal?.aborted) return '';
-      // Try UTF-8; if binary, return placeholder
-      try {
-        const text = buffer.toString('utf-8');
-        // Check if it looks like a binary file (contains null bytes or high ratio of non-printable chars)
-        const printable = text.replace(/[\x20-\x7E\n\r\t]/g, '').length;
-        const nullBytes = text.indexOf('\0');
-        if (nullBytes !== -1 || printable > text.length * 0.5) {
-          return `[Binary file — content stored for reference. File size: ${(buffer.length / 1024).toFixed(1)} KB]`;
-        }
-        return text;
-      } catch {
-        return `[Binary file — content stored for reference. File size: ${(buffer.length / 1024).toFixed(1)} KB]`;
-      }
-    }
-
-    throw new Error(`Unsupported file type: ${fileType}`);
+    // Use DocumentLoader for unified extraction
+    const doc = await loadDocument(buffer, fileName, visionApiCall);
+    return doc.content;
   } catch (err) {
-    console.error(`Text extraction failed for ${fileType}:`, err);
+    console.error(`[DocumentLoader] Text extraction failed for ${fileName}:`, err.message);
     throw err;
   }
 };
@@ -322,7 +233,7 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
     const { embedText } = require('./rag.service');
 
     if (ragEnabled) {
-      const chunks = chunkContent(sanitizedContent, 2000, 200);
+      const chunks = chunkContent(sanitizedContent, 2000, fileType);
       const chunkVectors = [];
 
       for (let i = 0; i < chunks.length; i++) {

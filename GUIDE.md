@@ -15,13 +15,59 @@ This is the main setup and maintenance guide for the current repo state.
 - Live provider catalogs for `openrouter`, `together`, and `anyapi`
 - Authenticated and anonymous chat flows
 - Streaming and non-streaming chat endpoints
-- RAG, query cache, token accounting, and context summarization
+- RAG, semantic cache, token accounting, context summarization, and cross-chat memory
 - File upload, search, and abort cleanup
 - Admin dashboard and analytics
 - Theme toggle with persistent preferences
 - Sentry integration on frontend and backend
 - Finance route in the frontend app
 - Business DB support for tool-driven chat flows
+
+## AI Framework Features (LangChain/LangGraph/LangSmith Equivalent)
+
+**Complete AI Orchestration System:** 16+ microservices providing production-ready workflows
+
+### Document Processing & Retrieval
+- Load documents in 40+ file formats (PDF, Word, Excel, Code, Images, Archives)
+- 4 intelligent text chunking strategies with automatic selection
+- Vector stores with multiple backends (PgVector, In-Memory, Hybrid)
+- 6 retrieval strategies (Vector, BM25, Hybrid, Metadata, Reranker, Chained)
+- Full-text and semantic search integration
+
+### Language Model Operations
+- 5 output parser types for structured data extraction
+- 8 prompt template types (basic, few-shot, chat, conditional, formatted, role-based, loop, composer)
+- 6 in-process memory strategies (buffer, summary, entity tracking, token-aware, window, combined)
+- Cross-chat RAG memory via `embedAndStoreMessage` and `searchMemory` (accurate mode only)
+
+### Workflow Orchestration
+- 6 chain types for sequential operations
+- Conditional branching (if/else) and parallel execution
+- ReAct agents with dynamic tool selection and multi-turn reasoning
+- Graph-based workflows (DAG) with conditional routing
+- SmartAgent for intelligent orchestration combining all features
+
+### Loop & Refinement
+- Cycle management with counters and exit conditions
+- Agent refinement loops for iterative answer improvement
+- Query loops with retry and refinement
+- Validation loops for checking and fixing output
+- Pipeline loops for multi-step processing
+
+### Human-in-the-Loop & Control
+- Approval checkpoints with state snapshots
+- Interrupt points before/after specific operations
+- Audit trails for compliance
+- Cost and token tracking per operation
+
+### Observability & Debugging
+- Complete execution tracing with step hierarchies
+- Variable and state tracking across operations
+- Flow visualization (Mermaid diagrams, dependency graphs, heat maps)
+- Critical path analysis and bottleneck detection
+- Step-through debugging with breakpoints and watches
+- Real-time dashboard metrics
+- Automatic optimization suggestions
 
 ## Project Layout
 
@@ -60,6 +106,9 @@ Common optional values:
 - `OPENROUTER_API_KEY`
 - `TOGETHER_API_KEY`
 - `ANYAPI_API_KEY`
+- `GEMINI_SUMMARY_API_KEY` — dedicated key for summarization (falls back to `GEMINI_API_KEY` if absent)
+- `MISTRAL_SUMMARY_API_KEY` — dedicated key for summarization
+- `CEREBRAS_SUMMARY_API_KEY` — dedicated key for summarization (Llama 3.1-8b fallback)
 
 ### Frontend
 
@@ -91,6 +140,83 @@ Common optional values:
 3. Set `REACT_APP_SENTRY_DSN` if Sentry is enabled.
 4. Redeploy after env changes.
 
+## Using the AI Framework Services
+
+All AI framework services are exported through `backend/services/chat.service.js`:
+
+```javascript
+const {
+  // Chains, agents, graphs
+  createChain, SimpleChain, Agent, SmartAgent,
+  Graph, GraphWorkflow,
+  
+  // Memory and state
+  BufferMemory, SummaryMemory, MemoryManager,
+  
+  // Looping and refinement
+  RefinementLoop, QueryLoop, LoopExecutor,
+  
+  // Approval and control
+  HumanApprovalHandler, ApprovalRequest,
+  
+  // Tracing and visibility
+  ExecutionTracer, TraceFormatter, TraceAnalyzer,
+  FlowAnalyzer, FlowVisualizer, FlowDebugger
+} = require('./chat.service');
+```
+
+### Example: Create a SmartAgent
+
+```javascript
+const { SmartAgent, GreedyToolSelection } = require('./chat.service');
+
+const agent = new SmartAgent(modelDispatcher, toolRegistry, {
+  modelId: 'claude-3-5-sonnet',
+  maxIterations: 15,
+  maxRefinements: 3,
+  toolSelectionStrategy: new GreedyToolSelection(),
+  approvalHandler,
+  callbackManager,
+  memory
+});
+
+const result = await agent.orchestrate('Analyze market trends', {
+  requireApprovalFor: ['delete_data']
+});
+```
+
+### Example: Create a Workflow Graph
+
+```javascript
+const { Graph, GraphBuilder } = require('./chat.service');
+
+const graph = new Graph();
+graph.addNode('fetch', fetchDataFn)
+      .addNode('analyze', analyzeFn)
+      .addNode('report', reportFn)
+      .addEdge('fetch', 'analyze')
+      .addEdge('analyze', 'report')
+      .setStartNode('fetch');
+
+const result = await graph.run(input);
+```
+
+### Example: Trace Execution
+
+```javascript
+const { ExecutionTracer, TraceFormatter } = require('./chat.service');
+
+const tracer = new ExecutionTracer({ verbose: true });
+tracer.startTrace('workflow');
+
+const result = await tracer.traceAsync('expensive-operation', async () => {
+  // operation code
+});
+
+const trace = tracer.completeTrace();
+const mermaid = TraceFormatter.formatMermaidFlowchart(trace);
+```
+
 ## Common Change Points
 
 - Add or change models in `backend/config/models.js`.
@@ -98,9 +224,24 @@ Common optional values:
 - Adjust chat behavior in `backend/controllers/chat.controller.js` and `backend/routes/chat.routes.js`.
 - Tune token budgeting in `backend/services/tokenBudget.service.js`.
 - Tune history and summary behavior in `backend/services/context.service.js` and `backend/services/summary.service.js`.
-- Adjust cache logic in `backend/services/cache.service.js`.
+- Cross-chat memory (accurate mode): `embedAndStoreMessage` and `searchMemory` in `backend/services/memory.service.js`. Requires `message_embeddings` table and `search_memory` RPC — run `database/migration_add_message_embeddings.sql` if not deployed.
+- Cache: exact hash-based cache is disabled. Only semantic cache (`getSemanticCachedResponse`) is active. To re-enable exact cache, uncomment the `getCachedResponse` block in `chat.routes.js` and the `setCachedResponse` call in `chat.controller.js` — but note it will return stale answers for time-sensitive or DB-backed queries.
 - Adjust RAG behavior in `backend/services/rag.service.js`.
 - Change theme behavior in `frontend/src/context/ThemeContext.jsx` and `frontend/src/index.css`.
+- Configure custom agents in controllers using `SmartAgent` or `ReActLoop`
+- Add memory strategies via `MemoryManager` for conversation context
+- Enable tracing and monitoring with `ExecutionTracer` and `FlowVisibility`
+
+## Artifact Cleanup
+
+AI-generated files are stored in `uploaded_files_rag` with the `topic_id` returned by the backend in the SSE `done` event. Deleting a chat triggers explicit cleanup in `backend/controllers/history.controller.js` (deletes from `uploaded_files_rag` and `uploaded_files` by `topic_id`) before calling the `delete_topic_cascade` RPC, so artifacts are removed even if the SQL function is not deployed. The sidebar re-fetches the artifact list after deletion to keep the UI in sync.
+
+**One-time cleanup for pre-fix orphans** — run in Supabase SQL Editor if old generated files are still visible:
+```sql
+DELETE FROM uploaded_files_rag
+WHERE topic_id IS NULL
+  AND file_type IN ('generated','html','js','jsx','ts','tsx','css','json','xml','md','svg','py','sql','sh');
+```
 
 ## Verification Checklist
 
@@ -110,6 +251,7 @@ Common optional values:
 - Model picker loads both static and live provider models.
 - File upload, cache, RAG, and token accounting behave as expected.
 - Theme toggle persists after refresh.
+- AI generates a file in a chat → deleting that chat removes the file from the Artifacts sidebar immediately.
 
 ## Consolidation Note
 

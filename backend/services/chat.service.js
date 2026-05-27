@@ -10,6 +10,21 @@ const { searchUserFilesRAG, getFileContent, listUserFiles } = require('./fileUpl
 const { queryBusinessDB, getTableSchema } = require('./businessDb.service');
 const { searchWeb } = require('./tools/webSearch.service');
 const { executeCode } = require('./tools/codeExecute.service');
+const { loadDocument, getLoaderType } = require('./documentLoader.service');
+const { createVectorStore, PgVectorStore, InMemoryStore, HybridVectorStore } = require('./vectorStore.service');
+const { createParser, JSONParser, MarkdownParser, CSVParser, RegexParser } = require('./outputParser.service');
+const { createChain, SimpleChain, ConditionalChain, ParallelChain, ChainComposer, MapChain, LoopChain } = require('./chain.service');
+const { createAgent, createTool, Agent, Tool, ToolRegistry } = require('./agent.service');
+const { createCallbackManager, getGlobalCallbackManager, handlers } = require('./callbacks.service');
+const { createRetriever, VectorRetriever, BM25Retriever, HybridRetriever, MetadataRetriever, RerankerRetriever, ChainedRetriever } = require('./retriever.service');
+const { PromptTemplate, FewShotTemplate, ChatTemplate, ConditionalTemplate, FormattedOutputTemplate, RoleTemplate, LoopTemplate, PromptComposer, TemplateRegistry, getGlobalRegistry } = require('./promptTemplate.service');
+const { BufferMemory, SummaryMemory, EntityMemory, TokenBufferMemory, WindowMemory, CombinedMemory, MemoryManager } = require('./memory.service');
+const { Graph, GraphNode, GraphEdge, ConditionalEdge, GraphState, SubGraph, GraphBuilder } = require('./graphWorkflow.service');
+const { ApprovalRequest, InterruptPoint, ExecutionSnapshot, HumanApprovalHandler, ApprovalManager } = require('./humanApproval.service');
+const { CycleCounter, LoopBreaker, LoopConfig, LoopResult, LoopExecutor, RefinementLoop, QueryLoop, ValidationLoop, PipelineLoop } = require('./loopManagement.service');
+const { ToolSelectionStrategy, GreedyToolSelection, EnsembleToolSelection, SmartAgent, ReActLoop, AgentOrchestrator } = require('./agentOrchestrator.service');
+const { ExecutionStep, ExecutionTrace, ExecutionTracer, TraceFormatter, TraceAnalyzer } = require('./executionTracer.service');
+const { Variable, StateTracker, FlowAnalyzer, FlowVisualizer, FlowDebugger, FlowDashboard, FlowOptimizer } = require('./flowVisibility.service');
 
 // ── Shared module-level Business DB state ──────────────────
 let bizDbConnected = null;
@@ -269,9 +284,10 @@ const processToolCall = async ({
       tool: 'web_search',
       message: `Searching the web for "${query}"...`,
     });
-    console.log(`[Tool] Web search requested: "${query}"`);
+    // Log query length only — avoid logging raw query text which may contain PII
+    console.log(`[Tool] Web search requested (${query.length} chars)`);
     const results = await searchWeb(query);
-    console.log(`[Tool] Web search returned ${results.length} result(s) for "${query}"`);
+    console.log(`[Tool] Web search returned ${results.length} result(s)`);
     
     const resultBlock = results.length > 0
       ? `[WEB SEARCH RESULTS for "${query}"]\n${results.map(r => `- [${r.title}](${r.url}): ${r.snippet}`).join('\n')}\n[END WEB SEARCH RESULTS]\n\nNow answer the user's question based on these results.`
@@ -613,4 +629,123 @@ module.exports = {
 
   // Error handling
   classifyError,
+
+  // Document Loading
+  loadDocument,
+  getLoaderType,
+
+  // Vector Store
+  createVectorStore,
+  PgVectorStore,
+  InMemoryStore,
+  HybridVectorStore,
+
+  // Output Parsers
+  createParser,
+  JSONParser,
+  MarkdownParser,
+  CSVParser,
+  RegexParser,
+
+  // Chains
+  createChain,
+  SimpleChain,
+  ConditionalChain,
+  ParallelChain,
+  ChainComposer,
+  MapChain,
+  LoopChain,
+
+  // Agents
+  createAgent,
+  createTool,
+  Agent,
+  Tool,
+  ToolRegistry,
+
+  // Callbacks
+  createCallbackManager,
+  getGlobalCallbackManager,
+  callbacks: handlers,
+
+  // Retrievers
+  createRetriever,
+  VectorRetriever,
+  BM25Retriever,
+  HybridRetriever,
+  MetadataRetriever,
+  RerankerRetriever,
+  ChainedRetriever,
+
+  // Prompt Templates (8 types)
+  PromptTemplate,
+  FewShotTemplate,
+  ChatTemplate,
+  ConditionalTemplate,
+  FormattedOutputTemplate,
+  RoleTemplate,
+  LoopTemplate,
+  PromptComposer,
+  TemplateRegistry,
+  getGlobalRegistry,
+
+  // Memory Types (6 types + manager)
+  BufferMemory,
+  SummaryMemory,
+  EntityMemory,
+  TokenBufferMemory,
+  WindowMemory,
+  CombinedMemory,
+  MemoryManager,
+
+  // Graph Workflows
+  Graph,
+  GraphNode,
+  GraphEdge,
+  ConditionalEdge,
+  GraphState,
+  SubGraph,
+  GraphBuilder,
+
+  // Human-in-the-Loop Approvals
+  ApprovalRequest,
+  InterruptPoint,
+  ExecutionSnapshot,
+  HumanApprovalHandler,
+  ApprovalManager,
+
+  // Loop Management & Cycle Control
+  CycleCounter,
+  LoopBreaker,
+  LoopConfig,
+  LoopResult,
+  LoopExecutor,
+  RefinementLoop,
+  QueryLoop,
+  ValidationLoop,
+  PipelineLoop,
+
+  // Agent Orchestration
+  ToolSelectionStrategy,
+  GreedyToolSelection,
+  EnsembleToolSelection,
+  SmartAgent,
+  ReActLoop,
+  AgentOrchestrator,
+
+  // Execution Tracing
+  ExecutionStep,
+  ExecutionTrace,
+  ExecutionTracer,
+  TraceFormatter,
+  TraceAnalyzer,
+
+  // Flow Visibility & Analysis
+  Variable,
+  StateTracker,
+  FlowAnalyzer,
+  FlowVisualizer,
+  FlowDebugger,
+  FlowDashboard,
+  FlowOptimizer,
 };
