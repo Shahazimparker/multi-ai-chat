@@ -87,6 +87,8 @@ const getMimeType = (fileName) => {
 const { requireAuth } = require('../middleware/auth');
 const supabase = require('../config/supabase');
 const { processUploadedFile, searchUserFilesRAG, getFileContent, getFileContentById, deleteUploadedFile, getSupportedFileType, listAllUserFiles, saveGeneratedFile } = require('../services/fileUpload.service');
+const { generateImage } = require('../services/imageGeneration.service');
+const { generatePPT } = require('../services/pptGeneration.service');
 
 
 // Use OS temp dir so uploaded files don't trigger nodemon restarts
@@ -441,6 +443,48 @@ router.post('/generate-file', requireAuth, async (req, res) => {
     }
     res.json({ file: result });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/upload/generate-image
+ * Generate an AI image via DALL-E 3 and save to DB
+ * Body: { prompt, topicId, size?, quality? }
+ */
+router.post('/generate-image', requireAuth, async (req, res) => {
+  try {
+    const { prompt, topicId, size, quality } = req.body;
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+      return res.status(400).json({ error: 'prompt is required' });
+    }
+    const result = await generateImage(prompt.trim(), req.user.id, topicId || null, { size, quality });
+    res.json({ file: result });
+  } catch (err) {
+    console.error('[generate-image]', err.message);
+    const status = err.message.includes('API key') ? 501 : 500;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/upload/generate-ppt
+ * Generate a PPTX from structured slide data and save to DB
+ * Body: { title, slides: [{title, bullets?, content?}], subtitle?, topicId }
+ */
+router.post('/generate-ppt', requireAuth, async (req, res) => {
+  try {
+    const { title, slides, subtitle, topicId } = req.body;
+    if (!title || typeof title !== 'string' || !title.trim()) {
+      return res.status(400).json({ error: 'title is required' });
+    }
+    if (!Array.isArray(slides) || slides.length === 0) {
+      return res.status(400).json({ error: 'slides array is required and must not be empty' });
+    }
+    const result = await generatePPT(title.trim(), slides, req.user.id, topicId || null, { subtitle });
+    res.json({ file: result });
+  } catch (err) {
+    console.error('[generate-ppt]', err.message);
     res.status(500).json({ error: err.message });
   }
 });

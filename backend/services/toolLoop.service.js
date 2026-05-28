@@ -30,6 +30,7 @@ const runToolLoop = async ({
   let lastSqlQuery = '';
   let consecutiveZeroResults = processToolCallArgs.consecutiveZeroResults || 0;
   let dbQueryCount = processToolCallArgs.dbQueryCount || 0;
+  const generatedMedia = []; // accumulates image/PPT files created during tool rounds
 
   const toolRoundStart = aiMessages.length;
   const getMaxToolTokens = (currentDbQueryCount) => {
@@ -82,6 +83,7 @@ const runToolLoop = async ({
       if (toolResult.dbQueried) dbQueried = true;
       if (toolResult.lastSqlQuery) lastSqlQuery = toolResult.lastSqlQuery;
       if (toolResult.lastDbResultBlock) lastDbResultBlock = toolResult.lastDbResultBlock;
+      if (toolResult.generatedMedia?.length) generatedMedia.push(...toolResult.generatedMedia);
       consecutiveZeroResults = toolResult.consecutiveZeroResults || 0;
       if (toolResult.dbQueryCount !== undefined) {
         dbQueryCount = toolResult.dbQueryCount;
@@ -143,6 +145,7 @@ const runToolLoop = async ({
     lastSqlQuery,
     consecutiveZeroResults,
     dbQueryCount,
+    generatedMedia,
   };
 };
 

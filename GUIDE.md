@@ -17,6 +17,7 @@ This is the main setup and maintenance guide for the current repo state.
 - Streaming and non-streaming chat endpoints
 - RAG, semantic cache, token accounting, context summarization, and cross-chat memory
 - File upload, search, and abort cleanup
+- AI file generation: Image (Recraft/FLUX via OpenRouter), PPT (pptxgenjs), PDF (pdfkit), Excel (exceljs), Word (docx), CSV, Chart (SVG), HTML, JSON, Markdown — all triggered via `[GENERATE_XXX]` tags in chat
 - Admin dashboard and analytics
 - Theme toggle with persistent preferences
 - Sentry integration on frontend and backend

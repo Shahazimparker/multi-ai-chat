@@ -236,7 +236,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     const fileContext = buildFileContext(fileResults, totalFileCount);
 
 
-    const generalToolsDirective = `\n\n## General Tools\nYou have access to the following tools. To use them, output EXACTLY the tags below:\n1. Web Search: [WEB_SEARCH:query="your search query"]\n2. Execute JS Code: [EXECUTE_CODE]console.log("hello");[/EXECUTE_CODE]\nWait for the tool result to be provided in the next user message before answering.`;
+    const generalToolsDirective = `\n\n## General Tools\nYou have access to the following tools. Output EXACTLY the tags shown — no extra text inside the tags:\n1. Web Search: [WEB_SEARCH:query="your search query"]\n2. Execute JS Code: [EXECUTE_CODE]console.log("hello");[/EXECUTE_CODE]\n3. Generate Image (DALL-E 3): [GENERATE_IMAGE:prompt=detailed image description here]\n   - Use when the user asks you to generate, create, or draw an image/picture/photo\n   - Write the most descriptive prompt possible for best results\n4. Generate PowerPoint: [GENERATE_PPT]{"title":"Presentation Title","subtitle":"Optional subtitle","slides":[{"title":"Slide Title","bullets":["Point 1","Point 2"]},{"title":"Slide 2","content":"Paragraph text for slides without bullets"}]}[/GENERATE_PPT]\n   - Use when the user asks you to create a presentation, slides, or PowerPoint\n   - Include 4-8 content slides. Every slide needs a "title" plus either "bullets" (array) or "content" (string)\nWait for the tool result before continuing your response.`;
 
     // Build AI messages
     const systemPrompt = `You are a helpful AI assistant.${ragContext ? '\n\n[CONTEXT FROM DOCUMENTS]\n' + ragContext : ''}${fileContext ? '\n\n' + fileContext : ''}${generalToolsDirective}`;
@@ -307,6 +307,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     dbQueryCount = loopResult.dbQueryCount;
     totalAITokens += loopResult.totalAITokens || 0;
     totalEmbeddingTokens += loopResult.totalEmbeddingTokens || 0;
+    const generatedMediaFiles = loopResult.generatedMedia || [];
 
     // Strip leftover tool-call syntax
     finalReply = stripToolTags(finalReply);
@@ -478,6 +479,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
       topicId: resolvedTopicId || null,
       responseTime: Date.now() - startTime,
       persistError: persistError ? 'Failed to save messages' : undefined,
+      generatedFiles: generatedMediaFiles.length > 0 ? generatedMediaFiles : undefined,
     })}\n\n`);
     console.log(`[Stream TokenTracking] AI=${totalAITokens} Embedding=${totalEmbeddingTokens} InputMsg=${estimatedInputTokens} Compress=${compressTokens} Summary=${historySummaryTokens} Total=${billableTokens}`);
 

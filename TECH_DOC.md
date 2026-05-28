@@ -56,6 +56,7 @@ This document is the technical reference for the current codebase state.
 - Analytics: `backend/services/analytics.service.js`
 - Similarity and compression: `backend/services/similarity.service.js`, `backend/services/compress.service.js`
 - Tool execution helpers: `backend/services/tools/webSearch.service.js`, `backend/services/tools/codeExecute.service.js`
+- File generation: `backend/services/imageGeneration.service.js` (Recraft/FLUX via OpenRouter), `backend/services/pptGeneration.service.js` (pptxgenjs), `backend/services/pdfGeneration.service.js` (pdfkit), `backend/services/excelGeneration.service.js` (exceljs), `backend/services/wordGeneration.service.js` (docx), `backend/services/csvGeneration.service.js`, `backend/services/chartGeneration.service.js` (SVG), `backend/services/htmlGeneration.service.js`, `backend/services/jsonGeneration.service.js`, `backend/services/markdownGeneration.service.js`
 
 ### AI Framework Services (LangChain/LangGraph/LangSmith Equivalent)
 

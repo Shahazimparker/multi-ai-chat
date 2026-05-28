@@ -10,7 +10,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Bot, User, Copy, Check, Zap, Download, Clock, FileText, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
+import { Bot, User, Copy, Check, Zap, Download, Clock, FileText, Image, ChevronDown, ChevronUp } from 'lucide-react';
 import api from '../../config/api';
 import './MessageBubble.css';
 
@@ -63,35 +63,50 @@ const downloadFile = (content, filename, mimeType) => {
   URL.revokeObjectURL(url);
 };
 
+const IMAGE_TYPES = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
+
 // ── FileCard — renders a downloadable file from AI-generated code ──
 const FileCard = ({ file, onDownload }) => {
   const [expanded, setExpanded] = React.useState(false);
   const [fetchedContent, setFetchedContent] = React.useState(null);
-  const isHtml = file.file_type === 'html' || file.file_name?.endsWith('.html');
+  const [imageUrl, setImageUrl] = React.useState(null);
+
+  const ext = (file.file_type || file.file_name?.split('.').pop() || '').toLowerCase();
+  const isImage = IMAGE_TYPES.has(ext);
+  const isHtml = ext === 'html' || ext === 'htm';
   const displayContent = file.content || fetchedContent || '';
 
-  // Fetch server content on first expand
+  // For images: build a blob URL from the download endpoint on expand
   React.useEffect(() => {
-    if (expanded && !file.content && !fetchedContent && file.file_id) {
+    if (!expanded || !file.file_id) return;
+    if (isImage && !imageUrl) {
       const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
-      fetch(`/upload/preview/${file.file_id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      fetch(`/api/upload/download/${file.file_id}`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(res => res.ok ? res.blob() : Promise.reject())
+        .then(blob => setImageUrl(URL.createObjectURL(blob)))
+        .catch(() => setImageUrl(null));
+    }
+    if (!isImage && !file.content && !fetchedContent) {
+      const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+      fetch(`/api/upload/preview/${file.file_id}`, { headers: { Authorization: `Bearer ${token}` } })
         .then(res => res.ok ? res.json() : Promise.reject())
         .then(data => setFetchedContent(data.content || ''))
         .catch(() => setFetchedContent('[Preview unavailable]'));
     }
-  }, [expanded, file.content, fetchedContent, file.file_id]);
+  }, [expanded, file.file_id, file.content, fetchedContent, isImage, imageUrl]);
+
+  // Revoke blob URL on unmount to avoid memory leaks
+  React.useEffect(() => () => { if (imageUrl) URL.revokeObjectURL(imageUrl); }, [imageUrl]);
 
   return (
     <div className="file-card-wrap">
       <div className="file-card">
         <div className="file-card-icon-wrap">
-          <FileText size={20} />
+          {isImage ? <Image size={20} /> : <FileText size={20} />}
         </div>
         <div className="file-card-info">
           <span className="file-card-name">{file.file_name}</span>
-          <span className="file-card-type">{file.file_type?.toUpperCase() || 'FILE'}</span>
+          <span className="file-card-type">{(file.file_type || ext).toUpperCase() || 'FILE'}</span>
         </div>
         <div className="file-card-actions">
           <button
@@ -109,7 +124,11 @@ const FileCard = ({ file, onDownload }) => {
 
       {expanded && (
         <div className="file-preview-inline">
-          {isHtml ? (
+          {isImage ? (
+            imageUrl
+              ? <img src={imageUrl} alt={file.file_name} className="file-preview-image" />
+              : <div className="file-preview-loading">Loading preview…</div>
+          ) : isHtml ? (
             <iframe
               srcDoc={displayContent}
               title={file.file_name}
@@ -245,7 +264,7 @@ const MessageBubble = ({ message, onSidebarRefresh }) => {
           const handleDownload = (f) => {
             if (f.file_id) {
               const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
-              fetch(`/upload/download/${f.file_id}`, {
+              fetch(`/api/upload/download/${f.file_id}`, {
                 headers: { Authorization: `Bearer ${token}` },
               })
                 .then(res => {
@@ -298,7 +317,7 @@ const MessageBubble = ({ message, onSidebarRefresh }) => {
   const handleFileDownload = async (f) => {
     const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
     try {
-      const res = await fetch(`/upload/download/${f.file_id}`, {
+      const res = await fetch(`/api/upload/download/${f.file_id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return alert('Download failed');

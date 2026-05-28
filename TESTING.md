@@ -157,7 +157,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 
 ### Overview
 
-The backend now has an automated test suite using **Vitest** (198 tests across 13 test files). Tests run in ~3.5s with zero external dependencies (Supabase is mocked globally).
+The backend now has an automated test suite using **Vitest** (234 tests across 14 test files). Tests run in ~20s with real Supabase and API connections.
 
 ### Quick Start
 
@@ -182,11 +182,13 @@ backend/
 │   │   ├── sanitize.test.js              # XSS sanitization (8 tests)
 │   │   ├── tokenCheck.test.js            # Token quota middleware (5 tests)
 │   │   ├── chatRuntime.config.test.js    # Env var parsing with clamping (13 tests)
-│   │   ├── toolProcessor-matchers.test.js # Regex matchers for all tool tags (32 tests)
+│   │   ├── toolProcessor-matchers.test.js # Regex matchers for all tool tags (56 tests)
 │   │   ├── toolProcessor-logic.test.js   # extractReferencedTables, formatDbResults, etc. (18 tests)
 │   │   ├── tokenBudget.test.js           # estimateTokens, budgets, complexity, smartTrim (38 tests)
+│   │   ├── imageGeneration.test.js       # Model list validation + real image generation (5 tests)
+│   │   ├── pptGeneration.test.js         # Real PPTX generation with DB save (3 tests)
 │   └── integration/
-│       ├── toolProcessor.test.js         # processToolCall with real tool backends (6 tests)
+│       ├── toolProcessor.test.js         # processToolCall with real tool backends (18 tests)
 │       └── toolLoop.test.js              # runToolLoop module load verification (1 test)
 ├── vitest.config.js                      # Vitest configuration with coverage thresholds
 └── setup.js                              # Global test setup (env vars, Supabase mocks)
@@ -194,12 +196,12 @@ backend/
 
 ### Test Coverage by Tier
 
-#### Tier 1: Pure Logic (no external deps) — 113 tests
+#### Tier 1: Pure Logic (no external deps) — 137 tests
 | Service | Tests | What's covered |
 |---|---|---|
 | `chatCleanup.service.js` | 39 | `stripToolTags` (all 18 patterns), `isPlaceholderOnly`, `classifyError` (all 8 types) |
 | `tokenBudget.service.js` | 38 | `estimateTokens`, `trimTextByTokens`, `estimateMessagesTokens`, `fitMessagesToBudget`, `createPromptBudget`, `calculateComplexityScore`, `createDynamicPromptBudget`, `parseMemoryBlock`, `rebuildMemoryBlock`, `smartTrimContextBlock` |
-| `toolProcessor-matchers` | 32 | `findSearchFileMatch`, `findGetFileMatch`, `findWebSearchMatch`, `findExecuteCodeMatch`, `findGetSchemaMatch` (7 variants), `findQueryDbMatch` (5 variants), `hasBareCloseTag` |
+| `toolProcessor-matchers` | 56 | All 16 tool tag matchers: SEARCH_FILES, GET_FILE, WEB_SEARCH, EXECUTE_CODE, GET_SCHEMA, QUERY_DB, GENERATE_IMAGE, GENERATE_PPT, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD, hasBareCloseTag |
 | `toolProcessor-logic` | 18 | `extractReferencedTables`, `buildFileContext`, `formatDbResults`, `buildFallbackDbReply` |
 | `chatRuntime.config.js` | 13 | All 4 config values: defaults, env reading, min/max clamping, non-numeric fallback |
 | `similarity.service.js` | 13 | `jaccardSimilarity` (stop words, case, punctuation), `isSameTopic` (thresholds, last-5 window) |
@@ -207,11 +209,13 @@ backend/
 | `sanitize.js` | 8 | HTML tag stripping, entity decoding, whitespace collapse, XSS vectors |
 | `tokenAccounting.service.js` | 6 | Both billing paths (API-reported vs fallback), zero inputs, optional fields |
 | `tokenCheck.js` | 5 | Anonymous skip, remaining tokens, 429 on exhaustion, tokenRemaining |
+| `imageGeneration.service.js` | 5 | Model list validation (Recraft, FLUX.2), real image generation via OpenRouter |
+| `pptGeneration.service.js` | 3 | Real PPTX generation with DB save, subtitle option, safe filename |
 
-#### Tier 2: Integration with Mocks — 7 tests
+#### Tier 2: Integration with Real Backends — 19 tests
 | Service | Tests | What's covered |
 |---|---|---|
-| `toolProcessor.service.js` | 6 | `processToolCall` with real tool backends: SEARCH_FILES, GET_FILE, WEB_SEARCH, EXECUTE_CODE, bare close tag, no-tool-match |
+| `toolProcessor.service.js` | 18 | `processToolCall` with real backends: SEARCH_FILES, GET_FILE, WEB_SEARCH, EXECUTE_CODE, GENERATE_IMAGE, GENERATE_PPT, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD, bare close tag, no-tool-match, invalid JSON, empty slides |
 | `toolLoop.service.js` | 1 | Module load verification |
 
 ### CI/CD Integration
@@ -313,12 +317,16 @@ cd backend && npx vitest run --config vitest.real.config.js __tests__/integratio
 
 ## Test Status
 
-- **Backend unit**: 198 automated tests via Vitest (`npm test`) — no API keys needed
+- **Backend unit**: 234 automated tests via Vitest (`npm test`) — requires `.env` with Supabase + API keys
 - **Backend real**: 25 real integration tests (`npm run test:real`) — requires `.env` + backend running
 - **Backend lint**: ESLint (`npm run lint`)
 - **Backend types**: TypeScript type checking (`npm run typecheck`)
 - **Frontend**: `npm run test` from `frontend` (react-scripts test)
 - **CI**: GitHub Actions runs lint + typecheck + unit tests on every push/PR (real tests excluded from CI)
+
+### Last Test Run (2026-05-28)
+- **234 tests, 0 failures, 14 test files** — all passing with real Supabase + OpenRouter connections
+- File generation verified: Image (Recraft v4.1), PPT, PDF, Excel, DOCX, CSV, Chart/SVG, HTML, JSON, Markdown
 
 ## Merged Checklists
 

@@ -343,7 +343,8 @@ export const useChatSession = ({ refreshTokenStats }) => {
       }
 
       if (metadata.topicId) topicIdToUse = metadata.topicId;
-      const generatedFiles = [];
+      // Start with server-generated binary files (images, PPTs) from done event
+      const generatedFiles = Array.isArray(metadata.generatedFiles) ? [...metadata.generatedFiles] : [];
       if (fullReply) {
         const fileBlockRegex = /```(\w+)\n([\s\S]*?)```/g;
         const fileLangs = new Set(['html', 'htm', 'js', 'jsx', 'ts', 'tsx', 'css', 'json', 'xml', 'md', 'svg', 'py', 'sql', 'sh']);

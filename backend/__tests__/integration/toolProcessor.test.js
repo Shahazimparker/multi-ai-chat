@@ -72,4 +72,138 @@ describe('processToolCall', () => {
       expect(result.handled).toBe(true);
     });
   });
+
+  describe('GENERATE_IMAGE handler', () => {
+    it('generates image and returns generatedMedia', async () => {
+      const result = await processToolCall({
+        ...baseArgs,
+        user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' },
+        reply: '[GENERATE_IMAGE:prompt=a beautiful sunset over mountains]',
+      });
+      expect(result.handled).toBe(true);
+      expect(result.generatedMedia).toBeDefined();
+      expect(result.generatedMedia.length).toBeGreaterThan(0);
+      expect(result.generatedMedia[0]).toHaveProperty('file_id');
+      expect(result.generatedMedia[0]).toHaveProperty('file_name');
+      expect(result.generatedMedia[0].file_type).toBe('png');
+    }, 60000);
+  });
+
+  describe('GENERATE_PPT handler', () => {
+    it('generates PPT and returns generatedMedia', async () => {
+      const pptJson = JSON.stringify({
+        title: 'Test Presentation',
+        slides: [{ title: 'Slide 1', bullets: ['Point A', 'Point B'] }],
+      });
+      const result = await processToolCall({
+        ...baseArgs,
+        user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' },
+        reply: `[GENERATE_PPT]${pptJson}[/GENERATE_PPT]`,
+      });
+      expect(result.handled).toBe(true);
+      expect(result.generatedMedia).toBeDefined();
+      expect(result.generatedMedia.length).toBeGreaterThan(0);
+      expect(result.generatedMedia[0]).toHaveProperty('file_id');
+      expect(result.generatedMedia[0]).toHaveProperty('file_name');
+      expect(result.generatedMedia[0].file_type).toBe('pptx');
+    });
+
+    it('handles invalid JSON', async () => {
+      const result = await processToolCall({
+        ...baseArgs,
+        reply: '[GENERATE_PPT]not valid json[/GENERATE_PPT]',
+      });
+      expect(result.handled).toBe(true);
+      expect(result.newMessages[1].content).toContain('Failed to generate presentation');
+    });
+
+    it('handles empty slides array', async () => {
+      const result = await processToolCall({
+        ...baseArgs,
+        reply: '[GENERATE_PPT]{"title":"Empty","slides":[]}[/GENERATE_PPT]',
+      });
+      expect(result.handled).toBe(true);
+      expect(result.newMessages[1].content).toContain('Failed to generate presentation');
+    });
+  });
+
+  describe('GENERATE_PDF handler', () => {
+    it('generates PDF and returns generatedMedia', async () => {
+      const pdfJson = JSON.stringify({ title: 'Test Report', sections: [{ heading: 'Intro', content: 'Test content.' }] });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_PDF]${pdfJson}[/GENERATE_PDF]` });
+      expect(result.handled).toBe(true);
+      expect(result.generatedMedia.length).toBeGreaterThan(0);
+      expect(result.generatedMedia[0].file_type).toBe('pdf');
+    }, 15000);
+  });
+
+  describe('GENERATE_EXCEL handler', () => {
+    it('generates Excel and returns generatedMedia', async () => {
+      const xlJson = JSON.stringify({ title: 'Data', sheets: [{ name: 'Sheet1', headers: ['A', 'B'], rows: [['1', '2']] }] });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_EXCEL]${xlJson}[/GENERATE_EXCEL]` });
+      expect(result.handled).toBe(true);
+      expect(result.generatedMedia.length).toBeGreaterThan(0);
+      expect(result.generatedMedia[0].file_type).toBe('xlsx');
+    }, 15000);
+  });
+
+  describe('GENERATE_DOCX handler', () => {
+    it('generates DOCX and returns generatedMedia', async () => {
+      const docxJson = JSON.stringify({ title: 'Test Doc', sections: [{ heading: 'Intro', content: 'Test content.' }] });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_DOCX]${docxJson}[/GENERATE_DOCX]` });
+      expect(result.handled).toBe(true);
+      expect(result.generatedMedia.length).toBeGreaterThan(0);
+      expect(result.generatedMedia[0].file_type).toBe('docx');
+    }, 15000);
+  });
+
+  describe('GENERATE_CSV handler', () => {
+    it('generates CSV and returns generatedMedia', async () => {
+      const csvJson = JSON.stringify({ headers: ['Name', 'Age'], rows: [['John', '30'], ['Jane', '25']] });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_CSV]${csvJson}[/GENERATE_CSV]` });
+      expect(result.handled).toBe(true);
+      expect(result.generatedMedia.length).toBeGreaterThan(0);
+      expect(result.generatedMedia[0].file_type).toBe('csv');
+    }, 15000);
+  });
+
+  describe('GENERATE_CHART handler', () => {
+    it('generates Chart SVG and returns generatedMedia', async () => {
+      const chartJson = JSON.stringify({ type: 'bar', title: 'Sales', labels: ['Q1', 'Q2'], data: [10, 20] });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_CHART]${chartJson}[/GENERATE_CHART]` });
+      expect(result.handled).toBe(true);
+      expect(result.generatedMedia.length).toBeGreaterThan(0);
+      expect(result.generatedMedia[0].file_type).toBe('svg');
+    }, 15000);
+  });
+
+  describe('GENERATE_HTML handler', () => {
+    it('generates HTML and returns generatedMedia', async () => {
+      const htmlJson = JSON.stringify({ title: 'Test Page', body: '<h1>Hello</h1>' });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_HTML]${htmlJson}[/GENERATE_HTML]` });
+      expect(result.handled).toBe(true);
+      expect(result.generatedMedia.length).toBeGreaterThan(0);
+      expect(result.generatedMedia[0].file_type).toBe('html');
+    }, 15000);
+  });
+
+  describe('GENERATE_JSON handler', () => {
+    it('generates JSON file and returns generatedMedia', async () => {
+      const jsonJson = JSON.stringify({ data: { key: 'value', list: [1, 2, 3] } });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_JSON]${jsonJson}[/GENERATE_JSON]` });
+      expect(result.handled).toBe(true);
+      expect(result.generatedMedia.length).toBeGreaterThan(0);
+      expect(result.generatedMedia[0].file_type).toBe('json');
+    }, 15000);
+  });
+
+  describe('GENERATE_MD handler', () => {
+    it('generates Markdown and returns generatedMedia', async () => {
+      const mdJson = JSON.stringify({ title: 'Readme', content: '# Hello\n\nThis is a test.' });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_MD]${mdJson}[/GENERATE_MD]` });
+      expect(result.handled).toBe(true);
+      expect(result.generatedMedia.length).toBeGreaterThan(0);
+      expect(result.generatedMedia[0].file_type).toBe('md');
+    }, 15000);
+  });
 });

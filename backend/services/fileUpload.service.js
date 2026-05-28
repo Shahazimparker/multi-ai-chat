@@ -861,6 +861,70 @@ const saveGeneratedFile = async (userId, topicId, fileName, content, fileType) =
 };
 
 /**
+ * Save AI-generated binary file (image, PPTX, etc.) to DB
+ * Stores both text description in original_content and binary in original_file_data via RPC
+ */
+const saveGeneratedBinaryFile = async (userId, topicId, fileName, textContent, fileType, binaryBuffer) => {
+  try {
+    if (!userId || !fileName || !binaryBuffer) return null;
+
+    const { data: existing } = await supabase
+      .from('uploaded_files_rag')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('topic_id', topicId || null)
+      .eq('file_name', fileName)
+      .maybeSingle();
+
+    let finalName = fileName;
+    if (existing) {
+      const now = new Date();
+      const ts = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
+      const dot = fileName.lastIndexOf('.');
+      finalName = dot > 0 ? `${fileName.substring(0, dot)}_${ts}${fileName.substring(dot)}` : `${fileName}_${ts}`;
+    }
+
+    const fileHash = getFileHash(finalName, (textContent || '') + binaryBuffer.length.toString());
+
+    const { data, error } = await supabase.rpc('insert_rag_document', {
+      p_user_id: userId,
+      p_topic_id: topicId || null,
+      p_file_name: finalName,
+      p_file_hash: fileHash,
+      p_file_type: fileType,
+      p_original_content: textContent || '',
+      p_llm_analysis: textContent || '',
+      p_embedding: null,
+      p_original_file_b64: binaryBuffer.toString('base64'),
+    });
+
+    if (error) {
+      console.error('[saveGeneratedBinaryFile] RPC error:', error.message);
+      return null;
+    }
+
+    let insertedId;
+    if (Array.isArray(data)) {
+      const first = data[0];
+      insertedId = (typeof first === 'object' && first !== null) ? Object.values(first)[0] : first;
+    } else {
+      insertedId = data;
+    }
+
+    console.log(`[saveGeneratedBinaryFile] Saved ${fileType} file: ${finalName} (id: ${insertedId})`);
+    return {
+      file_id: insertedId,
+      file_name: finalName,
+      file_type: fileType,
+      created_at: new Date().toISOString(),
+    };
+  } catch (err) {
+    console.error('[saveGeneratedBinaryFile] Failed:', err);
+    return null;
+  }
+};
+
+/**
  * Clean up orphaned RAG entries when ZIP processing is interrupted
  * Deletes from uploaded_files (cascades to rag_chunks) and uploaded_files_rag
  */
@@ -899,6 +963,7 @@ module.exports = {
   listAllUserFiles,
   deleteUploadedFile,
   saveGeneratedFile,
+  saveGeneratedBinaryFile,
   getTempDir,
   ensureUploadDir,
   getSupportedFileType,
