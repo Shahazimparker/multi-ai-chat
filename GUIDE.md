@@ -20,8 +20,6 @@ This is the main setup and maintenance guide for the current repo state.
 - Admin dashboard and analytics
 - Theme toggle with persistent preferences
 - Sentry integration on frontend and backend
-- Finance route in the frontend app
-- Business DB support for tool-driven chat flows
 
 ## AI Framework Features (LangChain/LangGraph/LangSmith Equivalent)
 
@@ -75,7 +73,7 @@ This is the main setup and maintenance guide for the current repo state.
 - `backend/routes/chat.routes.js` handles `/message`, `/stream`, model listing, and provider model lookup.
 - `backend/controllers/chat.controller.js` owns the main chat pipeline.
 - `backend/services/` contains cache, RAG, token budget, file upload, context, summary, analytics, and provider services.
-- `frontend/src/App.jsx` defines `/login`, `/anonymous`, `/chat`, `/finance`, and `/admin`.
+- `frontend/src/App.jsx` defines `/login`, `/anonymous`, `/chat`, and `/admin`.
 - `frontend/src/components/` contains the chat UI, theme toggle, token bar, unified model modal, and admin UI.
 
 ## Environment Variables
@@ -247,7 +245,7 @@ WHERE topic_id IS NULL
 
 - Backend boots without missing env errors.
 - `/api/health` works.
-- Login, chat, stream, admin, anonymous, and finance routes all render.
+- Login, chat, stream, admin, and anonymous routes all render.
 - Model picker loads both static and live provider models.
 - File upload, cache, RAG, and token accounting behave as expected.
 - Theme toggle persists after refresh.

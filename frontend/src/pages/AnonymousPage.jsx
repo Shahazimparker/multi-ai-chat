@@ -101,7 +101,6 @@ const AnonymousPage = () => {
           memoryMode: 'accurate',
           historyLimit: 5,
           ragEnabled: false,
-          dbOnly: false,
           history, // send local session history for context
         }),
         signal: controller.signal,

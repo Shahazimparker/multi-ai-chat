@@ -18,7 +18,7 @@ Unified AI chat platform with authentication, anonymous mode, file-aware chat (R
 - Semantic query cache, RAG context, history summarization, cross-chat memory
 - File upload/search integration
 - Admin panel (users, quotas, analytics)
-- Theme toggle and finance route in frontend
+- Theme toggle in frontend
 - Sentry integration (frontend + backend)
 
 ## AI Framework (Custom LangChain + LangGraph + LangSmith)

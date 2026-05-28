@@ -29,8 +29,6 @@ const ChatInputPanel = ({
       setHistoryLimit={session.setHistoryLimit}
       ragEnabled={session.ragEnabled}
       setRagEnabled={session.setRagEnabled}
-      dbOnly={session.dbOnly}
-      setDbOnly={session.setDbOnly}
       showAdvancedMemory={showAdvancedMemory}
       setShowAdvancedMemory={setShowAdvancedMemory}
     />

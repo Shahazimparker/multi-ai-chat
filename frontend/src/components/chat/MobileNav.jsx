@@ -2,13 +2,12 @@
 // FILE: frontend/src/components/chat/MobileNav.jsx
 // PURPOSE: Mobile navigation drawer — collapsible Chats & Artifacts
 //          sections with search, Recent below divider.
-//          Added Chat/Finance nav buttons with active state.
 // ============================================================
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Menu, X, PlusCircle, MessageSquare, LogOut, Settings, Trash2, Pencil, Check, FileText, Clock, ChevronRight, Search, Download } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import api from '../../config/api';
 import ThemeToggle from '../layout/ThemeToggle';
 import './MobileNav.css';
@@ -18,8 +17,6 @@ const RECENT_COUNT = 3;
 const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
-    const location = useLocation();
-    const isFinancePage = location.pathname === '/finance';
     const [isOpen, setIsOpen] = useState(false);
     const [topics, setTopics] = useState([]);
     const [editing, setEditing] = useState(null);
@@ -201,28 +198,6 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
                     <button type="button" className="mobile-new-chat-btn" onClick={handleNewChat}>
                         <PlusCircle size={16} />
                         New Chat
-                    </button>
-
-                    {/* Chat button */}
-                    <button
-                        type="button"
-                        className="mobile-finance-nav-btn"
-                        onClick={() => { navigate('/chat'); setIsOpen(false); }}
-                        style={!isFinancePage ? { background: 'linear-gradient(135deg, rgba(0,112,242,0.15), rgba(0,112,242,0.08))', borderColor: 'rgba(0,112,242,0.5)' } : {}}
-                    >
-                        <span style={{ fontSize: '16px' }}>💬</span>
-                        Chat
-                    </button>
-
-                    {/* Finance AI button */}
-                    <button
-                        type="button"
-                        className="mobile-finance-nav-btn"
-                        onClick={() => { navigate('/finance'); setIsOpen(false); }}
-                        style={isFinancePage ? { background: 'linear-gradient(135deg, rgba(0,112,242,0.15), rgba(14,191,161,0.12))', borderColor: 'rgba(14,191,161,0.5)', color: '#0EBFA1' } : {}}
-                    >
-                        <span style={{ fontSize: '16px' }}>💰</span>
-                        Finance AI
                     </button>
 
                     {/* ── Chats section (collapsible) ── */}

@@ -15,9 +15,6 @@ const { getProviderModels } = require('../services/modelCatalog.service');
 const supabase = require('../config/supabase');
 const chatService = require('../services/chat.service');
 const {
-  reserveToolLoopBudget,
-  ensureBizDbInit,
-  buildBizDbDirective,
   buildFileContext,
   runToolLoop,
   stripToolTags,
@@ -113,17 +110,13 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     memoryMode = 'summarized',
     historyLimit = 5,
     ragEnabled = false,
-    dbOnly = false,
     history, // client-provided conversation history (used for anonymous sessions)
   } = req.body;
-
-  // dbOnly mode: AI must query DB before answering
-  const effectiveDbOnly = dbOnly;
 
   const user = req.user;
   const isAnonymous = !user;
   const abortController = new AbortController();
-  let resolvedTopicId = topicId;  // ✅ MOVE HERE - outside try block
+  let resolvedTopicId = topicId;
 
   try {
     // Set SSE headers
@@ -135,9 +128,6 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     // Send initial connection confirmation
     res.write('data: {"status": "connected"}\n\n');
 
-    // Ensure business DB is initialized (shared singleton) — critical for dbOnly mode
-    await ensureBizDbInit();
-
     const modelConfig = MODELS[modelId];
     const effectiveModelConfig = providerModelId
       ? { ...modelConfig, model: providerModelId }
@@ -148,8 +138,8 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
       return;
     }
 
-    // Check cache first (if hit, send cached response) — skip in dbOnly mode (business data must be fresh)
-    const cached = !dbOnly ? await getCachedResponse(message, modelId, user?.id, topicId) : null;
+    // Check cache first (if hit, send cached response)
+    const cached = await getCachedResponse(message, modelId, user?.id, topicId);
     if (cached) {
       res.write(`data: ${JSON.stringify({
         type: 'cached',
@@ -164,7 +154,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
 
     // Build context (same as regular endpoint)
     const estimatedInputTokens = estimateTokens(message);
-    const promptBudget = reserveToolLoopBudget(createPromptBudget(modelConfig));
+    const promptBudget = createPromptBudget(modelConfig);
 
     let ragContext = '';
     let fileResults = [];
@@ -187,7 +177,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
       }
 
       // Semantic cache lookup (same embedding vector)
-      if (!dbOnly) {
+      {
         const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, CHAT_SEMANTIC_CACHE_THRESHOLD, user?.id, topicId);
         if (semanticCachedReply) {
           res.write(`data: ${JSON.stringify({
@@ -246,13 +236,10 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     const fileContext = buildFileContext(fileResults, totalFileCount);
 
 
-    // ── Business DB schema injection ──
-    const { bizDbDirective } = buildBizDbDirective(effectiveDbOnly);
-
     const generalToolsDirective = `\n\n## General Tools\nYou have access to the following tools. To use them, output EXACTLY the tags below:\n1. Web Search: [WEB_SEARCH:query="your search query"]\n2. Execute JS Code: [EXECUTE_CODE]console.log("hello");[/EXECUTE_CODE]\nWait for the tool result to be provided in the next user message before answering.`;
 
     // Build AI messages
-    const systemPrompt = `You are a helpful AI assistant.${ragContext ? '\n\n[CONTEXT FROM DOCUMENTS]\n' + ragContext : ''}${fileContext ? '\n\n' + fileContext : ''}${bizDbDirective}${generalToolsDirective}`;
+    const systemPrompt = `You are a helpful AI assistant.${ragContext ? '\n\n[CONTEXT FROM DOCUMENTS]\n' + ragContext : ''}${fileContext ? '\n\n' + fileContext : ''}${generalToolsDirective}`;
     const aiMessages = [
       { role: 'system', content: systemPrompt },
     ];
@@ -282,7 +269,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     let consecutiveZeroResults = 0;
     let dbQueryCount = 0;
     const fetchedSchemaTables = new Set();
-    const MAX_TOOL_ROUNDS = effectiveDbOnly ? 24 : 6;
+    const MAX_TOOL_ROUNDS = 6;
     const loopResult = await runToolLoop({
       effectiveModelConfig,
       aiMessages,
@@ -290,7 +277,6 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
       processToolCallArgs: {
         user,
         topicId,
-        effectiveDbOnly,
         abortController,
         fetchedSchemaTables,
         onStatus: (statusEvent) => {
@@ -303,7 +289,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
           }
         },
       },
-      effectiveDbOnly,
+      effectiveDbOnly: false,
       promptBudget,
       maxToolRounds: MAX_TOOL_ROUNDS,
       loggerPrefix: 'Stream Tool',
@@ -322,8 +308,8 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     totalAITokens += loopResult.totalAITokens || 0;
     totalEmbeddingTokens += loopResult.totalEmbeddingTokens || 0;
 
-    // Strip leftover tool-call syntax; strip ```sql blocks in dbOnly mode
-    finalReply = stripToolTags(finalReply, { stripSqlBlocks: effectiveDbOnly });
+    // Strip leftover tool-call syntax
+    finalReply = stripToolTags(finalReply);
 
     // Fallback: only if AI literally gave us nothing usable after stripping
     if (dbQueried && lastDbResultBlock && consecutiveZeroResults < 4 && (!finalReply || finalReply.trim().length < 5)) {

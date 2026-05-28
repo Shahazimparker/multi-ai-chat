@@ -45,6 +45,7 @@ const csrfProtection = (req, res, next) => {
   // Also skip for health checks, auth routes, and public stream endpoint
   if (req.path === '/api/health') return next();
   if (req.path === '/api/auth/login') return next();
+  if (req.path === '/api/chat/message') return next();
   if (req.path === '/api/chat/stream') return next();
 
   const csrfToken = req.headers['x-csrf-token'];

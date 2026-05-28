@@ -6,7 +6,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 
 - Backend: Express API with auth, chat, upload, history, admin, token checks, CSRF, Sentry, business DB helpers, caching, RAG, and provider routing.
 - **AI Framework**: 16+ microservices for document loading, vector storage, retrieval, agents, chains, graphs, loops, approval gates, tracing, and flow analysis
-- Frontend: React app with login, chat, anonymous mode, admin, finance dashboard, theme toggle, file upload, and unified provider model picker.
+- Frontend: React app with login, chat, anonymous mode, admin, theme toggle, file upload, and unified provider model picker.
 - Database: Supabase/PostgreSQL with `pgvector`, token tracking, cache, topics, messages, uploads, and business DB support.
 
 ## What To Verify First
@@ -15,7 +15,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 2. `frontend` starts and resolves `REACT_APP_API_URL`.
 3. `/api/health` responds.
 4. Login works and returns a token.
-5. Chat works in `/chat`, `/anonymous`, and `/finance`.
+5. Chat works in `/chat` and `/anonymous`.
 
 ## Manual Regression Checklist
 
@@ -185,7 +185,6 @@ backend/
 │   │   ├── toolProcessor-matchers.test.js # Regex matchers for all tool tags (32 tests)
 │   │   ├── toolProcessor-logic.test.js   # extractReferencedTables, formatDbResults, etc. (18 tests)
 │   │   ├── tokenBudget.test.js           # estimateTokens, budgets, complexity, smartTrim (38 tests)
-│   │   └── bizDbState.test.js            # reserveToolLoopBudget, buildBizDbDirective (8 tests)
 │   └── integration/
 │       ├── toolProcessor.test.js         # processToolCall with real tool backends (6 tests)
 │       └── toolLoop.test.js              # runToolLoop module load verification (1 test)
@@ -206,7 +205,6 @@ backend/
 | `similarity.service.js` | 13 | `jaccardSimilarity` (stop words, case, punctuation), `isSameTopic` (thresholds, last-5 window) |
 | `compress.service.js` | 11 | All 7 filler patterns, short text skip, >50% compression guard |
 | `sanitize.js` | 8 | HTML tag stripping, entity decoding, whitespace collapse, XSS vectors |
-| `bizDbState.service.js` | 8 | `reserveToolLoopBudget` (scaling, floors, custom ratio), `buildBizDbDirective` |
 | `tokenAccounting.service.js` | 6 | Both billing paths (API-reported vs fallback), zero inputs, optional fields |
 | `tokenCheck.js` | 5 | Anonymous skip, remaining tokens, 429 on exhaustion, tokenRemaining |
 
@@ -249,7 +247,6 @@ cd backend && npx vitest run __tests__/unit/tokenAccounting.test.js
 ### Known Limitations
 
 - **Full toolLoop integration tests** require mocking both `dispatchToAI` and `processToolCall` simultaneously, which conflicts with the global Supabase mock in `setup.js`. These paths are covered by the manual regression checklist and the Tier 1 unit tests for `toolProcessor`.
-- **Business DB tests** (`bizDbState`, `toolProcessor-logic`, `toolProcessor-matchers`) trigger a real `initBusinessDB()` call on module load, which attempts a DNS lookup for `test-biz.supabase.co`. This fails gracefully (logs a warning) and tests still pass.
 - **WEB_SEARCH integration test** makes a real HTTP call to DuckDuckGo (takes ~1s). Consider mocking `searchWeb` if this becomes flaky in CI.
 
 ## Real Integration Tests (Live API/DB)
@@ -277,8 +274,7 @@ backend/__tests__/integration-real/
 ├── setup.js               # Loads .env for real API keys
 ├── supabase.test.js       # Real Supabase queries (8 tests)
 ├── ai-providers.test.js   # Real AI provider calls (10 tests)
-├── chat-api.test.js       # Real HTTP chat endpoints (5 tests)
-└── business-db.test.js    # Real Business DB queries (4 tests)
+└── chat-api.test.js       # Real HTTP chat endpoints (5 tests)
 ```
 
 ### What Each Test Verifies
@@ -288,7 +284,6 @@ backend/__tests__/integration-real/
 | `supabase.test.js` | 8 | Connection, users/topics/messages/cache/analytics table queries, RPC calls, health endpoint |
 | `ai-providers.test.js` | 10 | Gemini Flash/Pro, Groq Mixtral/Llama, Mistral Small/Medium, DeepSeek V4 Flash/Pro, OpenAI, OpenRouter |
 | `chat-api.test.js` | 5 | GET /health, GET /models, POST /message (anonymous), POST /stream (SSE), provider catalog |
-| `business-db.test.js` | 4 | Connection check, init, safe SQL query, table schema retrieval |
 
 ### Last Test Run Results (2026-05-27)
 
@@ -297,8 +292,7 @@ backend/__tests__/integration-real/
 | **Supabase** | ✅ 8/8 passed | All tables accessible, RPC working |
 | **AI Providers** | ⚠️ 8/10 passed | Gemini Flash, Groq (both), Mistral (both), DeepSeek (both), OpenRouter — all working. Gemini Pro: quota exceeded. OpenAI: invalid API key. |
 | **Chat API** | ⚠️ 4/5 passed | Health, models (15), SSE streaming, OpenRouter catalog (355 models) — all working. Anonymous /message: 403 CSRF (expected without token). |
-| **Business DB** | ✅ 4/4 passed | Connected, 28KB schema loaded, SQL queries working |
-| **Total** | **24/27 (89%)** | 3 failures are config issues (Gemini Pro quota, OpenAI key, CSRF) |
+| **Total** | **20/23 (87%)** | 3 failures are config issues (Gemini Pro quota, OpenAI key, CSRF) |
 
 ### Skipped Tests
 

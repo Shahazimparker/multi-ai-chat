@@ -3,7 +3,6 @@
 // PURPOSE: Backward-compatible export surface for chat modules.
 // ============================================================
 
-const bizDbState = require('./bizDbState.service');
 const { extractReferencedTables, buildFileContext, formatDbResults, buildFallbackDbReply, processToolCall } = require('./toolProcessor.service');
 const { runToolLoop } = require('./toolLoop.service');
 const { stripToolTags, isPlaceholderOnly, classifyError } = require('./chatCleanup.service');
@@ -25,22 +24,10 @@ const { ExecutionStep, ExecutionTrace, ExecutionTracer, TraceFormatter, TraceAna
 const { Variable, StateTracker, FlowAnalyzer, FlowVisualizer, FlowDebugger, FlowDashboard, FlowOptimizer } = require('./flowVisibility.service');
 
 module.exports = {
-  // Query safety limits
-  MAX_DB_QUERIES: bizDbState.MAX_DB_QUERIES,
-  MAX_CONSECUTIVE_ZERO_RESULTS: bizDbState.MAX_CONSECUTIVE_ZERO_RESULTS,
-
-  // State
-  ensureBizDbInit: bizDbState.ensureBizDbInit,
-  get bizDbConnected() { return bizDbState.bizDbConnected; },
-  get bizDbSchemaText() { return bizDbState.bizDbSchemaText; },
-  get bizDbMinimalSchemaText() { return bizDbState.bizDbMinimalSchemaText; },
-
   // Pure utilities
-  reserveToolLoopBudget: bizDbState.reserveToolLoopBudget,
   extractReferencedTables,
 
   // Builders
-  buildBizDbDirective: bizDbState.buildBizDbDirective,
   buildFileContext,
 
   // Tool processing

@@ -18,7 +18,6 @@ export const useChatSession = ({ refreshTokenStats }) => {
   const [memoryMode, setMemoryMode] = useState('accurate');
   const [historyLimit, setHistoryLimit] = useState(8);
   const [ragEnabled, setRagEnabled] = useState(true);
-  const [dbOnly, setDbOnly] = useState(false);
   const [unifiedProvider, setUnifiedProvider] = useState(null);
   const [providerModelId, setProviderModelId] = useState(null);
   const [messageQueue, setMessageQueue] = useState([]);
@@ -30,7 +29,6 @@ export const useChatSession = ({ refreshTokenStats }) => {
   const uploadAbortRef = useRef(null);
   const uploadSessionIdRef = useRef(null);
   const queuePopoverRef = useRef(null);
-  const prevModelRef = useRef(null);
 
   useEffect(() => {
     const savedSid = sessionStorage.getItem('uploadSessionId');
@@ -91,21 +89,6 @@ export const useChatSession = ({ refreshTokenStats }) => {
       .then((res) => setModels(res.data.models || []))
       .catch(() => {});
   }, []);
-
-  useEffect(() => {
-    if (dbOnly) {
-      if (model && model.id !== 'deepseek-v4-pro-erp') prevModelRef.current = model;
-      if (!model || model.id !== 'deepseek-v4-pro-erp') {
-        const erpModel = models.find((entry) => entry.id === 'deepseek-v4-pro-erp');
-        if (erpModel) setModel(erpModel);
-      }
-      return;
-    }
-    if (prevModelRef.current) {
-      setModel(prevModelRef.current);
-      prevModelRef.current = null;
-    }
-  }, [dbOnly, model, models]);
 
   const handleTopicSelect = useCallback(async (topic) => {
     setActiveTopic(topic);
@@ -301,7 +284,6 @@ export const useChatSession = ({ refreshTokenStats }) => {
           memoryMode,
           historyLimit: Number(historyLimit),
           ragEnabled,
-          dbOnly,
         }),
         signal: controller.signal,
       });
@@ -458,7 +440,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
       uploadSessionIdRef.current = null;
       sessionStorage.removeItem('uploadSessionId');
     }
-  }, [activeTopic, dbOnly, historyLimit, memoryMode, model, providerModelId, ragEnabled, refreshTokenStats, uploadSingleFile]);
+  }, [activeTopic, historyLimit, memoryMode, model, providerModelId, ragEnabled, refreshTokenStats, uploadSingleFile]);
 
   useEffect(() => {
     if (loading || messageQueue.length === 0) return;
@@ -551,8 +533,6 @@ export const useChatSession = ({ refreshTokenStats }) => {
     setHistoryLimit,
     ragEnabled,
     setRagEnabled,
-    dbOnly,
-    setDbOnly,
     unifiedProvider,
     setUnifiedProvider,
     providerModelId,

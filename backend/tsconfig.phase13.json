@@ -18,7 +18,6 @@
   "include": [
     "config/chatRuntime.config.js",
     "services/cache.service.js",
-    "services/businessDb.service.js",
     "services/fileUpload.service.js",
     "services/documentLoader.service.js",
     "services/**/*.d.ts",

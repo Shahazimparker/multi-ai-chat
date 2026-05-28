@@ -1,12 +1,15 @@
 // Real Supabase integration tests — requires .env with SUPABASE_URL + SUPABASE_SERVICE_KEY
 // Run: npx vitest run --config vitest.real.config.js
 
-const supabase = require('../../config/supabase');
+const hasSupabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY;
 
-describe('Supabase (real)', () => {
+const describeSupabase = hasSupabase ? describe : describe.skip;
+
+describeSupabase('Supabase (real)', () => {
+  const supabase = require('../../config/supabase');
+
   it('connects to Supabase successfully', async () => {
     const { data, error } = await supabase.from('users').select('id', { count: 'exact', head: true });
-    // Should not throw a connection error
     expect(error).toBeNull();
     expect(data).toBeDefined();
   });
@@ -16,7 +19,6 @@ describe('Supabase (real)', () => {
       .from('users')
       .select('id, email, username, role')
       .limit(1);
-
     expect(error).toBeNull();
     expect(Array.isArray(data)).toBe(true);
   });
@@ -26,7 +28,6 @@ describe('Supabase (real)', () => {
       .from('topics')
       .select('id, title')
       .limit(1);
-
     expect(error).toBeNull();
     expect(Array.isArray(data)).toBe(true);
   });
@@ -36,7 +37,6 @@ describe('Supabase (real)', () => {
       .from('messages')
       .select('id, role, content')
       .limit(1);
-
     expect(error).toBeNull();
     expect(Array.isArray(data)).toBe(true);
   });
@@ -46,7 +46,6 @@ describe('Supabase (real)', () => {
       .from('query_cache')
       .select('id')
       .limit(1);
-
     expect(error).toBeNull();
     expect(Array.isArray(data)).toBe(true);
   });
@@ -56,19 +55,16 @@ describe('Supabase (real)', () => {
       .from('query_analytics')
       .select('id')
       .limit(1);
-
     expect(error).toBeNull();
     expect(Array.isArray(data)).toBe(true);
   });
 
   it('can call RPC functions', async () => {
-    // Test a simple RPC call — adjust function name if needed
     const { error } = await supabase.rpc('increment_user_tokens', {
       user_id: '00000000-0000-0000-0000-000000000000',
       token_amount: 0,
     });
-    // May error on non-existent user, but should not be a connection error
-    expect(error).toBeDefined(); // Expected — user doesn't exist
+    expect(error).toBeDefined();
   });
 
   it('health check endpoint responds', async () => {

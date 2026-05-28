@@ -7,8 +7,6 @@ const ChatMemoryControls = ({
   setHistoryLimit,
   ragEnabled,
   setRagEnabled,
-  dbOnly,
-  setDbOnly,
   showAdvancedMemory,
   setShowAdvancedMemory,
 }) => (
@@ -38,11 +36,6 @@ const ChatMemoryControls = ({
     <button type="button" className="memory-advanced-btn" onClick={() => setShowAdvancedMemory((prev) => !prev)}>
       Advanced
     </button>
-
-    <label className="memory-toggle-control">
-      <input type="checkbox" checked={dbOnly} onChange={(event) => setDbOnly(event.target.checked)} />
-      🔒 Only DB
-    </label>
 
     {showAdvancedMemory && (
       <>

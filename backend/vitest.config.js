@@ -5,6 +5,7 @@ module.exports = defineConfig({
     globals: true,
     environment: 'node',
     include: ['__tests__/**/*.test.js'],
+    exclude: ['__tests__/integration-real/**'],
     setupFiles: ['./__tests__/setup.js'],
     coverage: {
       provider: 'v8',
@@ -15,7 +16,6 @@ module.exports = defineConfig({
         'services/similarity.service.js',
         'services/toolProcessor.service.js',
         'services/toolLoop.service.js',
-        'services/bizDbState.service.js',
         'services/tokenBudget.service.js',
         'middleware/sanitize.js',
         'middleware/tokenCheck.js',

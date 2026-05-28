@@ -2,12 +2,11 @@
 // FILE: frontend/src/components/chat/Sidebar.jsx
 // PURPOSE: Left sidebar — New Chat, collapsible Chats & Artifacts
 //          sections top, Recent chats below divider, user footer.
-//          Added Chat/Finance nav buttons with active state.
 // ============================================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { PlusCircle, MessageSquare, Trash2, Pencil, Check, X, LogOut, Settings, FileText, Clock, ChevronRight, Search, Download } from 'lucide-react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import ThemeToggle from '../layout/ThemeToggle';
 import api from '../../config/api';
@@ -18,8 +17,6 @@ const RECENT_COUNT = 3;
 const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
   const { user, logout }      = useAuth();
   const navigate              = useNavigate();
-  const location              = useLocation();
-  const isFinancePage         = location.pathname === '/finance';
   const [topics,  setTopics]  = useState([]);
   const [editing, setEditing] = useState(null);
   const [editVal, setEditVal] = useState('');
@@ -219,28 +216,6 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
         <button className="new-chat-btn" onClick={onNewChat}>
           <PlusCircle size={16} />
           New Chat
-        </button>
-
-        {/* Chat button */}
-        <button
-          className={`finance-nav-btn ${!isFinancePage ? 'nav-btn-active' : ''}`}
-          onClick={() => navigate('/chat')}
-          title="AI Chat"
-          style={!isFinancePage ? { background: 'linear-gradient(135deg, rgba(0,112,242,0.15), rgba(0,112,242,0.08))', borderColor: 'rgba(0,112,242,0.5)' } : {}}
-        >
-          <span className="finance-nav-icon">💬</span>
-          Chat
-        </button>
-
-        {/* Finance AI button */}
-        <button
-          className={`finance-nav-btn ${isFinancePage ? 'nav-btn-active' : ''}`}
-          onClick={() => navigate('/finance')}
-          title="Finance AI — SAP S/4HANA Intelligence"
-          style={isFinancePage ? { background: 'linear-gradient(135deg, rgba(0,112,242,0.15), rgba(14,191,161,0.12))', borderColor: 'rgba(14,191,161,0.5)', color: '#0EBFA1' } : {}}
-        >
-          <span className="finance-nav-icon">💰</span>
-          Finance AI
         </button>
 
         {/* ── Chats section (collapsible) ── */}

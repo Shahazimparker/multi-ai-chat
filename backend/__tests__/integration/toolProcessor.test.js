@@ -10,7 +10,6 @@ describe('processToolCall', () => {
     aiMessages: [],
     user: null,
     topicId: null,
-    effectiveDbOnly: false,
     abortController: new AbortController(),
     fetchedSchemaTables: new Set(),
     consecutiveZeroResults: 0,

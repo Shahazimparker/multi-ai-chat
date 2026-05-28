@@ -1,8 +1,6 @@
 const { searchUserFilesRAG, getFileContent } = require('./fileUpload.service');
-const { queryBusinessDB, getTableSchema } = require('./businessDb.service');
 const { searchWeb } = require('./tools/webSearch.service');
 const { executeCode } = require('./tools/codeExecute.service');
-const bizDbState = require('./bizDbState.service');
 
 const extractReferencedTables = (sql = '') => {
   const tables = new Set();
@@ -109,7 +107,6 @@ const processToolCall = async ({
   aiMessages,
   user,
   topicId,
-  effectiveDbOnly,
   abortController,
   fetchedSchemaTables,
   consecutiveZeroResults = 0,
@@ -230,37 +227,6 @@ const processToolCall = async ({
     };
   }
 
-  const getSchemaMatch = findGetSchemaMatch(reply);
-  if (getSchemaMatch && bizDbState.bizDbConnected) {
-    const rawNames = getSchemaMatch[1].split(',').map(s => s.trim());
-    const maxSchemaTables = 8;
-    const tableNames = rawNames.slice(0, maxSchemaTables);
-    if (rawNames.length > maxSchemaTables) {
-      console.log(`[Tool] GET_SCHEMA capped from ${rawNames.length} to ${maxSchemaTables} tables`);
-    }
-    const schemaText = await getTableSchema(tableNames);
-    tableNames.forEach((name) => fetchedSchemaTables.add(name));
-
-    return {
-      handled: true,
-      newMessages: [
-        {
-          role: 'assistant',
-          content: reply.replace(getSchemaMatch[0], '').trim() || `[Getting schema for ${tableNames.join(', ')}...]`,
-        },
-        {
-          role: 'user',
-          content: schemaText + '\n\nNow write your SQL query wrapped in [QUERY_DB] tags like this:\n[QUERY_DB]SELECT column1, column2 FROM table WHERE condition[/QUERY_DB]\nUse the exact column names from the schema above. Do NOT write anything else — just the [QUERY_DB] tags with SQL inside.',
-        },
-      ],
-      embedTokens: 0,
-      dbQueried: false,
-      lastSqlQuery: '',
-      consecutiveZeroResults,
-      dbQueryCount,
-    };
-  }
-
   if (hasBareCloseTag(reply)) {
     return {
       handled: true,
@@ -277,99 +243,6 @@ const processToolCall = async ({
       consecutiveZeroResults,
       dbQueryCount,
     };
-  }
-
-  const queryDbMatch = findQueryDbMatch(reply);
-  if (queryDbMatch && bizDbState.bizDbConnected) {
-    const sql = queryDbMatch[1].trim();
-
-    if (effectiveDbOnly) {
-      const referencedTables = extractReferencedTables(sql);
-      const missingSchemaTables = referencedTables.filter((table) => !fetchedSchemaTables.has(table));
-      if (missingSchemaTables.length > 0) {
-        return {
-          handled: true,
-          newMessages: [
-            {
-              role: 'assistant',
-              content: reply.replace(queryDbMatch[0], '').trim() || '[Preparing database query...]',
-            },
-            {
-              role: 'user',
-              content: `[SYSTEM] In DB-only mode, you must fetch column schema before querying. You tried to query these tables without GET_SCHEMA: ${missingSchemaTables.join(', ')}.\n\nCall GET_SCHEMA first for all referenced tables, then regenerate the SQL using the exact returned column names.\n\nRequired next step:\n[GET_SCHEMA:${missingSchemaTables.join(', ')}]`,
-            },
-          ],
-          embedTokens: 0,
-          dbQueried: false,
-          lastSqlQuery: sql,
-          consecutiveZeroResults,
-          dbQueryCount,
-        };
-      }
-    }
-
-    if (dbQueryCount >= bizDbState.MAX_DB_QUERIES) {
-      return {
-        handled: true,
-        newMessages: [
-          { role: 'assistant', content: reply.replace(queryDbMatch[0], '').trim() || '' },
-          { role: 'user', content: `[SYSTEM] Maximum of ${bizDbState.MAX_DB_QUERIES} database queries reached for this conversation. Summarize what you've found so far.` },
-        ],
-        embedTokens: 0,
-        dbQueried: true,
-        lastSqlQuery: sql,
-        consecutiveZeroResults,
-        dbQueryCount,
-      };
-    }
-
-    try {
-      const dbResults = await queryBusinessDB(sql);
-      const { resultBlock, resultCount } = formatDbResults(dbResults);
-      const newConsecutiveZero = resultCount === 0 ? consecutiveZeroResults + 1 : 0;
-
-      return {
-        handled: true,
-        newMessages: [
-          {
-            role: 'assistant',
-            content: reply.replace(queryDbMatch[0], '').trim() || (resultCount === 0 ? 'No rows returned for this query.' : ''),
-          },
-          { role: 'user', content: resultBlock },
-        ],
-        embedTokens: 0,
-        dbQueried: true,
-        lastSqlQuery: sql,
-        lastDbResultBlock: resultBlock,
-        consecutiveZeroResults: newConsecutiveZero,
-        resultCount,
-        dbQueryCount: dbQueryCount + 1,
-      };
-    } catch (dbErr) {
-      const referencedTables = extractReferencedTables(sql);
-      const schemaRecoveryHint = effectiveDbOnly && referencedTables.length > 0
-        ? await getTableSchema(referencedTables)
-        : '';
-
-      return {
-        handled: true,
-        newMessages: [
-          {
-            role: 'assistant',
-            content: reply.replace(queryDbMatch[0], '').trim() || '[Attempting to query database...]',
-          },
-          {
-            role: 'user',
-            content: `[QUERY DB ERROR]\n${dbErr.message}\n[END ERROR]\n\n${schemaRecoveryHint ? `${schemaRecoveryHint}\n\n` : ''}Please fix your SQL query and try again. Make sure table and column names are correct.${schemaRecoveryHint ? ' Use the schema above and regenerate the SQL with exact column names.' : ' Use GET_SCHEMA for the referenced tables if you need to check the schema.'}`,
-          },
-        ],
-        embedTokens: 0,
-        dbQueried: true,
-        lastSqlQuery: sql,
-        consecutiveZeroResults,
-        dbQueryCount: dbQueryCount + 1,
-      };
-    }
   }
 
   return { handled: false };

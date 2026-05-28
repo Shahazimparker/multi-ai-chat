@@ -42,7 +42,6 @@ Multi-AI Chat is a full-stack chat platform that unifies 15 configured AI models
 | Admin | User management, quota controls, analytics |
 | UX | Theme toggle, mobile navigation, token bar, unified model modal |
 | Observability | Backend and frontend Sentry integration |
-| Finance | Separate finance route in the frontend app |
 
 ## Enterprise AI Orchestration (New)
 

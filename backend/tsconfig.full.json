@@ -19,7 +19,6 @@
     "config/chatRuntime.config.js",
     "controllers/chat.controller.js",
     "routes/chat.routes.js",
-    "services/bizDbState.service.js",
     "services/chatCleanup.service.js",
     "services/documentLoader.service.js",
     "services/rag.service.js",

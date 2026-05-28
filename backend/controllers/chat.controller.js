@@ -25,9 +25,6 @@ const { logAnalytics } = require('../services/analytics.service');
 const { calculateBillableTokens } = require('../services/tokenAccounting.service');
 const chatService = require('../services/chat.service');
 const {
-  reserveToolLoopBudget,
-  ensureBizDbInit,
-  buildBizDbDirective,
   buildFileContext,
   runToolLoop,
   stripToolTags,
@@ -63,14 +60,7 @@ const sendMessage = async (req, res) => {
     memoryMode = 'summarized',
     historyLimit = 5,
     ragEnabled = false,
-    dbOnly = false,
   } = req.body;
-
-  // dbOnly mode: AI must query DB before answering
-  const effectiveDbOnly = dbOnly;
-
-  // Ensure business DB is initialized (shared singleton)
-  await ensureBizDbInit();
 
   // ── 0. Setup Abort Controller for request cancellation ──
   const abortController = new AbortController();
@@ -122,7 +112,6 @@ const sendMessage = async (req, res) => {
         queryTokens: Math.floor(promptBudget.queryTokens * scale),
       };
     }
-    promptBudget = reserveToolLoopBudget(promptBudget);
     const estimatedInputTokens = estimateTokens(message);
     if (user && estimatedInputTokens > user.per_query_limit) {
       return res.status(400).json({
@@ -174,8 +163,7 @@ const sendMessage = async (req, res) => {
         totalEmbeddingTokens += embedResult.tokensUsed;
       }
 
-      // Skip semantic cache in dbOnly mode — business DB queries must always be fresh
-      if (!dbOnly) {
+      {
         const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, CHAT_SEMANTIC_CACHE_THRESHOLD, user?.id, topicId);
         if (semanticCachedReply) {
           await logAnalytics({
@@ -270,11 +258,9 @@ const sendMessage = async (req, res) => {
       ? `\n\nIf the user asks what model/company you are, reply EXACTLY with:\n${runtimeIdentity}`
       : '';
 
-    const { bizDbDirective } = buildBizDbDirective(effectiveDbOnly);
-
     const generalToolsDirective = `\n\n## General Tools\nYou have access to the following tools. To use them, output EXACTLY the tags below:\n1. Web Search: [WEB_SEARCH:query="your search query"]\n2. Execute JS Code: [EXECUTE_CODE]console.log("hello");[/EXECUTE_CODE]\nWait for the tool result to be provided in the next user message before answering.`;
 
-    const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}${bizDbDirective}${generalToolsDirective}\n\nRules:\n- Format ABAP, SQL, JSON, XML code in \`\`\` blocks with language label ONLY if the user explicitly asks for code/SQL.\n- Use tables for structured data (configuration, field mappings) when presenting DB results.\n- Use bullet points for better clarity.\n- When explaining errors, show the error first, then root cause, then fix.`;
+    const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}${generalToolsDirective}\n\nRules:\n- Format ABAP, SQL, JSON, XML code in \`\`\` blocks with language label ONLY if the user explicitly asks for code/SQL.\n- Use tables for structured data (configuration, field mappings) when presenting DB results.\n- Use bullet points for better clarity.\n- When explaining errors, show the error first, then root cause, then fix.`;
     aiMessages.push({ role: 'system', content: staticSystem });
     // Dynamic parts — NOT cacheable (change per request)
     if (ragContext) {
@@ -324,7 +310,7 @@ const sendMessage = async (req, res) => {
     const fetchedSchemaTables = new Set();
 
     // Tool-call loop: AI can search files, request full content, or query business DB
-    const MAX_TOOL_ROUNDS = effectiveDbOnly ? 24 : 6;
+    const MAX_TOOL_ROUNDS = 6;
     const loopResult = await runToolLoop({
       effectiveModelConfig,
       aiMessages,
@@ -332,17 +318,15 @@ const sendMessage = async (req, res) => {
       processToolCallArgs: {
         user,
         topicId,
-        effectiveDbOnly,
         abortController,
         fetchedSchemaTables,
       },
-      effectiveDbOnly,
       promptBudget,
       maxToolRounds: MAX_TOOL_ROUNDS,
       loggerPrefix: 'Tool',
       getNudgeSourceText: () => finalQuery,
       onNoToolCall: async ({ reply, aiMessages: loopMessages, trimOldestToolRounds, state }) => {
-        if (dbOnly && state.dbQueried && state.lastSqlQuery) {
+        if (false && state.dbQueried && state.lastSqlQuery) {
           const isDistinctOnly = /SELECT\s+DISTINCT\s+/i.test(state.lastSqlQuery) &&
             !/\b(COUNT|SUM|AVG|MIN|MAX|GROUP\s+BY)\b/i.test(state.lastSqlQuery);
           const replyHasPlaceholder = /[\t\n]-\s*[\t\n]/.test(reply) || /would\s+(you\s+)?(like|prefer)/i.test(reply);
@@ -478,11 +462,6 @@ const sendMessage = async (req, res) => {
       userId: user?.id, query: message, modelId, tokensUsed: billableTokens,
       isAnonymous, cacheHit: false, responseTimeMs: Date.now() - startTime,
     });
-
-    // Safety net: strip tool call syntax from final reply in dbOnly mode
-    if (chatService.bizDbConnected && effectiveDbOnly && finalReply) {
-      finalReply = stripToolTags(finalReply, { stripSqlBlocks: true });
-    }
 
     // ── 14. Return response ───────────────────────────────────
     res.json({

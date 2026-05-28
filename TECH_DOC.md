@@ -55,7 +55,6 @@ This document is the technical reference for the current codebase state.
 - Token budgeting: `backend/services/tokenBudget.service.js`
 - Analytics: `backend/services/analytics.service.js`
 - Similarity and compression: `backend/services/similarity.service.js`, `backend/services/compress.service.js`
-- Business DB support: `backend/services/businessDb.service.js`, `backend/services/businessRagSync.service.js`
 - Tool execution helpers: `backend/services/tools/webSearch.service.js`, `backend/services/tools/codeExecute.service.js`
 
 ### AI Framework Services (LangChain/LangGraph/LangSmith Equivalent)
@@ -131,7 +130,6 @@ This document is the technical reference for the current codebase state.
   - `/login`
   - `/anonymous`
   - `/chat`
-  - `/finance`
   - `/admin`
 
 ### State/config
@@ -148,7 +146,6 @@ This document is the technical reference for the current codebase state.
 - `frontend/src/pages/hooks/useChatComposer.js` - draft input and attachment handling
 - `frontend/src/pages/AnonymousPage.jsx`
 - `frontend/src/pages/AdminPage.jsx`
-- `frontend/src/pages/Finance/FinancePage.jsx`
 
 ### Key UI components
 
