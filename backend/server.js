@@ -38,6 +38,7 @@ process.on('unhandledRejection', (reason, promise) => {
 const authRoutes    = require('./routes/auth.routes');
 const chatRoutes    = require('./routes/chat.routes');
 const adminRoutes   = require('./routes/admin.routes');
+const approvalRoutes = require('./routes/approval.routes');
 const historyRoutes = require('./routes/history.routes');
 const uploadRoutes  = require('./routes/upload.routes');
 
@@ -98,6 +99,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth',    authRoutes);     // login, logout, verify
 app.use('/api/chat',    chatRoutes);     // send message, stream
 app.use('/api/admin',   adminRoutes);    // user management, analytics
+app.use('/api/approvals', approvalRoutes); // persistent human approvals
 app.use('/api/history', historyRoutes);  // chat history, topics
 app.use('/api/upload',  uploadRoutes);   // file upload, search, delete
 

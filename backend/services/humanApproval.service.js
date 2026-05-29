@@ -147,6 +147,30 @@ class ExecutionSnapshot {
 }
 
 const MAX_APPROVAL_TIMEOUT_MS = 3600000; // hard cap: 1 hour
+const SERVERLESS_MAX_APPROVAL_TIMEOUT_MS = 1000;
+
+const isServerlessRuntime = () => (
+  process.env.VERCEL === '1' ||
+  process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  process.env.FUNCTIONS_WORKER_RUNTIME
+);
+
+const normalizeApprovalRow = (row) => row ? {
+  id: row.id,
+  type: row.type,
+  title: row.title,
+  description: row.description,
+  context: row.context || {},
+  options: row.options || [],
+  status: row.status,
+  response: row.response,
+  reason: row.reason,
+  approver: row.approver,
+  requiredBy: row.required_by,
+  createdAt: row.created_at,
+  expiresAt: row.expires_at,
+  approvedAt: row.approved_at,
+} : null;
 
 /**
  * HumanApprovalHandler — manages approval flow
@@ -158,6 +182,10 @@ class HumanApprovalHandler {
     this.auditLog = [];
     this.pendingCallbacks = new Map(); // id → { resolve, reject, timeout }
     this.approvalFn = options.approvalFn || null; // external callback to request approval
+    this.store = options.store || null;
+    this.waitForApproval = options.waitForApproval !== undefined
+      ? options.waitForApproval
+      : !isServerlessRuntime();
     this.defaultApprover = options.defaultApprover || 'system';
     this.autoRejectExpired = options.autoRejectExpired !== false;
     this.defaultTimeout = options.defaultTimeout || 300000; // 5 min default
@@ -169,9 +197,11 @@ class HumanApprovalHandler {
   async requestApproval(options = {}) {
     // Clamp timeout: null/undefined → defaultTimeout, > cap → cap
     const rawTimeout = options.timeout != null ? options.timeout : this.defaultTimeout;
-    const clampedTimeout = Math.min(rawTimeout, MAX_APPROVAL_TIMEOUT_MS);
+    const maxTimeout = this.waitForApproval ? MAX_APPROVAL_TIMEOUT_MS : SERVERLESS_MAX_APPROVAL_TIMEOUT_MS;
+    const clampedTimeout = Math.min(rawTimeout, maxTimeout);
     const request = new ApprovalRequest({ ...options, timeout: clampedTimeout });
     this.requests.set(request.id, request);
+    await this._persistRequest(request);
 
     // Log the request
     this._logAudit('approval_requested', {
@@ -199,8 +229,48 @@ class HumanApprovalHandler {
         });
     }
 
-    // Wait for approval (with timeout)
+    if (!this.waitForApproval) {
+      return request;
+    }
+
+    // Wait for approval (with timeout) only in long-lived runtimes.
     return await this._waitForApproval(request);
+  }
+
+  async _persistRequest(request) {
+    if (!this.store?.from) return;
+    const payload = {
+      id: request.id,
+      type: request.type,
+      title: request.title,
+      description: request.description,
+      context: request.context,
+      options: request.options,
+      status: request.status,
+      response: request.response,
+      reason: request.reason,
+      approver: request.approver,
+      required_by: request.requiredBy,
+      expires_at: request.expiresAt,
+    };
+
+    const { error } = await this.store.from('human_approvals').upsert(payload, { onConflict: 'id' });
+    if (error) throw error;
+  }
+
+  async _updatePersistedRequest(request) {
+    if (!this.store?.from) return;
+    const { error } = await this.store
+      .from('human_approvals')
+      .update({
+        status: request.status,
+        response: request.response,
+        reason: request.reason,
+        approver: request.approver,
+        approved_at: request.approvedAt,
+      })
+      .eq('id', request.id);
+    if (error) throw error;
   }
 
   /**
@@ -234,13 +304,15 @@ class HumanApprovalHandler {
   /**
    * Approve a request
    */
-  approve(requestId, response = true, approver = 'human', reason = '') {
-    const request = this.requests.get(requestId);
+  async approve(requestId, response = true, approver = 'human', reason = '') {
+    const request = await this._loadRequest(requestId);
     if (!request) {
       throw new Error(`Request not found: ${requestId}`);
     }
 
     request.approve(response, approver, reason);
+    this.requests.set(request.id, request);
+    await this._updatePersistedRequest(request);
     this._logAudit('approval_granted', {
       requestId,
       approver,
@@ -260,13 +332,15 @@ class HumanApprovalHandler {
   /**
    * Reject a request
    */
-  reject(requestId, reason = '', approver = 'human') {
-    const request = this.requests.get(requestId);
+  async reject(requestId, reason = '', approver = 'human') {
+    const request = await this._loadRequest(requestId);
     if (!request) {
       throw new Error(`Request not found: ${requestId}`);
     }
 
     request.reject(reason, approver);
+    this.requests.set(request.id, request);
+    await this._updatePersistedRequest(request);
     this._logAudit('approval_rejected', {
       requestId,
       approver,
@@ -308,11 +382,55 @@ class HumanApprovalHandler {
     return this.requests.get(requestId);
   }
 
+  async _loadRequest(requestId) {
+    const existing = this.requests.get(requestId);
+    if (existing) return existing;
+    if (!this.store?.from) return null;
+
+    const { data, error } = await this.store
+      .from('human_approvals')
+      .select('*')
+      .eq('id', requestId)
+      .maybeSingle();
+    if (error || !data) return null;
+
+    const request = new ApprovalRequest({
+      id: data.id,
+      type: data.type,
+      title: data.title,
+      description: data.description,
+      context: data.context || {},
+      options: data.options || [],
+      timeout: data.expires_at ? Math.max(0, new Date(data.expires_at).getTime() - Date.now()) : null,
+      requiredBy: data.required_by,
+    });
+    request.status = data.status;
+    request.response = data.response;
+    request.reason = data.reason;
+    request.approver = data.approver;
+    request.createdAt = data.created_at;
+    request.expiresAt = data.expires_at;
+    request.approvedAt = data.approved_at;
+    this.requests.set(request.id, request);
+    return request;
+  }
+
   /**
    * Get all pending requests
    */
   getPendingRequests() {
     return Array.from(this.requests.values()).filter((r) => r.isPending());
+  }
+
+  async listPendingRequests() {
+    if (!this.store?.from) return this.getPendingRequests().map((request) => request.toJSON());
+    const { data, error } = await this.store
+      .from('human_approvals')
+      .select('*')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return (data || []).map(normalizeApprovalRow);
   }
 
   /**
@@ -384,6 +502,8 @@ class ApprovalManager {
   constructor(options = {}) {
     this.handlers = new Map(); // name → HumanApprovalHandler
     this.globalApprovalFn = options.approvalFn || null;
+    this.store = options.store || null;
+    this.waitForApproval = options.waitForApproval;
   }
 
   /**
@@ -392,6 +512,8 @@ class ApprovalManager {
   createHandler(name, options = {}) {
     const handler = new HumanApprovalHandler({
       approvalFn: this.globalApprovalFn || options.approvalFn,
+      store: this.store || options.store,
+      waitForApproval: this.waitForApproval !== undefined ? this.waitForApproval : options.waitForApproval,
       ...options,
     });
     this.handlers.set(name, handler);
@@ -403,7 +525,10 @@ class ApprovalManager {
    */
   getHandler(name) {
     if (!this.handlers.has(name)) {
-      this.handlers.set(name, new HumanApprovalHandler());
+      this.handlers.set(name, new HumanApprovalHandler({
+        store: this.store,
+        waitForApproval: this.waitForApproval,
+      }));
     }
     return this.handlers.get(name);
   }
@@ -420,9 +545,17 @@ class ApprovalManager {
   /**
    * Approve across handlers
    */
-  approve(requestId, response = true, approver = 'human', reason = '') {
+  async approve(requestId, response = true, approver = 'human', reason = '') {
+    if (this.handlers.size === 0) {
+      const defaultHandler = this.getHandler('default');
+      const request = await defaultHandler._loadRequest(requestId);
+      if (request) {
+        return defaultHandler.approve(requestId, response, approver, reason);
+      }
+    }
+
     for (const handler of this.handlers.values()) {
-      const request = handler.getRequest(requestId);
+      const request = await handler._loadRequest(requestId);
       if (request) {
         return handler.approve(requestId, response, approver, reason);
       }
@@ -433,9 +566,17 @@ class ApprovalManager {
   /**
    * Reject across handlers
    */
-  reject(requestId, reason = '', approver = 'human') {
+  async reject(requestId, reason = '', approver = 'human') {
+    if (this.handlers.size === 0) {
+      const defaultHandler = this.getHandler('default');
+      const request = await defaultHandler._loadRequest(requestId);
+      if (request) {
+        return defaultHandler.reject(requestId, reason, approver);
+      }
+    }
+
     for (const handler of this.handlers.values()) {
-      const request = handler.getRequest(requestId);
+      const request = await handler._loadRequest(requestId);
       if (request) {
         return handler.reject(requestId, reason, approver);
       }
@@ -453,6 +594,10 @@ class ApprovalManager {
       all.push(...pending.map((r) => ({ handler: name, request: r })));
     }
     return all;
+  }
+
+  async listPending(handlerName = 'default') {
+    return await this.getHandler(handlerName).listPendingRequests();
   }
 }
 

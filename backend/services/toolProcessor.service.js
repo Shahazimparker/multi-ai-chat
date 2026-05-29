@@ -12,18 +12,6 @@ const { generateHTML } = require('./htmlGeneration.service');
 const { generateJSON } = require('./jsonGeneration.service');
 const { generateMarkdown } = require('./markdownGeneration.service');
 
-const extractReferencedTables = (sql = '') => {
-  const tables = new Set();
-  const tableRegex = /\b(?:FROM|JOIN)\s+"?([a-zA-Z_][a-zA-Z0-9_]*)"?/gi;
-  let match;
-
-  while ((match = tableRegex.exec(sql)) !== null) {
-    tables.add(match[1]);
-  }
-
-  return [...tables];
-};
-
 const buildFileContext = (fileResults, totalFileCount) => {
   const fileCountNote = totalFileCount > fileResults.length
     ? `\n(Showing ${fileResults.length} of ${totalFileCount} total files — use SEARCH_FILES to find older ones)`
@@ -56,81 +44,12 @@ const findGenerateHTMLMatch = (reply) => reply.match(/\[GENERATE_HTML\]([\s\S]*?
 const findGenerateJSONMatch = (reply) => reply.match(/\[GENERATE_JSON\]([\s\S]*?)\[\/GENERATE_JSON\]/i);
 const findGenerateMDMatch = (reply) => reply.match(/\[GENERATE_MD\]([\s\S]*?)\[\/GENERATE_MD\]/i);
 
-const findGetSchemaMatch = (reply) => {
-  let m = reply.match(/\[GET_SCHEMA:([^\]]+)\]/);
-  if (!m) m = reply.match(/<GET_SCHEMA:([^>]+)>/);
-  if (!m) m = reply.match(/<GET_SCHEMA>([^<]+)<\/GET_SCHEMA>/);
-  if (!m) m = reply.match(/<DB_SCHEMA_REQUEST>\s*([^<]+?)\s*<\/DB_SCHEMA_REQUEST>/i);
-  if (!m) m = reply.match(/\[DB_SCHEMA_REQUEST:?\s*([^\]]+)\]/i);
-  if (!m) m = reply.match(/<request>\s*<method>Get_Schema<\/method>\s*<params>\s*<table>([^<]+)<\/table>\s*<\/params>\s*<\/requests?>/i);
-  if (!m) {
-    const reqMatch = reply.match(/<request[^>]*>[\s\S]*?<\/request>/i);
-    if (reqMatch) {
-      const tablesJSON = reqMatch[0].match(/["']tables["']\s*:\s*\[([^\]]+)\]/i);
-      if (tablesJSON) {
-        const tables = tablesJSON[1].match(/["']([^"']+)["']/g);
-        if (tables) {
-          m = [reqMatch[0], tables.map(t => t.replace(/["']/g, '')).join(', ')];
-        }
-      }
-    }
-  }
-  if (!m) m = reply.match(/<request_label>Get\s+Schema<\/request_label>\s*<request_text>([^<]+)<\/request_text>/i);
-  return m;
-};
-
-const findQueryDbMatch = (reply) => {
-  let m = reply.match(/\[QUERY_DB\]\s*(?:<SQL_QUERY>\s*)?([\s\S]*?)\s*(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/);
-  if (!m) m = reply.match(/<QUERY_DB>\s*<SQL_QUERY>\s*([\s\S]*?)\s*<\/SQL_QUERY>\s*\[\/QUERY_DB\]/);
-  if (!m) m = reply.match(/<QUERY_DB>\s*([\s\S]*?)\s*<\/QUERY_DB>/);
-  if (!m) m = reply.match(/<query>\s*([\s\S]*?)\s*<\/query>/i);
-  if (!m) m = reply.match(/<Function\s+id="query_db_\d+"\s*>([\s\S]*?)<\/Function>/i);
-  return m;
-};
-
-const hasBareCloseTag = (reply) => {
-  return (
-    (/\[\/QUERY_DB\]/.test(reply) && !/\[QUERY_DB\]/.test(reply)) ||
-    (/<\/query>/i.test(reply) && !/<query>/i.test(reply)) ||
-    (/<\/Function>/i.test(reply) && !/<Function\s+id="query_db_\d+"\s*>/i.test(reply))
-  );
-};
-
-const formatDbResults = (dbResults) => {
-  const resultCount = Array.isArray(dbResults) ? dbResults.length : 0;
-
-  if (resultCount === 0) {
-    return {
-      resultBlock: `[QUERY DB RESULTS]\nNo results found for the query.\n[END RESULTS]\n\nThe data might not exist in the database. Ask the user to clarify or check if they meant something else.`,
-      resultCount,
-    };
-  }
-
-  const preview = JSON.stringify(dbResults.slice(0, 20), null, 2);
-  const truncated = resultCount > 20 ? `\n(Showing 20 of ${resultCount} results)` : '';
-  return {
-    resultBlock: `[QUERY DB RESULTS - ${resultCount} rows]${truncated}\n\`\`\`json\n${preview}\n\`\`\`\n[END RESULTS]\n\nBased on these results, answer the user's question. Use tables for structured data.`,
-    resultCount,
-  };
-};
-
-const buildFallbackDbReply = (lastDbResultBlock) => {
-  return `📊 **Database Results:**\n\n${lastDbResultBlock
-    .replace(/\[QUERY DB RESULTS[^\]]*\]/g, '')
-    .replace(/\[END RESULTS\][\s\S]*$/, '')
-    .replace(/```json\n?/g, '```')
-    .trim()}\n\n*AI ran out of tool rounds. Raw results shown above.*`;
-};
-
 const processToolCall = async ({
   reply,
   aiMessages,
   user,
   topicId,
   abortController,
-  fetchedSchemaTables,
-  consecutiveZeroResults = 0,
-  dbQueryCount = 0,
   onStatus = null,
 }) => {
   const searchMatch = findSearchFileMatch(reply);
@@ -153,10 +72,6 @@ const processToolCall = async ({
         { role: 'user', content: resultBlock },
       ],
       embedTokens,
-      dbQueried: false,
-      lastSqlQuery: '',
-      consecutiveZeroResults,
-      dbQueryCount,
     };
   }
 
@@ -173,10 +88,6 @@ const processToolCall = async ({
           { role: 'user', content: `[Tool Result] File with id "${fileId}" not found or access denied.` },
         ],
         embedTokens: 0,
-        dbQueried: false,
-        lastSqlQuery: '',
-        consecutiveZeroResults,
-        dbQueryCount,
       };
     }
 
@@ -190,10 +101,6 @@ const processToolCall = async ({
         { role: 'user', content: contentBlock },
       ],
       embedTokens: 0,
-      dbQueried: false,
-      lastSqlQuery: '',
-      consecutiveZeroResults,
-      dbQueryCount,
     };
   }
 
@@ -220,10 +127,6 @@ const processToolCall = async ({
         { role: 'user', content: resultBlock },
       ],
       embedTokens: 0,
-      dbQueried: false,
-      lastSqlQuery: '',
-      consecutiveZeroResults,
-      dbQueryCount,
     };
   }
 
@@ -240,10 +143,6 @@ const processToolCall = async ({
         { role: 'user', content: resultBlock },
       ],
       embedTokens: 0,
-      dbQueried: false,
-      lastSqlQuery: '',
-      consecutiveZeroResults,
-      dbQueryCount,
     };
   }
 
@@ -264,10 +163,6 @@ const processToolCall = async ({
           { role: 'user', content: resultBlock },
         ],
         embedTokens: 0,
-        dbQueried: false,
-        lastSqlQuery: '',
-        consecutiveZeroResults,
-        dbQueryCount,
       };
     } catch (err) {
       console.error('[Tool] Image generation failed:', err.message);
@@ -280,10 +175,6 @@ const processToolCall = async ({
           { role: 'user', content: errBlock },
         ],
         embedTokens: 0,
-        dbQueried: false,
-        lastSqlQuery: '',
-        consecutiveZeroResults,
-        dbQueryCount,
       };
     }
   }
@@ -315,10 +206,6 @@ const processToolCall = async ({
           { role: 'user', content: resultBlock },
         ],
         embedTokens: 0,
-        dbQueried: false,
-        lastSqlQuery: '',
-        consecutiveZeroResults,
-        dbQueryCount,
       };
     } catch (err) {
       console.error('[Tool] PPT generation failed:', err.message);
@@ -331,10 +218,6 @@ const processToolCall = async ({
           { role: 'user', content: errBlock },
         ],
         embedTokens: 0,
-        dbQueried: false,
-        lastSqlQuery: '',
-        consecutiveZeroResults,
-        dbQueryCount,
       };
     }
   }
@@ -354,11 +237,11 @@ const processToolCall = async ({
 
       const fileResult = await generatePDF(title, sections, user?.id, topicId);
       const resultBlock = `[PDF GENERATION RESULT]\nPDF successfully created.\nTitle: ${title}\nSections: ${sections.length}\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END PDF GENERATION RESULT]\n\nTell the user the PDF is ready to download.`;
-      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'pdf' }], newMessages: [{ role: 'assistant', content: reply.replace(generatePDFMatch[0], '').trim() || '[Generating PDF]' }, { role: 'user', content: resultBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'pdf' }], newMessages: [{ role: 'assistant', content: reply.replace(generatePDFMatch[0], '').trim() || '[Generating PDF]' }, { role: 'user', content: resultBlock }], embedTokens: 0 };
     } catch (err) {
       console.error('[Tool] PDF generation failed:', err.message);
       const errBlock = `[PDF GENERATION RESULT]\nFailed to generate PDF: ${err.message}\n[END PDF GENERATION RESULT]`;
-      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generatePDFMatch[0], '').trim() || '[Generating PDF]' }, { role: 'user', content: errBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generatePDFMatch[0], '').trim() || '[Generating PDF]' }, { role: 'user', content: errBlock }], embedTokens: 0 };
     }
   }
 
@@ -377,11 +260,11 @@ const processToolCall = async ({
 
       const fileResult = await generateExcel(title, sheets, user?.id, topicId);
       const resultBlock = `[EXCEL GENERATION RESULT]\nSpreadsheet successfully created.\nTitle: ${title}\nSheets: ${sheets.length}\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END EXCEL GENERATION RESULT]\n\nTell the user the spreadsheet is ready to download.`;
-      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'xlsx' }], newMessages: [{ role: 'assistant', content: reply.replace(generateExcelMatch[0], '').trim() || '[Generating Excel]' }, { role: 'user', content: resultBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'xlsx' }], newMessages: [{ role: 'assistant', content: reply.replace(generateExcelMatch[0], '').trim() || '[Generating Excel]' }, { role: 'user', content: resultBlock }], embedTokens: 0 };
     } catch (err) {
       console.error('[Tool] Excel generation failed:', err.message);
       const errBlock = `[EXCEL GENERATION RESULT]\nFailed to generate spreadsheet: ${err.message}\n[END EXCEL GENERATION RESULT]`;
-      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generateExcelMatch[0], '').trim() || '[Generating Excel]' }, { role: 'user', content: errBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generateExcelMatch[0], '').trim() || '[Generating Excel]' }, { role: 'user', content: errBlock }], embedTokens: 0 };
     }
   }
 
@@ -400,11 +283,11 @@ const processToolCall = async ({
 
       const fileResult = await generateDocx(title, sections, user?.id, topicId);
       const resultBlock = `[DOCX GENERATION RESULT]\nWord document successfully created.\nTitle: ${title}\nSections: ${sections.length}\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END DOCX GENERATION RESULT]\n\nTell the user the document is ready to download.`;
-      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'docx' }], newMessages: [{ role: 'assistant', content: reply.replace(generateDocxMatch[0], '').trim() || '[Generating DOCX]' }, { role: 'user', content: resultBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'docx' }], newMessages: [{ role: 'assistant', content: reply.replace(generateDocxMatch[0], '').trim() || '[Generating DOCX]' }, { role: 'user', content: resultBlock }], embedTokens: 0 };
     } catch (err) {
       console.error('[Tool] DOCX generation failed:', err.message);
       const errBlock = `[DOCX GENERATION RESULT]\nFailed to generate document: ${err.message}\n[END DOCX GENERATION RESULT]`;
-      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generateDocxMatch[0], '').trim() || '[Generating DOCX]' }, { role: 'user', content: errBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generateDocxMatch[0], '').trim() || '[Generating DOCX]' }, { role: 'user', content: errBlock }], embedTokens: 0 };
     }
   }
 
@@ -423,11 +306,11 @@ const processToolCall = async ({
 
       const fileResult = await generateCSV(headers, rows, user?.id, topicId);
       const resultBlock = `[CSV GENERATION RESULT]\nCSV successfully created.\nRows: ${rows.length}\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END CSV GENERATION RESULT]\n\nTell the user the CSV is ready to download.`;
-      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'csv' }], newMessages: [{ role: 'assistant', content: reply.replace(generateCSVMatch[0], '').trim() || '[Generating CSV]' }, { role: 'user', content: resultBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'csv' }], newMessages: [{ role: 'assistant', content: reply.replace(generateCSVMatch[0], '').trim() || '[Generating CSV]' }, { role: 'user', content: resultBlock }], embedTokens: 0 };
     } catch (err) {
       console.error('[Tool] CSV generation failed:', err.message);
       const errBlock = `[CSV GENERATION RESULT]\nFailed to generate CSV: ${err.message}\n[END CSV GENERATION RESULT]`;
-      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generateCSVMatch[0], '').trim() || '[Generating CSV]' }, { role: 'user', content: errBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generateCSVMatch[0], '').trim() || '[Generating CSV]' }, { role: 'user', content: errBlock }], embedTokens: 0 };
     }
   }
 
@@ -448,11 +331,11 @@ const processToolCall = async ({
 
       const fileResult = await generateChart(type, title, labels, data, user?.id, topicId);
       const resultBlock = `[CHART GENERATION RESULT]\nChart successfully created.\nType: ${type}\nTitle: ${title}\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END CHART GENERATION RESULT]\n\nTell the user the chart is ready to download.`;
-      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'svg' }], newMessages: [{ role: 'assistant', content: reply.replace(generateChartMatch[0], '').trim() || '[Generating Chart]' }, { role: 'user', content: resultBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'svg' }], newMessages: [{ role: 'assistant', content: reply.replace(generateChartMatch[0], '').trim() || '[Generating Chart]' }, { role: 'user', content: resultBlock }], embedTokens: 0 };
     } catch (err) {
       console.error('[Tool] Chart generation failed:', err.message);
       const errBlock = `[CHART GENERATION RESULT]\nFailed to generate chart: ${err.message}\n[END CHART GENERATION RESULT]`;
-      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generateChartMatch[0], '').trim() || '[Generating Chart]' }, { role: 'user', content: errBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generateChartMatch[0], '').trim() || '[Generating Chart]' }, { role: 'user', content: errBlock }], embedTokens: 0 };
     }
   }
 
@@ -471,11 +354,11 @@ const processToolCall = async ({
 
       const fileResult = await generateHTML(title, body, css, user?.id, topicId);
       const resultBlock = `[HTML GENERATION RESULT]\nHTML page successfully created.\nTitle: ${title}\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END HTML GENERATION RESULT]\n\nTell the user the HTML page is ready to download.`;
-      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'html' }], newMessages: [{ role: 'assistant', content: reply.replace(generateHTMLMatch[0], '').trim() || '[Generating HTML]' }, { role: 'user', content: resultBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'html' }], newMessages: [{ role: 'assistant', content: reply.replace(generateHTMLMatch[0], '').trim() || '[Generating HTML]' }, { role: 'user', content: resultBlock }], embedTokens: 0 };
     } catch (err) {
       console.error('[Tool] HTML generation failed:', err.message);
       const errBlock = `[HTML GENERATION RESULT]\nFailed to generate HTML: ${err.message}\n[END HTML GENERATION RESULT]`;
-      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generateHTMLMatch[0], '').trim() || '[Generating HTML]' }, { role: 'user', content: errBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generateHTMLMatch[0], '').trim() || '[Generating HTML]' }, { role: 'user', content: errBlock }], embedTokens: 0 };
     }
   }
 
@@ -492,11 +375,11 @@ const processToolCall = async ({
 
       const fileResult = await generateJSON(data, user?.id, topicId);
       const resultBlock = `[JSON GENERATION RESULT]\nJSON file successfully created.\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END JSON GENERATION RESULT]\n\nTell the user the JSON file is ready to download.`;
-      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'json' }], newMessages: [{ role: 'assistant', content: reply.replace(generateJSONMatch[0], '').trim() || '[Generating JSON]' }, { role: 'user', content: resultBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'json' }], newMessages: [{ role: 'assistant', content: reply.replace(generateJSONMatch[0], '').trim() || '[Generating JSON]' }, { role: 'user', content: resultBlock }], embedTokens: 0 };
     } catch (err) {
       console.error('[Tool] JSON generation failed:', err.message);
       const errBlock = `[JSON GENERATION RESULT]\nFailed to generate JSON: ${err.message}\n[END JSON GENERATION RESULT]`;
-      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generateJSONMatch[0], '').trim() || '[Generating JSON]' }, { role: 'user', content: errBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generateJSONMatch[0], '').trim() || '[Generating JSON]' }, { role: 'user', content: errBlock }], embedTokens: 0 };
     }
   }
 
@@ -514,48 +397,25 @@ const processToolCall = async ({
 
       const fileResult = await generateMarkdown(content, title, user?.id, topicId);
       const resultBlock = `[MD GENERATION RESULT]\nMarkdown file successfully created.\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END MD GENERATION RESULT]\n\nTell the user the Markdown file is ready to download.`;
-      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'md' }], newMessages: [{ role: 'assistant', content: reply.replace(generateMDMatch[0], '').trim() || '[Generating Markdown]' }, { role: 'user', content: resultBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'md' }], newMessages: [{ role: 'assistant', content: reply.replace(generateMDMatch[0], '').trim() || '[Generating Markdown]' }, { role: 'user', content: resultBlock }], embedTokens: 0 };
     } catch (err) {
       console.error('[Tool] Markdown generation failed:', err.message);
       const errBlock = `[MD GENERATION RESULT]\nFailed to generate Markdown: ${err.message}\n[END MD GENERATION RESULT]`;
-      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generateMDMatch[0], '').trim() || '[Generating Markdown]' }, { role: 'user', content: errBlock }], embedTokens: 0, dbQueried: false, lastSqlQuery: '', consecutiveZeroResults, dbQueryCount };
+      return { handled: true, generatedMedia: [], newMessages: [{ role: 'assistant', content: reply.replace(generateMDMatch[0], '').trim() || '[Generating Markdown]' }, { role: 'user', content: errBlock }], embedTokens: 0 };
     }
-  }
-
-  if (hasBareCloseTag(reply)) {
-    return {
-      handled: true,
-      newMessages: [
-        { role: 'assistant', content: reply },
-        {
-          role: 'user',
-          content: `[SYSTEM] You used a closing tag ([/QUERY_DB], </query>, or </Function>) without providing any SQL query. Always wrap your SQL inside matching tags like this:\n\n[QUERY_DB]SELECT column1, column2 FROM table_name WHERE condition[/QUERY_DB]\n\nWrite the SQL query now inside [QUERY_DB] and [/QUERY_DB] tags. Do not use closing tags alone.`,
-        },
-      ],
-      embedTokens: 0,
-      dbQueried: false,
-      lastSqlQuery: '',
-      consecutiveZeroResults,
-      dbQueryCount,
-    };
   }
 
   return { handled: false };
 };
 
 module.exports = {
-  extractReferencedTables,
   buildFileContext,
-  formatDbResults,
-  buildFallbackDbReply,
   processToolCall,
   // Exported for testing
   findSearchFileMatch,
   findGetFileMatch,
   findWebSearchMatch,
   findExecuteCodeMatch,
-  findGetSchemaMatch,
-  findQueryDbMatch,
   findGenerateImageMatch,
   findGeneratePPTMatch,
   findGeneratePDFMatch,
@@ -566,5 +426,4 @@ module.exports = {
   findGenerateHTMLMatch,
   findGenerateJSONMatch,
   findGenerateMDMatch,
-  hasBareCloseTag,
 };

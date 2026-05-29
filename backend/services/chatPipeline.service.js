@@ -1,7 +1,6 @@
 // ============================================================
 // FILE: backend/services/chatPipeline.service.js
-// PURPOSE: Shared pipeline for /message and /stream — eliminates
-//          the ~250-line duplication between the two routes.
+// PURPOSE: Shared pipeline for streaming chat and legacy JSON compatibility.
 // ============================================================
 // Both routes follow the same flow:
 //   1. Validate model
@@ -11,7 +10,7 @@
 //   5. History context
 //   6. Build system prompt + AI messages
 //   7. Tool-call loop (with optional streaming)
-//   8. Strip tool tags / fallback reply
+//   8. Strip tool tags
 //   9. Token calculation
 //  10. Persist to DB (topic + messages)
 //  11. Post-save memory embedding (optional)
@@ -27,6 +26,7 @@ const { getCachedResponse, getSemanticCachedResponse, setCachedResponse } = requ
 const { buildRAGContext, embedText } = require('./rag.service');
 const { buildContextMessages, maybeCompressQuery } = require('./context.service');
 const { embedAndStoreMessage, searchMemory } = require('./memory.service');
+const { runOrchestratorBrain } = require('./orchestratorBrain.service');
 const { listUserFiles } = require('./fileUpload.service');
 const { logAnalytics } = require('./analytics.service');
 const { calculateBillableTokens } = require('./tokenAccounting.service');
@@ -34,7 +34,6 @@ const {
   buildFileContext,
   runToolLoop,
   stripToolTags,
-  buildFallbackDbReply,
   classifyError,
 } = require('./chat.service');
 const {
@@ -48,7 +47,7 @@ const {
 } = require('./tokenBudget.service');
 
 /**
- * runChatPipeline — single shared pipeline for both /message and /stream.
+ * runChatPipeline — single shared pipeline for streaming chat and legacy JSON compatibility.
  *
  * @param {Object} opts
  * @param {string}   opts.modelId
@@ -64,10 +63,10 @@ const {
  * @param {Array}    [opts.history]             — client-provided history for anonymous
  * @param {AbortController} opts.abortController
  *
- * // ---- divergence controls ----
- * @param {boolean}  [opts.exactCacheEnabled=false]  — /stream uses exact cache, /message doesn't
- * @param {string}   [opts.embeddingProvider]        — /message uses modelConfig.provider, /stream falls back to 'openrouter'
- * @param {boolean}  [opts.memoryEnabled=false]      — /message has searchMemory cross-chat RAG
+ * // ---- runtime controls ----
+ * @param {boolean}  [opts.exactCacheEnabled=false]
+ * @param {string}   [opts.embeddingProvider]
+ * @param {boolean}  [opts.memoryEnabled=false]
  * @param {boolean}  [opts.identityCheckEnabled=false]
  * @param {boolean}  [opts.perQueryLimitEnabled=false]
  * @param {boolean}  [opts.dynamicBudgetEnabled=false]
@@ -84,13 +83,10 @@ const {
  *   billableTokens: number,
  *   totalAITokens: number,
  *   totalEmbeddingTokens: number,
+ *   orchestratorBrain: object|null,
  *   cacheCreationTokens: number,
  *   cacheReadTokens: number,
  *   cacheHit: boolean,
- *   dbQueried: boolean,
- *   lastDbResultBlock: string,
- *   consecutiveZeroResults: number,
- *   dbQueryCount: number,
  *   generatedMediaFiles: Array,
  *   resolvedTopicId: string|null,
  *   persistError: Error|null,
@@ -108,6 +104,16 @@ const {
  *   userMessage: string|null,
  * }>}
  */
+const CANONICAL_CHAT_PIPELINE_FLAGS = Object.freeze({
+  exactCacheEnabled: false,
+  identityCheckEnabled: true,
+  perQueryLimitEnabled: true,
+  dynamicBudgetEnabled: true,
+  memoryEnabled: true,
+  cacheResponse: true,
+  postSaveEmbedding: true,
+});
+
 const runChatPipeline = async (opts) => {
   const startTime = Date.now();
 
@@ -126,7 +132,7 @@ const runChatPipeline = async (opts) => {
     history,
     abortController,
 
-    // divergence flags
+    // runtime flags
     exactCacheEnabled = false,
     embeddingProvider: embeddingProviderOpt,
     memoryEnabled = false,
@@ -155,6 +161,24 @@ const runChatPipeline = async (opts) => {
     }
 
     const estimatedInputTokens = estimateTokens(message);
+    const orchestratorBrain = onStreamChunk
+      ? await runOrchestratorBrain({
+          modelId,
+          providerModelId,
+          message,
+          image,
+          topicId,
+          userId: user?.id || null,
+          isAnonymous,
+          memoryMode,
+          historyLimit,
+          ragEnabled,
+        }, {
+          effectiveModelConfig,
+          abortController,
+          onToolStatus,
+        })
+      : null;
 
     // ── 2. Prompt budget ──────────────────────────────────────
     let promptBudget = createPromptBudget(modelConfig);
@@ -213,12 +237,10 @@ const runChatPipeline = async (opts) => {
           compressTokens: 0,
           historySummaryTokens: 0,
           generatedMediaFiles: [],
-          dbQueried: false,
-          lastDbResultBlock: '',
-          consecutiveZeroResults: 0,
-          dbQueryCount: 0,
           totalAITokens: 0,
           totalEmbeddingTokens: 0,
+          orchestratorBrain,
+          queryCacheHit: true,
           savedUserMessageId: null,
           savedAssistantMessageId: null,
           persistError: null,
@@ -237,7 +259,8 @@ const runChatPipeline = async (opts) => {
     const compressTokens = typeof compressResult === 'string' ? 0 : (compressResult.tokensUsed || 0);
 
     // ── 5.5 Generate query embedding once ─────────────────────
-    const embedProvider = embeddingProviderOpt || modelConfig.provider;
+    // Use explicit embedding provider, or default to 'openrouter' for cheap embeddings
+    const embedProvider = embeddingProviderOpt || 'openrouter';
     let queryVector = null;
     let totalEmbeddingTokens = 0;
 
@@ -267,12 +290,10 @@ const runChatPipeline = async (opts) => {
             compressTokens,
             historySummaryTokens: 0,
             generatedMediaFiles: [],
-            dbQueried: false,
-            lastDbResultBlock: '',
-            consecutiveZeroResults: 0,
-            dbQueryCount: 0,
             totalAITokens: 0,
             totalEmbeddingTokens,
+            orchestratorBrain,
+            queryCacheHit: true,
             savedUserMessageId: null,
             savedAssistantMessageId: null,
             persistError: null,
@@ -395,18 +416,12 @@ const runChatPipeline = async (opts) => {
     // ── 9. Tool-call loop ─────────────────────────────────────
     let totalAITokens = 0;
     let finalReply = '';
-    let dbQueried = false;
-    let lastDbResultBlock = '';
-    let consecutiveZeroResults = 0;
-    let dbQueryCount = 0;
-    const fetchedSchemaTables = new Set();
     const MAX_TOOL_ROUNDS = 6;
 
     const processToolCallArgs = {
       user,
       topicId: resolvedTopicId,
       abortController,
-      fetchedSchemaTables,
     };
     if (onToolStatus) {
       processToolCallArgs.onStatus = onToolStatus;
@@ -427,10 +442,6 @@ const runChatPipeline = async (opts) => {
     if (loopResult.aborted) throw { name: 'AbortError' };
 
     finalReply = loopResult.finalReply;
-    dbQueried = loopResult.dbQueried;
-    lastDbResultBlock = loopResult.lastDbResultBlock;
-    consecutiveZeroResults = loopResult.consecutiveZeroResults;
-    dbQueryCount = loopResult.dbQueryCount;
     totalAITokens += loopResult.totalAITokens || 0;
     totalEmbeddingTokens += loopResult.totalEmbeddingTokens || 0;
     const cacheCreationTokens = loopResult.cacheCreationTokens || 0;
@@ -439,11 +450,6 @@ const runChatPipeline = async (opts) => {
 
     // Strip leftover tool-call syntax
     finalReply = stripToolTags(finalReply);
-
-    // Fallback
-    if (dbQueried && lastDbResultBlock && consecutiveZeroResults < 4 && (!finalReply || finalReply.trim().length < 5)) {
-      finalReply = buildFallbackDbReply(lastDbResultBlock);
-    }
 
     const billableTokens = calculateBillableTokens({
       totalAITokens,
@@ -559,13 +565,11 @@ const runChatPipeline = async (opts) => {
       billableTokens,
       totalAITokens,
       totalEmbeddingTokens,
+      orchestratorBrain,
+      queryCacheHit: false,
       cacheCreationTokens,
       cacheReadTokens,
       cacheHit: cacheReadTokens > 0,
-      dbQueried,
-      lastDbResultBlock,
-      consecutiveZeroResults,
-      dbQueryCount,
       generatedMediaFiles,
       resolvedTopicId,
       persistError,
@@ -593,13 +597,11 @@ const runChatPipeline = async (opts) => {
         billableTokens: 0,
         totalAITokens: 0,
         totalEmbeddingTokens: 0,
+        orchestratorBrain: null,
+        queryCacheHit: false,
         cacheCreationTokens: 0,
         cacheReadTokens: 0,
         cacheHit: false,
-        dbQueried: false,
-        lastDbResultBlock: '',
-        consecutiveZeroResults: 0,
-        dbQueryCount: 0,
         generatedMediaFiles: [],
         resolvedTopicId: topicId,
         persistError: null,
@@ -626,13 +628,11 @@ const runChatPipeline = async (opts) => {
       billableTokens: 0,
       totalAITokens: 0,
       totalEmbeddingTokens: 0,
+      orchestratorBrain: null,
+      queryCacheHit: false,
       cacheCreationTokens: 0,
       cacheReadTokens: 0,
       cacheHit: false,
-      dbQueried: false,
-      lastDbResultBlock: '',
-      consecutiveZeroResults: 0,
-      dbQueryCount: 0,
       generatedMediaFiles: [],
       resolvedTopicId: topicId,
       persistError: null,
@@ -649,4 +649,4 @@ const runChatPipeline = async (opts) => {
   }
 };
 
-module.exports = { runChatPipeline };
+module.exports = { runChatPipeline, CANONICAL_CHAT_PIPELINE_FLAGS };

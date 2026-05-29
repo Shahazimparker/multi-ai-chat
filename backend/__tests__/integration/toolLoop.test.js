@@ -9,5 +9,5 @@ describe('runToolLoop (integration)', () => {
     const { runToolLoop } = require('../../services/toolLoop.service');
     expect(runToolLoop).toBeDefined();
     expect(typeof runToolLoop).toBe('function');
-  });
+  }, 30000);
 });

@@ -4,6 +4,15 @@
 
 const { processToolCall } = require('../../services/toolProcessor.service');
 
+// Mock image generation to avoid DALL-E API costs
+vi.mock('../../services/imageGeneration.service', () => ({
+  generateImage: vi.fn().mockResolvedValue({
+    file_id: 'mock-file-id-123',
+    file_name: 'mock_image.png',
+    file_type: 'png',
+  }),
+}));
+
 describe('processToolCall', () => {
   const baseArgs = {
     reply: '',
@@ -11,9 +20,6 @@ describe('processToolCall', () => {
     user: null,
     topicId: null,
     abortController: new AbortController(),
-    fetchedSchemaTables: new Set(),
-    consecutiveZeroResults: 0,
-    dbQueryCount: 0,
   };
 
   describe('no tool match', () => {
@@ -24,18 +30,6 @@ describe('processToolCall', () => {
       });
 
       expect(result.handled).toBe(false);
-    });
-  });
-
-  describe('bare close tag detection', () => {
-    it('detects and handles bare [/QUERY_DB]', async () => {
-      const result = await processToolCall({
-        ...baseArgs,
-        reply: '[/QUERY_DB]',
-      });
-
-      expect(result.handled).toBe(true);
-      expect(result.newMessages[1].content).toContain('closing tag');
     });
   });
 

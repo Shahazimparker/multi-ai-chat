@@ -399,9 +399,9 @@ class CombinedMemory extends Memory {
     // memories: [new BufferMemory(), new EntityMemory(), new SummaryMemory()]
   }
 
-  add(message) {
+  async add(message) {
     for (const memory of this.memories) {
-      memory.add(message);
+      await memory.add(message);
     }
     this.messages.push(message);
     return this;

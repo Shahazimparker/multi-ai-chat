@@ -42,10 +42,12 @@ This document is the technical reference for the current codebase state.
 
 ### Streaming Architecture
 
-- `backend/services/chatPipeline.service.js` — Single shared pipeline for both `/message` and `/stream` routes. Handles: model validation → query compression → cache check (optional) → embedding + RAG → history → system prompt → tool loop → persistence → analytics.
+- `backend/services/chatPipeline.service.js` — Single shared pipeline behind the canonical `/stream` route and legacy `/message` JSON compatibility route. Handles: model validation → query compression → cache check (optional) → embedding + RAG → history → system prompt → tool loop → persistence → analytics.
 - **Real provider streaming**: Each AI provider service has a `callXxxStream()` variant that uses the SDK's native `stream: true` parameter. Text deltas are forwarded to the client via an `onChunk` callback as they arrive from the provider. No artificial `setTimeout` delays.
 - `dispatchToAIStream()` in `backend/services/ai/dispatcher.service.js` routes to the correct provider's streaming function.
 - `runToolLoop()` in `backend/services/toolLoop.service.js` accepts an `onStreamChunk` callback. During tool-call rounds, chunks are buffered internally; only the final round (no tool calls) forwards chunks to the client.
+- `backend/services/orchestratorBrain.service.js` wires the custom framework into `/api/chat/stream`: `GraphBuilder`, `SmartAgent`, `AgentOrchestrator`, callbacks, `ExecutionTracer`, flow dashboard/optimizer, output parser, in-memory vector store, and hybrid retriever run as a real pre-stream planning layer and emit `framework_status` SSE events. Tests use the real model registry and real framework classes without `vi.mock`.
+- Human approvals are deploy-safe: `backend/services/humanApproval.service.js` supports persistent Supabase-backed requests and non-blocking serverless mode; `backend/routes/approval.routes.js` exposes admin approve/reject APIs; schema lives in `database/migration_add_human_approvals.sql`.
 - Providers with streaming support: OpenAI, Groq, Claude, Gemini, Mistral, Cohere, DeepSeek, OpenRouter, Together, AnyAPI — all 10 providers.
 
 ### Core services (Existing)
@@ -58,8 +60,8 @@ This document is the technical reference for the current codebase state.
 - RAG and embeddings: `backend/services/rag.service.js`
 - File pipeline: `backend/services/fileUpload.service.js`
 - Cache: `backend/services/cache.service.js`
-  - Exact cache (hash-based) disabled in `/message` route; active in `/stream` route for fast cache-hit responses
-  - Semantic cache (`getSemanticCachedResponse`, pgvector cosine ≥ 0.92) remains active in both routes
+  - Exact cache reads are disabled for live chat to avoid stale answers; successful responses can still be stored for semantic/RAG-aware reuse.
+  - Semantic cache (`getSemanticCachedResponse`, pgvector cosine ≥ 0.92) remains active when RAG provides embeddings.
 - Token budgeting: `backend/services/tokenBudget.service.js`
 - Analytics: `backend/services/analytics.service.js`
 - Similarity and compression: `backend/services/similarity.service.js`, `backend/services/compress.service.js`

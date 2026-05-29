@@ -105,3 +105,5 @@ const calldeepseekAPIStream = async (model, apiKey, messages, signal = null, mod
     }
   });
 };
+
+module.exports = { calldeepseekAPI, calldeepseekAPIStream };

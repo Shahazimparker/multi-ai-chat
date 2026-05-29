@@ -30,9 +30,9 @@ describe('Chat API (real)', () => {
     console.log(`[Models] ${data.models.length} models available`);
   });
 
-  // ── Anonymous chat (no auth) ────────────────────────
-  it('POST /api/chat/message works anonymously', async () => {
-    const res = await fetch(`${BASE}/chat/message`, {
+  // ── Anonymous streaming chat (no auth) ──────────────
+  it('POST /api/chat/stream works anonymously', async () => {
+    const res = await fetch(`${BASE}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -41,12 +41,36 @@ describe('Chat API (real)', () => {
       }),
     });
 
-    const data = await res.json();
     expect(res.status).toBe(200);
-    expect(data.reply).toBeTruthy();
-    expect(data.model).toBeDefined();
-    console.log(`[Anonymous Chat] Reply: ${data.reply.slice(0, 100)}`);
-    console.log(`[Anonymous Chat] Tokens: ${data.tokensUsed}`);
+    expect(res.headers.get('content-type')).toContain('text/event-stream');
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+    let doneEvent = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const text = decoder.decode(value, { stream: true });
+      const lines = text.split('\n').filter(l => l.startsWith('data: '));
+
+      for (const line of lines) {
+        try {
+          const event = JSON.parse(line.slice(6));
+          if (event.type === 'chunk') fullText += event.text;
+          if (event.type === 'done') doneEvent = event;
+        } catch (e) {
+          // Skip parse errors for partial chunks
+        }
+      }
+    }
+
+    expect(fullText).toBeTruthy();
+    expect(doneEvent?.model).toBeDefined();
+    console.log(`[Anonymous Stream] Reply: ${fullText.slice(0, 100)}`);
+    console.log(`[Anonymous Stream] Tokens: ${doneEvent?.tokensUsed}`);
   }, 30000);
 
   // ── Streaming chat ──────────────────────────────────

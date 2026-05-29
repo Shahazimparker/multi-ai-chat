@@ -15,7 +15,9 @@ This is the main setup and maintenance guide for the current repo state.
 - Live provider catalogs for `openrouter`, `together`, and `anyapi`
 - Authenticated and anonymous chat flows
 - **Real provider token streaming** — all 10 providers stream native tokens via SSE. No artificial `setTimeout` delays. Tool-call rounds are handled transparently: tool status events are sent during processing, then the final answer streams in naturally.
-- Shared pipeline (`chatPipeline.service.js`) eliminates ~400 lines of duplicated logic between `/message` and `/stream` routes
+- Shared pipeline (`chatPipeline.service.js`) keeps legacy JSON and streaming chat behavior aligned
+- OrchestratorBrain is wired into `/api/chat/stream` as a real pre-stream runtime layer using the custom graph, agent, callback, tracing, parser, retriever, vector-store, and flow-visibility services.
+- Human approval checkpoints are persisted in Supabase (`human_approvals`) and controlled through `/api/approvals`, so Vercel/serverless invocations do not wait in memory for a human response.
 - RAG, semantic cache, token accounting, context summarization, and cross-chat memory
 - File upload, search, and abort cleanup
 - AI file generation: Image (Recraft/FLUX via OpenRouter), PPT (pptxgenjs), PDF (pdfkit), Excel (exceljs), Word (docx), CSV, Chart (SVG), HTML, JSON, Markdown — all triggered via `[GENERATE_XXX]` tags in chat
@@ -72,7 +74,7 @@ This is the main setup and maintenance guide for the current repo state.
 ## Project Layout
 
 - `backend/server.js` wires middleware, CORS, CSRF, Sentry, routes, and cleanup jobs.
-- `backend/routes/chat.routes.js` handles `/message`, `/stream`, model listing, and provider model lookup.
+- `backend/routes/chat.routes.js` handles canonical `/stream`, legacy `/message` compatibility, model listing, and provider model lookup.
 - `backend/controllers/chat.controller.js` owns the main chat pipeline.
 - `backend/services/` contains cache, RAG, token budget, file upload, context, summary, analytics, and provider services.
 - `frontend/src/App.jsx` defines `/login`, `/anonymous`, `/chat`, and `/admin`.

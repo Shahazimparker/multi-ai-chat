@@ -9,12 +9,6 @@ export interface ToolCallResult {
   handled: boolean;
   newMessages?: ChatMessage[];
   embedTokens?: number;
-  dbQueried?: boolean;
-  lastSqlQuery?: string;
-  lastDbResultBlock?: string;
-  consecutiveZeroResults?: number;
-  dbQueryCount?: number;
-  resultCount?: number;
 }
 
 export interface ToolLoopResult {
@@ -26,11 +20,6 @@ export interface ToolLoopResult {
   cacheCreationTokens?: number;
   cacheReadTokens?: number;
   finalReply: string;
-  dbQueried: boolean;
-  lastDbResultBlock: string;
-  lastSqlQuery: string;
-  consecutiveZeroResults: number;
-  dbQueryCount: number;
   generatedMedia?: Array<{ type: string; url: string; name: string }>;
 }
 
@@ -55,6 +44,29 @@ export interface AiProviderStreamResult {
 
 export type OnChunkCallback = (text: string) => void;
 
+export interface OrchestratorBrainResult {
+  enabled: boolean;
+  traceId: string;
+  error?: string;
+  graph?: any;
+  dashboard?: {
+    status?: string;
+    progress?: number;
+    totalSteps?: number;
+    completedSteps?: number;
+    failedSteps?: number;
+    duration?: number;
+    totalCost?: string;
+    variables?: number;
+  };
+  suggestions?: any[];
+  traceReport?: any;
+  metrics?: any;
+  costs?: any;
+  errors?: any[];
+  logs?: string[];
+}
+
 // ── Chat pipeline result ─────────────────────────────────────
 
 export interface ChatPipelineResult {
@@ -62,13 +74,11 @@ export interface ChatPipelineResult {
   billableTokens: number;
   totalAITokens: number;
   totalEmbeddingTokens: number;
+  orchestratorBrain?: OrchestratorBrainResult | null;
+  queryCacheHit?: boolean;
   cacheCreationTokens: number;
   cacheReadTokens: number;
   cacheHit: boolean;
-  dbQueried: boolean;
-  lastDbResultBlock: string;
-  consecutiveZeroResults: number;
-  dbQueryCount: number;
   generatedMediaFiles: Array<{ type: string; url: string; name: string }>;
   resolvedTopicId: string | null;
   persistError: Error | null;
@@ -100,7 +110,7 @@ export interface ChatPipelineOptions {
   history?: any[];
   abortController: AbortController;
 
-  // divergence controls
+  // runtime controls
   exactCacheEnabled?: boolean;
   embeddingProvider?: string;
   memoryEnabled?: boolean;

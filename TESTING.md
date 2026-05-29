@@ -28,8 +28,10 @@ This is the current test reference for the repo. It reflects the live backend/fr
 
 ### Chat Pipeline
 
-- `/api/chat/message` returns a response for a normal prompt.
 - `/api/chat/stream` returns real provider-token SSE chunks (no artificial `setTimeout` delays) and a final `done` event.
+- `/api/chat/message` remains available only as legacy JSON compatibility.
+- OrchestratorBrain emits `framework_status` SSE events before provider token chunks and is covered by `backend/__tests__/unit/orchestratorBrain.test.js`, which uses the real model registry and real framework classes without mocks.
+- Human approval deploy safety is covered by `backend/__tests__/unit/humanApproval.test.js`: approvals persist, return immediately in serverless mode, and can be approved by a separate manager instance.
 - Streaming test: verify chunks arrive progressively (not all at once at the end). Each chunk should contain valid JSON with `type: 'chunk'` and a `text` field.
 - Tool-call flows: during DB queries / web search, tool status events (`type: 'tool_status'`) are sent. The final answer streams in naturally after tools complete.
 - Semantic cache hits return quickly and report `cacheHit: true`.
@@ -290,7 +292,7 @@ backend/__tests__/integration-real/
 |---|---|---|
 | `supabase.test.js` | 8 | Connection, users/topics/messages/cache/analytics table queries, RPC calls, health endpoint |
 | `ai-providers.test.js` | 10 | Gemini Flash/Pro, Groq Mixtral/Llama, Mistral Small/Medium, DeepSeek V4 Flash/Pro, OpenAI, OpenRouter |
-| `chat-api.test.js` | 5 | GET /health, GET /models, POST /message (anonymous), POST /stream (SSE), provider catalog |
+| `chat-api.test.js` | 5 | GET /health, GET /models, anonymous POST /stream, POST /stream (SSE), provider catalog |
 
 ### Last Test Run Results (2026-05-27)
 
@@ -298,7 +300,7 @@ backend/__tests__/integration-real/
 |---|---|---|
 | **Supabase** | ✅ 8/8 passed | All tables accessible, RPC working |
 | **AI Providers** | ⚠️ 8/10 passed | Gemini Flash, Groq (both), Mistral (both), DeepSeek (both), OpenRouter — all working. Gemini Pro: quota exceeded. OpenAI: invalid API key. |
-| **Chat API** | ✅ 5/5 passed | Health, models (15), SSE streaming, OpenRouter catalog (355 models), anonymous /message — all working. |
+| **Chat API** | ✅ 5/5 passed | Health, models (15), SSE streaming, OpenRouter catalog (355 models), anonymous stream — all working. |
 | **Total** | **22/23 (96%)** | 1 failure is config issue (Gemini Pro quota, OpenAI key) |
 
 ### Skipped Tests

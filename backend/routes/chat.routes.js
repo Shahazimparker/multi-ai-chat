@@ -12,7 +12,7 @@ const { sanitizeBody } = require('../middleware/sanitize');
 const { MODELS } = require('../config/models');
 const { getProviderModels } = require('../services/modelCatalog.service');
 const { classifyError } = require('../services/chat.service');
-const { runChatPipeline } = require('../services/chatPipeline.service');
+const { CANONICAL_CHAT_PIPELINE_FLAGS, runChatPipeline } = require('../services/chatPipeline.service');
 
 
 // Rate limit: 30 requests/minute per IP
@@ -76,13 +76,15 @@ router.get('/provider-models/:provider', async (req, res) => {
   }
 });
 
-// POST /api/chat/message
-router.post('/message', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['message', 'image', 'providerModelId', 'modelId', 'memoryMode']), sendMessage);
+const chatBodySanitizer = sanitizeBody(['message', 'image', 'providerModelId', 'modelId', 'memoryMode']);
+
+// POST /api/chat/message — legacy JSON compatibility; /stream is the canonical chat path
+router.post('/message', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer, sendMessage);
 /**
  * POST /api/chat/stream
- * Streaming response using Server-Sent Events
+ * Canonical chat endpoint using Server-Sent Events
  */
-router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['message', 'image', 'providerModelId', 'modelId', 'memoryMode']), async (req, res) => {
+router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer, async (req, res) => {
   req.setTimeout(0);
   res.setTimeout(0);
   const startTime = Date.now();
@@ -101,6 +103,14 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
   const user = req.user;
   const isAnonymous = !user;
   const abortController = new AbortController();
+  const abortDownstreamTasks = () => {
+    if (!abortController.signal.aborted && !res.writableEnded) {
+      console.log('[Stream] Client disconnected. Aborting downstream tasks...');
+      abortController.abort();
+    }
+  };
+  req.on('aborted', abortDownstreamTasks);
+  res.on('close', abortDownstreamTasks);
 
   // ── SSE headers + initial connect event ────────────────────
   res.setHeader('Content-Type', 'text/event-stream');
@@ -124,15 +134,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     history,
     abortController,
 
-    // /stream divergence flags
-    exactCacheEnabled: true,            // /stream uses exact-match cache
-    embeddingProvider: 'openrouter',    // /stream hardcodes openrouter for embeddings
-    identityCheckEnabled: false,
-    perQueryLimitEnabled: false,
-    dynamicBudgetEnabled: false,
-    memoryEnabled: false,
-    cacheResponse: false,
-    postSaveEmbedding: false,
+    ...CANONICAL_CHAT_PIPELINE_FLAGS,
 
     // Callbacks for SSE output
     onStreamChunk: (chunk) => {
@@ -184,6 +186,10 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     return;
   }
 
+  if (result.queryCacheHit && result.finalReply && !res.writableEnded && !res.destroyed) {
+    res.write(`data: ${JSON.stringify({ type: 'chunk', text: result.finalReply })}\n\n`);
+  }
+
   // ── Send completion event ──────────────────────────────────
   res.write(`data: ${JSON.stringify({
     type: 'done',
@@ -191,6 +197,12 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, sanitizeBody(['mes
     cacheCreationTokens: result.cacheCreationTokens,
     cacheReadTokens: result.cacheReadTokens,
     cacheHit: result.cacheHit,
+    orchestratorBrain: result.orchestratorBrain ? {
+      enabled: true,
+      traceId: result.orchestratorBrain.traceId,
+      steps: result.orchestratorBrain.dashboard?.totalSteps,
+      status: result.orchestratorBrain.dashboard?.status,
+    } : undefined,
     model: result.effectiveModelConfig?.label,
     topicId: result.resolvedTopicId || null,
     responseTime: Date.now() - startTime,

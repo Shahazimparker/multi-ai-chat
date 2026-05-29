@@ -13,9 +13,11 @@ Unified AI chat platform with authentication, anonymous mode, file-aware chat (R
 
 - Model routing via `backend/config/models.js` (current configured registry)
 - Live provider model discovery for `openrouter`, `together`, `anyapi`
-- Chat endpoints: `/api/chat/message` and `/api/chat/stream` (SSE with real provider token streaming)
+- Primary chat endpoint: `/api/chat/stream` (SSE with real provider token streaming). `/api/chat/message` is kept only as legacy JSON compatibility.
 - **Real streaming**: All 10 providers stream native tokens. No artificial `setTimeout` typewriter delays. Tool-call rounds send status events, then the final answer streams in naturally.
-- **Shared pipeline**: `chatPipeline.service.js` eliminates ~400 lines of duplicated logic between `/message` and `/stream`
+- **Shared pipeline**: `chatPipeline.service.js` keeps legacy JSON and streaming chat behavior aligned
+- **OrchestratorBrain**: `/api/chat/stream` initializes the real custom framework runtime (graph workflow, SmartAgent, callbacks, tracing, flow dashboard, parser, retriever, and vector store) before provider streaming; covered by no-mock unit tests.
+- **Deploy-safe human approvals**: approval requests persist in Supabase via `human_approvals`; API approval/rejection runs through `/api/approvals` without blocking serverless invocations.
 - Authenticated and anonymous chat flows
 - Semantic query cache, RAG context, history summarization, cross-chat memory
 - File upload/search integration

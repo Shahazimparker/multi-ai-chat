@@ -16,6 +16,8 @@ module.exports = defineConfig({
         'services/similarity.service.js',
         'services/toolProcessor.service.js',
         'services/toolLoop.service.js',
+        'services/orchestratorBrain.service.js',
+        'services/humanApproval.service.js',
         'services/tokenBudget.service.js',
         'middleware/sanitize.js',
         'middleware/tokenCheck.js',

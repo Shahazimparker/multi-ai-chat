@@ -3,7 +3,7 @@
 // PURPOSE: Backward-compatible export surface for chat modules.
 // ============================================================
 
-const { extractReferencedTables, buildFileContext, formatDbResults, buildFallbackDbReply, processToolCall } = require('./toolProcessor.service');
+const { buildFileContext, processToolCall } = require('./toolProcessor.service');
 const { runToolLoop } = require('./toolLoop.service');
 const { stripToolTags, isPlaceholderOnly, classifyError } = require('./chatCleanup.service');
 
@@ -24,9 +24,6 @@ const { ExecutionStep, ExecutionTrace, ExecutionTracer, TraceFormatter, TraceAna
 const { Variable, StateTracker, FlowAnalyzer, FlowVisualizer, FlowDebugger, FlowDashboard, FlowOptimizer } = require('./flowVisibility.service');
 
 module.exports = {
-  // Pure utilities
-  extractReferencedTables,
-
   // Builders
   buildFileContext,
 
@@ -36,8 +33,6 @@ module.exports = {
 
   // Cleanup & formatting
   stripToolTags,
-  formatDbResults,
-  buildFallbackDbReply,
   isPlaceholderOnly,
 
   // Error handling

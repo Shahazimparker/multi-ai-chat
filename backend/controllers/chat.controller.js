@@ -1,10 +1,10 @@
 // ============================================================
 // FILE: backend/controllers/chat.controller.js
-// PURPOSE: /message endpoint — thin wrapper around shared pipeline
+// PURPOSE: Legacy JSON chat compatibility endpoint — stream is canonical
 // ============================================================
 
 const { classifyError } = require('../services/chat.service');
-const { runChatPipeline } = require('../services/chatPipeline.service');
+const { CANONICAL_CHAT_PIPELINE_FLAGS, runChatPipeline } = require('../services/chatPipeline.service');
 
 /**
  * POST /api/chat/message
@@ -52,14 +52,7 @@ const sendMessage = async (req, res) => {
 
     abortController,
 
-    // /message divergence flags
-    exactCacheEnabled: false,           // exact-match cache is commented out in original
-    identityCheckEnabled: true,
-    perQueryLimitEnabled: true,
-    dynamicBudgetEnabled: true,
-    memoryEnabled: true,                // cross-chat memory search
-    cacheResponse: true,                // setCachedResponse
-    postSaveEmbedding: true,            // embed messages after save
+    ...CANONICAL_CHAT_PIPELINE_FLAGS,
   });
 
   // ── Handle errors ──────────────────────────────────────────
@@ -87,6 +80,12 @@ const sendMessage = async (req, res) => {
     tokensUsed: result.billableTokens,
     topicId: result.resolvedTopicId,
     cacheHit: result.cacheHit,
+    orchestratorBrain: result.orchestratorBrain ? {
+      enabled: true,
+      traceId: result.orchestratorBrain.traceId,
+      steps: result.orchestratorBrain.dashboard?.totalSteps,
+      status: result.orchestratorBrain.dashboard?.status,
+    } : undefined,
     model: result.modelConfig?.label,
     tokenStats: user ? {
       total: user.total_tokens,

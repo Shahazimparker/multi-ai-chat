@@ -3,9 +3,6 @@ const { estimateMessagesTokens, estimateTokens } = require('./tokenBudget.servic
 const { isPlaceholderOnly } = require('./chatCleanup.service');
 const { processToolCall } = require('./toolProcessor.service');
 
-const MAX_CONSECUTIVE_ZERO_RESULTS = 4;
-const MAX_DB_QUERIES = 12;
-
 const runToolLoop = async ({
   effectiveModelConfig,
   aiMessages,
@@ -19,7 +16,7 @@ const runToolLoop = async ({
   onAfterDispatch = null,
   onAfterToolHandled = null,
   onNoToolCall = null,
-  onStreamChunk = null,  // ← new: called with (text) for each real provider chunk on the final round
+  onStreamChunk = null,
 }) => {
   let reply;
   let tokensUsed = 0;
@@ -28,19 +25,10 @@ const runToolLoop = async ({
   let cacheCreationTokens = 0;
   let cacheReadTokens = 0;
   let finalReply = '';
-  let dbQueried = false;
-  let lastDbResultBlock = '';
-  let lastSqlQuery = '';
-  let consecutiveZeroResults = processToolCallArgs.consecutiveZeroResults || 0;
-  let dbQueryCount = processToolCallArgs.dbQueryCount || 0;
-  const generatedMedia = []; // accumulates image/PPT files created during tool rounds
+  const generatedMedia = [];
 
   const toolRoundStart = aiMessages.length;
-  const getMaxToolTokens = (currentDbQueryCount) => {
-    if (currentDbQueryCount > 5) return Math.floor(promptBudget.maxPromptTokens * 0.65);
-    return Math.floor(promptBudget.maxPromptTokens * 0.5);
-  };
-  let maxToolTokens = getMaxToolTokens(dbQueryCount);
+  const maxToolTokens = Math.floor(promptBudget.maxPromptTokens * 0.5);
 
   const trimOldestToolRounds = () => {
     const estimatedToolTokens = estimateMessagesTokens(aiMessages.slice(toolRoundStart));
@@ -88,7 +76,7 @@ const runToolLoop = async ({
       await onAfterDispatch({ round, result: { text: reply, tokensUsed, cacheCreationTokens, cacheReadTokens }, reply, tokensUsed });
     }
 
-    console.log(`[${loggerPrefix}] Reply length: ${reply.length}, Has [QUERY_DB]: ${reply.includes('[QUERY_DB]')}, Has <QUERY_DB>: ${reply.includes('<QUERY_DB>')}`);
+    console.log(`[${loggerPrefix}] Reply length: ${reply.length}`);
     if (abortController.signal.aborted) {
       return { aborted: true };
     }
@@ -97,8 +85,6 @@ const runToolLoop = async ({
       ...processToolCallArgs,
       reply,
       aiMessages,
-      consecutiveZeroResults,
-      dbQueryCount,
     });
 
     if (toolResult.handled) {
@@ -106,15 +92,7 @@ const runToolLoop = async ({
       streamedChunks = [];
       aiMessages.push(...toolResult.newMessages);
       totalEmbeddingTokens += toolResult.embedTokens || 0;
-      if (toolResult.dbQueried) dbQueried = true;
-      if (toolResult.lastSqlQuery) lastSqlQuery = toolResult.lastSqlQuery;
-      if (toolResult.lastDbResultBlock) lastDbResultBlock = toolResult.lastDbResultBlock;
       if (toolResult.generatedMedia?.length) generatedMedia.push(...toolResult.generatedMedia);
-      consecutiveZeroResults = toolResult.consecutiveZeroResults || 0;
-      if (toolResult.dbQueryCount !== undefined) {
-        dbQueryCount = toolResult.dbQueryCount;
-        maxToolTokens = getMaxToolTokens(dbQueryCount);
-      }
       trimOldestToolRounds();
 
       if (onAfterToolHandled) {
@@ -122,21 +100,9 @@ const runToolLoop = async ({
           round,
           reply,
           toolResult,
-          state: { dbQueried, lastDbResultBlock, lastSqlQuery, consecutiveZeroResults, dbQueryCount },
         });
       }
 
-      if (consecutiveZeroResults >= MAX_CONSECUTIVE_ZERO_RESULTS) {
-        finalReply = reply.replace(/\[QUERY_DB\][\s\S]*?(?:\[\/QUERY_DB\]|<\/SQL_QUERY>|<\/QUERY_DB>)/g, '').trim() || 'No data found.';
-        console.log(`[${loggerPrefix}] ${MAX_CONSECUTIVE_ZERO_RESULTS} consecutive zero results - breaking tool loop`);
-        break;
-      }
-
-      if (dbQueryCount >= MAX_DB_QUERIES) {
-        if (!finalReply) finalReply = 'Maximum database queries reached.';
-        console.log(`[${loggerPrefix}] Max DB queries (${dbQueryCount}) reached - breaking tool loop`);
-        break;
-      }
       continue;
     }
 
@@ -154,7 +120,6 @@ const runToolLoop = async ({
         reply,
         aiMessages,
         trimOldestToolRounds,
-        state: { dbQueried, lastDbResultBlock, lastSqlQuery, consecutiveZeroResults, dbQueryCount },
       });
       if (noToolResult?.continueLoop) continue;
       finalReply = noToolResult?.finalReply !== undefined ? noToolResult.finalReply : reply;
@@ -176,11 +141,6 @@ const runToolLoop = async ({
     cacheCreationTokens,
     cacheReadTokens,
     finalReply,
-    dbQueried,
-    lastDbResultBlock,
-    lastSqlQuery,
-    consecutiveZeroResults,
-    dbQueryCount,
     generatedMedia,
   };
 };
