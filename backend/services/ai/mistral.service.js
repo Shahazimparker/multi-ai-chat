@@ -135,4 +135,4 @@ const embedWithMistral = async (text, apiKey) => {
   return { vector, tokensUsed };
 };
 
-module.exports = { callMistral, embedWithMistral };
+module.exports = { callMistral, callMistralStream, embedWithMistral };

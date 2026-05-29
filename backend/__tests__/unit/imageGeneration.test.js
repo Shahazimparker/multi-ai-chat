@@ -32,7 +32,9 @@ describe('OPENROUTER_IMAGE_MODELS', () => {
   });
 });
 
-describe('generateImage', () => {
+// Real image generation test skipped to avoid Recraft/FLUX/DALL-E API costs
+// Run manually with: npx vitest run --reporter=verbose __tests__/unit/imageGeneration.test.js --test-timeout=60000
+describe.skip('generateImage', () => {
   it('generates an image and returns file metadata', async () => {
     const result = await generateImage('a simple red circle on white background', TEST_USER_ID, null);
     expect(result).toHaveProperty('file_id');

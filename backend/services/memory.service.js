@@ -605,14 +605,14 @@ const embedAndStoreMessage = async ({ userId, topicId, messageId, role, content,
 
     const { vector, tokensUsed } = embedResult;
 
+    // Insert the embedding; if message_id already exists (duplicate), silently skip
     const { error } = await supabase
       .from('message_embeddings')
-      .upsert(
-        { user_id: userId, topic_id: topicId, message_id: messageId, role, content, embedding: vector },
-        { onConflict: 'message_id' }
+      .insert(
+        { user_id: userId, topic_id: topicId, message_id: messageId, role, content, embedding: vector }
       );
 
-    if (error) {
+    if (error && !error.message?.includes('duplicate key')) {
       console.warn('[Memory] embedAndStoreMessage insert failed:', error.message);
       return 0;
     }
