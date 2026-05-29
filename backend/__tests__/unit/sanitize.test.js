@@ -26,10 +26,14 @@ describe('sanitizeInput', () => {
     expect(sanitizeInput('"hello"')).toBe('"hello"');
   });
 
-  it('collapses multiple whitespace', () => {
-    expect(sanitizeInput('hello    world')).toBe('hello world');
-    expect(sanitizeInput('hello\n\n\nworld')).toBe('hello world');
-    expect(sanitizeInput('  hello   world  ')).toBe('hello world');
+  it('preserves newlines and multi-line content', () => {
+    const codeBlock = 'function foo() {\n  return "bar";\n}';
+    expect(sanitizeInput(codeBlock)).toBe(codeBlock);
+  });
+
+  it('preserves internal whitespace (trim only removes leading/trailing)', () => {
+    expect(sanitizeInput('hello    world')).toBe('hello    world');
+    expect(sanitizeInput('  hello   world  ')).toBe('hello   world');
   });
 
   it('handles nested tags', () => {

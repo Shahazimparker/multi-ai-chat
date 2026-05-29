@@ -3,9 +3,16 @@
 // PURPOSE: Blocks requests if user has exceeded their token quota
 // ============================================================
 
+const ANONYMOUS_TOKEN_LIMIT = parseInt(process.env.ANONYMOUS_TOKEN_LIMIT, 10) || 10000;
+
 const tokenCheck = (req, res, next) => {
   const user = req.user;
-  if (!user) return next(); // anonymous — skip
+
+  if (!user) {
+    // Anonymous users get a hard token cap per request session
+    req.tokenRemaining = ANONYMOUS_TOKEN_LIMIT;
+    return next();
+  }
 
   const remaining = user.total_tokens - user.used_tokens;
 

@@ -41,9 +41,6 @@ const adminRoutes   = require('./routes/admin.routes');
 const historyRoutes = require('./routes/history.routes');
 const uploadRoutes  = require('./routes/upload.routes');
 
-// ── CSRF protection ────────────────────────────────────────
-const { csrfProtection } = require('./middleware/csrf');
-
 // ── Periodic cache cleanup ─────────────────────────────────
 const { cleanupStaleCache } = require('./services/cache.service');
 const CACHE_CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // 24h
@@ -81,7 +78,7 @@ app.use(cors({
   origin: (origin, cb) => {
     // Allow requests with no origin (server-to-server, curl, health checks, etc.)
     if (!origin) return cb(null, true);
-    if (allowedOrigins.some(o => origin.startsWith(o))) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
     cb(new Error(`Origin ${origin} not allowed by CORS`));
   },
   credentials: true,
@@ -91,9 +88,6 @@ app.use(cors({
 
 // ── Handle OPTIONS preflight explicitly (required by Vercel serverless) ──
 app.options('*', (req, res) => res.sendStatus(204));
-
-// ── CSRF token validation on mutating routes (AFTER CORS so error responses get CORS headers) ──
-app.use(csrfProtection);
 
 // ── Health check (used by Vercel / uptime monitors) ────────
 app.get('/api/health', (req, res) => {

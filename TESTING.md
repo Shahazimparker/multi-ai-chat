@@ -4,7 +4,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 
 ## Current Scope
 
-- Backend: Express API with auth, chat, upload, history, admin, token checks, CSRF, Sentry, business DB helpers, caching, RAG, and provider routing.
+- Backend: Express API with auth, chat, upload, history, admin, token checks, Sentry, business DB helpers, caching, RAG, and provider routing.
 - **AI Framework**: 16+ microservices for document loading, vector storage, retrieval, agents, chains, graphs, loops, approval gates, tracing, and flow analysis
 - Frontend: React app with login, chat, anonymous mode, admin, theme toggle, file upload, and unified provider model picker.
 - Database: Supabase/PostgreSQL with `pgvector`, token tracking, cache, topics, messages, uploads, and business DB support.
@@ -42,6 +42,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 ### Token and Budgeting
 
 - Token quota blocks users when `remaining <= 0`.
+- Anonymous users have a token cap (`ANONYMOUS_TOKEN_LIMIT`, default 10000) instead of unlimited spend.
 - Prompt budget allocation does not exceed the configured model limits.
 - Billable token counts prefer provider-reported usage over local estimates.
 
@@ -208,9 +209,9 @@ backend/
 | `chatRuntime.config.js` | 13 | All 4 config values: defaults, env reading, min/max clamping, non-numeric fallback |
 | `similarity.service.js` | 13 | `jaccardSimilarity` (stop words, case, punctuation), `isSameTopic` (thresholds, last-5 window) |
 | `compress.service.js` | 11 | All 7 filler patterns, short text skip, >50% compression guard |
-| `sanitize.js` | 8 | HTML tag stripping, entity decoding, whitespace collapse, XSS vectors |
+| `sanitize.js` | 9 | HTML tag stripping, entity decoding, newline/whitespace preservation, XSS vectors |
 | `tokenAccounting.service.js` | 6 | Both billing paths (API-reported vs fallback), zero inputs, optional fields |
-| `tokenCheck.js` | 5 | Anonymous skip, remaining tokens, 429 on exhaustion, tokenRemaining |
+| `tokenCheck.js` | 5 | Anonymous token cap (10000), remaining tokens, 429 on exhaustion, tokenRemaining |
 | `imageGeneration.service.js` | 5 | Model list validation (Recraft, FLUX.2), real image generation via OpenRouter |
 | `pptGeneration.service.js` | 3 | Real PPTX generation with DB save, subtitle option, safe filename |
 
@@ -297,8 +298,8 @@ backend/__tests__/integration-real/
 |---|---|---|
 | **Supabase** | ✅ 8/8 passed | All tables accessible, RPC working |
 | **AI Providers** | ⚠️ 8/10 passed | Gemini Flash, Groq (both), Mistral (both), DeepSeek (both), OpenRouter — all working. Gemini Pro: quota exceeded. OpenAI: invalid API key. |
-| **Chat API** | ⚠️ 4/5 passed | Health, models (15), SSE streaming, OpenRouter catalog (355 models) — all working. Anonymous /message: 403 CSRF (expected without token). |
-| **Total** | **20/23 (87%)** | 3 failures are config issues (Gemini Pro quota, OpenAI key, CSRF) |
+| **Chat API** | ✅ 5/5 passed | Health, models (15), SSE streaming, OpenRouter catalog (355 models), anonymous /message — all working. |
+| **Total** | **22/23 (96%)** | 1 failure is config issue (Gemini Pro quota, OpenAI key) |
 
 ### Skipped Tests
 

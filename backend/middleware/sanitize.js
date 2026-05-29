@@ -20,7 +20,6 @@ const sanitizeInput = (input, _options = {}) => {
     .replace(/</g, '<').replace(/>/g, '>')     // decode common entities
     .replace(/&/g, '&').replace(/"/g, '"')
     .replace(/&#x27;/g, "'").replace(/'/g, "'")
-    .replace(/\s+/g, ' ')                            // collapse whitespace
     .trim();
 };
 

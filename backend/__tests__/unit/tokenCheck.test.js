@@ -3,12 +3,13 @@
 const { tokenCheck } = require('../../middleware/tokenCheck');
 
 describe('tokenCheck', () => {
-  it('calls next() for anonymous users (no req.user)', () => {
+  it('sets tokenRemaining for anonymous users (no req.user)', () => {
     const req = {};
     const res = {};
     let nextCalled = false;
     tokenCheck(req, res, () => { nextCalled = true; });
     expect(nextCalled).toBe(true);
+    expect(req.tokenRemaining).toBe(10000);
   });
 
   it('calls next() when user has remaining tokens', () => {

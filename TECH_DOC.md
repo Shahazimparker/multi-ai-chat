@@ -16,7 +16,7 @@ This document is the technical reference for the current codebase state.
 - Entry point: `backend/server.js`
 - Security/logging: `helmet`, `cors`, `morgan`
 - Request parsing: JSON body (`10mb`)
-- Global middleware: CSRF protection, Sentry handlers, token cleanup jobs
+- Global middleware: Sentry handlers, token cleanup jobs
 - Main routes:
   - `/api/auth`
   - `/api/chat`
@@ -125,9 +125,8 @@ This document is the technical reference for the current codebase state.
 ### Middleware modules
 
 - Auth: `backend/middleware/auth.js`
-- Token quota: `backend/middleware/tokenCheck.js`
-- Input sanitization: `backend/middleware/sanitize.js`
-- CSRF: `backend/middleware/csrf.js`
+- Token quota: `backend/middleware/tokenCheck.js` — enforces per-user token limits; anonymous users get a configurable cap (`ANONYMOUS_TOKEN_LIMIT`, default 10000)
+- Input sanitization: `backend/middleware/sanitize.js` — strips HTML tags and decodes entities; preserves whitespace/newlines for code/markdown
 - Sentry context: `backend/middleware/sentryContext.js`
 
 ## Frontend Overview
@@ -223,6 +222,10 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
 | File | Fix |
 |---|---|
 | `chat.service.js` | PII leak: web search query content removed from logs; only query length logged |
+| `server.js` | CORS bypass: `startsWith` replaced with exact `includes` match to prevent subdomain spoofing |
+| `sanitize.js` | Whitespace collapse removed: newlines/indentation preserved for code and markdown in chat messages |
+| `server.js` | CSRF middleware removed: auth uses `Authorization: Bearer` (not cookies), CSRF not exploitable |
+| `tokenCheck.js` | Anonymous token cap: anonymous users now get `ANONYMOUS_TOKEN_LIMIT` (default 10000) instead of unlimited spend |
 
 ### Performance Improvements
 | File | Fix |
@@ -250,6 +253,7 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
 - `SENTRY_DSN`
 - `BIZ_SUPABASE_URL`
 - `BIZ_SUPABASE_SERVICE_KEY`
+- `ANONYMOUS_TOKEN_LIMIT` — token cap for anonymous users (default: 10000)
 - Provider API keys used by configured or optional provider modules
 
 ### Frontend
