@@ -3,21 +3,14 @@
 // PURPOSE: Calls OpenRouter API
 // ============================================================
 
-const { callOpenAICompatible } = require('./unified.service');
+const { callOpenAICompatible, callOpenAICompatibleStream } = require('./unified.service');
 
 /**
- * @param {string} modelName
- * @param {string} apiKey
- * @param {Array} messages
- * @param {AbortSignal|null} signal
- * @returns {Promise<Object>}
+ * Shared helper to build base config (used by both streaming and non-streaming)
  */
-const callOpenRouter = async (modelName, apiKey, messages, signal = null) => {
-  // Check if model supports cache
+function buildOpenRouterConfig(modelName, apiKey, messages, signal) {
   const isClaudeModel = modelName.includes('claude');
   const isGPT4Turbo = modelName.includes('gpt-4-turbo');
-
-  // Extract system messages from the messages array
   const systemMessages = messages.filter(m => m.role === 'system');
   const chatMessages = messages.filter(m => m.role !== 'system');
 
@@ -29,18 +22,14 @@ const callOpenRouter = async (modelName, apiKey, messages, signal = null) => {
     signal,
   };
 
-  // Claude models: use Anthropic-style system parameter with prompt caching
-  // Other models: prepend system as a system-role message in the messages array
   if (systemMessages.length > 0) {
     if (isClaudeModel || isGPT4Turbo) {
-      // Anthropic-style system — cache only the first (static) message
       baseConfig.system = systemMessages.map((m, i) => ({
         type: "text",
         text: m.content,
         ...(i === 0 ? { cache_control: { type: "ephemeral" } } : {}),
       }));
     } else {
-      // OpenAI-compatible: concatenate all system messages, prepend as one
       const systemText = systemMessages.map(m => m.content).join('\n\n');
       baseConfig.messages = [
         { role: 'system', content: systemText },
@@ -48,10 +37,20 @@ const callOpenRouter = async (modelName, apiKey, messages, signal = null) => {
       ];
     }
   }
+  return baseConfig;
+}
 
+/**
+ * @param {string} modelName
+ * @param {string} apiKey
+ * @param {Array} messages
+ * @param {AbortSignal|null} signal
+ * @returns {Promise<Object>}
+ */
+const callOpenRouter = async (modelName, apiKey, messages, signal = null) => {
+  const baseConfig = buildOpenRouterConfig(modelName, apiKey, messages, signal);
   const response = await callOpenAICompatible(baseConfig);
 
-  // Extract cache tokens if present
   return {
     text: response.text,
     tokensUsed: response.tokensUsed,
@@ -60,4 +59,25 @@ const callOpenRouter = async (modelName, apiKey, messages, signal = null) => {
   };
 };
 
-module.exports = { callOpenRouter };
+/**
+ * Streaming variant for OpenRouter.
+ * @param {string} modelName
+ * @param {string} apiKey
+ * @param {Array} messages
+ * @param {AbortSignal|null} signal
+ * @param {(text: string) => void} onChunk
+ * @returns {Promise<{text: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number}>}
+ */
+const callOpenRouterStream = async (modelName, apiKey, messages, signal = null, onChunk) => {
+  const baseConfig = buildOpenRouterConfig(modelName, apiKey, messages, signal);
+  const response = await callOpenAICompatibleStream({ ...baseConfig, onChunk });
+
+  return {
+    text: response.text,
+    tokensUsed: response.tokensUsed,
+    cacheCreationTokens: response.cacheCreationTokens || 0,
+    cacheReadTokens: response.cacheReadTokens || 0,
+  };
+};
+
+module.exports = { callOpenRouter, callOpenRouterStream };

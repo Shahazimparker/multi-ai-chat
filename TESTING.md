@@ -29,8 +29,10 @@ This is the current test reference for the repo. It reflects the live backend/fr
 ### Chat Pipeline
 
 - `/api/chat/message` returns a response for a normal prompt.
-- `/api/chat/stream` returns SSE chunks and a final `done` event.
-- Semantic cache hits return quickly and report `cacheHit: true` (exact cache is disabled).
+- `/api/chat/stream` returns real provider-token SSE chunks (no artificial `setTimeout` delays) and a final `done` event.
+- Streaming test: verify chunks arrive progressively (not all at once at the end). Each chunk should contain valid JSON with `type: 'chunk'` and a `text` field.
+- Tool-call flows: during DB queries / web search, tool status events (`type: 'tool_status'`) are sent. The final answer streams in naturally after tools complete.
+- Semantic cache hits return quickly and report `cacheHit: true`.
 - RAG-enabled queries inject document context only when topic/file context exists.
 - Cross-chat memory (`accurate` mode only): past messages from other topics surface as `## Relevant context from your past conversations` in the prompt.
 - `embedAndStoreMessage` stores embeddings in `message_embeddings` table after each reply in accurate mode.

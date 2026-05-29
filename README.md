@@ -1,6 +1,6 @@
 # Multi-AI Chat
 
-Unified AI chat platform with authentication, anonymous mode, file-aware chat (RAG), streaming responses, token controls, and admin analytics. Now includes a **complete LangChain + LangGraph + LangSmith equivalent** framework built from scratch.
+Unified AI chat platform with authentication, anonymous mode, file-aware chat (RAG), **real provider token streaming** (no artificial delays), token controls, and admin analytics. Now includes a **complete LangChain + LangGraph + LangSmith equivalent** framework built from scratch.
 
 ## Current Scope
 
@@ -13,7 +13,9 @@ Unified AI chat platform with authentication, anonymous mode, file-aware chat (R
 
 - Model routing via `backend/config/models.js` (current configured registry)
 - Live provider model discovery for `openrouter`, `together`, `anyapi`
-- Chat endpoints: `/api/chat/message` and `/api/chat/stream` (SSE)
+- Chat endpoints: `/api/chat/message` and `/api/chat/stream` (SSE with real provider token streaming)
+- **Real streaming**: All 10 providers stream native tokens. No artificial `setTimeout` typewriter delays. Tool-call rounds send status events, then the final answer streams in naturally.
+- **Shared pipeline**: `chatPipeline.service.js` eliminates ~400 lines of duplicated logic between `/message` and `/stream`
 - Authenticated and anonymous chat flows
 - Semantic query cache, RAG context, history summarization, cross-chat memory
 - File upload/search integration

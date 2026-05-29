@@ -2,7 +2,7 @@
 // Run: npx vitest run --config vitest.real.config.js
 // WARNING: These tests consume API tokens and may incur costs!
 
-const { dispatchToAI } = require('../../services/ai/dispatcher.service');
+const { dispatchToAI, dispatchToAIStream } = require('../../services/ai/dispatcher.service');
 const { MODELS } = require('../../config/models');
 
 const simpleMessages = [
@@ -26,6 +26,29 @@ const testModelIfConfigured = (modelId, modelConfig) => {
     expect(result.text.length).toBeGreaterThan(0);
     console.log(`[${label}] Response: ${result.text.slice(0, 100)}...`);
     console.log(`[${label}] Tokens used: ${result.tokensUsed}`);
+  }, 30000);
+
+  // ── REAL STREAMING TEST (no mocks, no artificial delays) ──
+  it(`${label} — streams real tokens`, async () => {
+    const chunks = [];
+    const result = await dispatchToAIStream(
+      modelConfig,
+      simpleMessages,
+      null,
+      (chunk) => { chunks.push(chunk); }
+    );
+
+    expect(result).toBeDefined();
+    expect(result.text).toBeTruthy();
+    expect(typeof result.text).toBe('string');
+    expect(result.text.length).toBeGreaterThan(0);
+
+    // Should have received multiple chunks (unless response is tiny)
+    expect(chunks.length).toBeGreaterThan(0);
+    // Reconstructed text should match
+    expect(chunks.join('')).toBe(result.text);
+
+    console.log(`[${label} Stream] ${chunks.length} chunks, ${result.text.length} chars, tokens=${result.tokensUsed}`);
   }, 30000);
 };
 

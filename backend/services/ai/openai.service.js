@@ -22,4 +22,51 @@ const callOpenAI = async (modelName, apiKey, messages, signal = null) => {
   };
 };
 
-module.exports = { callOpenAI };
+/**
+ * Streaming variant — yields text deltas via onChunk callback.
+ * @param {string} modelName
+ * @param {string} apiKey
+ * @param {Array} messages
+ * @param {AbortSignal|null} signal
+ * @param {(text: string) => void} onChunk
+ * @returns {Promise<{text: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number}>}
+ */
+const callOpenAIStream = async (modelName, apiKey, messages, signal = null, onChunk) => {
+  const client = new OpenAI({ apiKey });
+
+  const stream = await client.chat.completions.create({
+    model: modelName,
+    max_tokens: 16000,
+    messages,
+    stream: true,
+  }, { signal });
+
+  let fullText = '';
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let cacheCreationTokens = 0;
+  let cacheReadTokens = 0;
+
+  for await (const chunk of stream) {
+    const delta = chunk.choices?.[0]?.delta?.content;
+    if (delta) {
+      fullText += delta;
+      if (onChunk) onChunk(delta);
+    }
+    if (chunk.usage) {
+      promptTokens = chunk.usage.prompt_tokens || 0;
+      completionTokens = chunk.usage.completion_tokens || 0;
+      cacheCreationTokens = chunk.usage.cache_creation_input_tokens || 0;
+      cacheReadTokens = chunk.usage.cache_read_input_tokens || 0;
+    }
+  }
+
+  return {
+    text: fullText,
+    tokensUsed: promptTokens + completionTokens,
+    cacheCreationTokens,
+    cacheReadTokens,
+  };
+};
+
+module.exports = { callOpenAI, callOpenAIStream };

@@ -40,6 +40,14 @@ This document is the technical reference for the current codebase state.
 - `backend/controllers/admin.controller.js`
 - `backend/controllers/history.controller.js`
 
+### Streaming Architecture
+
+- `backend/services/chatPipeline.service.js` — Single shared pipeline for both `/message` and `/stream` routes. Handles: model validation → query compression → cache check (optional) → embedding + RAG → history → system prompt → tool loop → persistence → analytics.
+- **Real provider streaming**: Each AI provider service has a `callXxxStream()` variant that uses the SDK's native `stream: true` parameter. Text deltas are forwarded to the client via an `onChunk` callback as they arrive from the provider. No artificial `setTimeout` delays.
+- `dispatchToAIStream()` in `backend/services/ai/dispatcher.service.js` routes to the correct provider's streaming function.
+- `runToolLoop()` in `backend/services/toolLoop.service.js` accepts an `onStreamChunk` callback. During tool-call rounds, chunks are buffered internally; only the final round (no tool calls) forwards chunks to the client.
+- Providers with streaming support: OpenAI, Groq, Claude, Gemini, Mistral, Cohere, DeepSeek, OpenRouter, Together, AnyAPI — all 10 providers.
+
 ### Core services (Existing)
 
 - Chat orchestration: `backend/services/chat.service.js`
@@ -50,8 +58,8 @@ This document is the technical reference for the current codebase state.
 - RAG and embeddings: `backend/services/rag.service.js`
 - File pipeline: `backend/services/fileUpload.service.js`
 - Cache: `backend/services/cache.service.js`
-  - Exact cache (hash-based) disabled — `getCachedResponse` read removed from both routes; `setCachedResponse` write removed from controller. Avoids stale answers for time-sensitive and DB-backed queries.
-  - Semantic cache (`getSemanticCachedResponse`, pgvector cosine ≥ 0.92) remains active
+  - Exact cache (hash-based) disabled in `/message` route; active in `/stream` route for fast cache-hit responses
+  - Semantic cache (`getSemanticCachedResponse`, pgvector cosine ≥ 0.92) remains active in both routes
 - Token budgeting: `backend/services/tokenBudget.service.js`
 - Analytics: `backend/services/analytics.service.js`
 - Similarity and compression: `backend/services/similarity.service.js`, `backend/services/compress.service.js`

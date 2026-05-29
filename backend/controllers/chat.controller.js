@@ -1,54 +1,16 @@
 // ============================================================
 // FILE: backend/controllers/chat.controller.js
-// PURPOSE: Core chat logic — processes user messages through:
-//   1. Prompt compression    (remove filler words)
-//   2. Cache check           (return if repeated query)
-//   3. RAG context injection (relevant knowledge docs)
-//   4. Business DB query     (live data from ERP tables)
-//   5. History context       (last 10 msgs if same topic)
-//   6. AI dispatch           (call correct AI provider)
-//   7. Token tracking        (update user quota)
-//   8. Save to DB            (persist for logged-in users)
-//   9. Analytics logging     (all queries tracked)
+// PURPOSE: /message endpoint — thin wrapper around shared pipeline
 // ============================================================
 
-const supabase = require('../config/supabase');
-const { MODELS } = require('../config/models');
-const { CHAT_SEMANTIC_CACHE_THRESHOLD } = require('../config/chatRuntime.config');
-const { compressPrompt } = require('../services/compress.service');
-const { getSemanticCachedResponse, setCachedResponse } = require('../services/cache.service');
-const { buildRAGContext, embedText } = require('../services/rag.service');
-const { buildContextMessages, maybeCompressQuery } = require('../services/context.service');
-const { embedAndStoreMessage, searchMemory } = require('../services/memory.service');
-const { listUserFiles } = require('../services/fileUpload.service');
-const { logAnalytics } = require('../services/analytics.service');
-const { calculateBillableTokens } = require('../services/tokenAccounting.service');
-const chatService = require('../services/chat.service');
-const {
-  buildFileContext,
-  runToolLoop,
-  stripToolTags,
-  buildFallbackDbReply,
-  classifyError,
-} = chatService;
-
-const {
-  createPromptBudget,
-  createDynamicPromptBudget,
-  calculateComplexityScore,
-  getTopicTurnCount,
-  estimateMessagesTokens,
-  estimateTokens,
-  trimTextByTokens,
-} = require('../services/tokenBudget.service');
-
+const { classifyError } = require('../services/chat.service');
+const { runChatPipeline } = require('../services/chatPipeline.service');
 
 /**
  * POST /api/chat/message
  * Body: { modelId, message, topicId? }
  * Auth: Optional (anonymous users allowed but no history saved)
  */
-
 const sendMessage = async (req, res) => {
   const startTime = Date.now();
   const {
@@ -62,7 +24,7 @@ const sendMessage = async (req, res) => {
     ragEnabled = false,
   } = req.body;
 
-  // ── 0. Setup Abort Controller for request cancellation ──
+  // ── Setup Abort Controller ─────────────────────────────────
   const abortController = new AbortController();
   const abortDownstreamTasks = () => {
     if (!abortController.signal.aborted && !res.writableEnded) {
@@ -73,429 +35,65 @@ const sendMessage = async (req, res) => {
   req.on('aborted', abortDownstreamTasks);
   res.on('close', abortDownstreamTasks);
 
-  const user = req.user;        // null for anonymous
+  const user = req.user;
   const isAnonymous = !user;
-  let resolvedTopicId = topicId;
 
-  try {
-    // ── 1. Validate model ────────────────────────────────────
-    const modelConfig = MODELS[modelId];
-    const effectiveModelConfig = providerModelId
-      ? { ...modelConfig, model: providerModelId }
-      : modelConfig;
-    if (!modelConfig) {
-      return res.status(400).json({ error: `Unknown model: ${modelId}` });
+  const result = await runChatPipeline({
+    modelId,
+    providerModelId,
+    message,
+    image,
+    topicId,
+    user,
+    isAnonymous,
+    memoryMode,
+    historyLimit,
+    ragEnabled,
+
+    abortController,
+
+    // /message divergence flags
+    exactCacheEnabled: false,           // exact-match cache is commented out in original
+    identityCheckEnabled: true,
+    perQueryLimitEnabled: true,
+    dynamicBudgetEnabled: true,
+    memoryEnabled: true,                // cross-chat memory search
+    cacheResponse: true,                // setCachedResponse
+    postSaveEmbedding: true,            // embed messages after save
+  });
+
+  // ── Handle errors ──────────────────────────────────────────
+  if (result.err) {
+    if (result.errorType === 'aborted') return;
+
+    console.error('[Chat] Error:', result.err.message);
+
+    if (result.errorType === 'invalid_model' || result.errorType === 'query_too_long' || result.errorType === 'context_too_large') {
+      return res.status(400).json({ error: result.userMessage });
     }
 
-    // ── 2. Check per-query token limit ───────────────────────
-    let promptBudget = createPromptBudget(modelConfig);
-    // Try dynamic budget if we have a topic
-    if (topicId && user) {
-      try {
-        const turnCount = await getTopicTurnCount(topicId);
-        const complexityScore = calculateComplexityScore(message);
-        promptBudget = createDynamicPromptBudget(turnCount, complexityScore, modelConfig);
-      } catch (err) {
-        console.warn('[Chat] Dynamic budget failed, using static:', err.message);
-      }
-    }
-
-    if (user?.per_query_limit && user.per_query_limit < promptBudget.maxPromptTokens) {
-      const scale = Math.max(0.35, user.per_query_limit / promptBudget.maxPromptTokens);
-      promptBudget = {
-        ...promptBudget,
-        maxPromptTokens: user.per_query_limit,
-        systemTokens: Math.floor(promptBudget.systemTokens * scale),
-        historyTokens: Math.floor(promptBudget.historyTokens * scale),
-        ragTokens: Math.floor(promptBudget.ragTokens * scale),
-        fileTokens: Math.floor(promptBudget.fileTokens * scale),
-        queryTokens: Math.floor(promptBudget.queryTokens * scale),
-      };
-    }
-    const estimatedInputTokens = estimateTokens(message);
-    if (user && estimatedInputTokens > user.per_query_limit) {
-      return res.status(400).json({
-        error: `Query too long. Max ${user.per_query_limit} tokens per query. Your query is ~${estimatedInputTokens} tokens.`,
-      });
-    }
-
-    // ── 3. Compress prompt (remove filler words) ─────────────
-    const compressedQuery = compressPrompt(message);
-
-    const isIdentityQuestion = /(^|\b)(what(\s+is)?\s+your\s+(llm\s+)?model|what\s+model\s+are\s+you|what\s+is\s+the\s+(llm\s+)?model\s+name|model\s+name|llm\s+name|which\s+company(\s+llm)?\s+you\s+are|which\s+company(\s+llm)?\s+are\s+you|who\s+are\s+you|what\s+are\s+you)(\b|$)/i.test(compressedQuery);
-
-    // ── 4. Check query cache ─────────────────────────────────
-    /***
-    if (!isIdentityQuestion) {
-      const cachedReply = await getCachedResponse(compressedQuery, modelId);
-      if (cachedReply) {
-        // Save to analytics but mark as cache hit
-        await logAnalytics({
-          userId: user?.id, query: message, modelId, tokensUsed: 0,
-          isAnonymous, cacheHit: true, responseTimeMs: Date.now() - startTime
-        });
-
-        return res.json({
-          reply: cachedReply,
-          tokensUsed: 0,
-          cacheHit: true,
-          model: modelConfig.label,
-        });
-      }
-    }
-
-    */
-    // ── 5. Maybe compress long queries with Gemini Flash ─────
-    if (abortController.signal.aborted) throw { name: 'AbortError' };
-    const compressResult = await maybeCompressQuery(compressedQuery, abortController.signal);
-    const finalQuery = typeof compressResult === 'string' ? compressResult : compressResult.query;
-    const compressTokens = typeof compressResult === 'string' ? 0 : (compressResult.tokensUsed || 0);
-
-    // ── 5.5 Generate query embedding once to save tokens ──────
-    let queryVector = null;
-    let totalEmbeddingTokens = 0;  // ← tracks ALL embedding API token costs
-
-    if (ragEnabled) {
-      if (abortController.signal.aborted) throw { name: 'AbortError' };
-      const embedResult = await embedText(finalQuery, modelConfig.provider, 3, abortController.signal, user?.id);
-      if (embedResult) {
-        queryVector = embedResult.vector;
-        totalEmbeddingTokens += embedResult.tokensUsed;
-      }
-
-      {
-        const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, CHAT_SEMANTIC_CACHE_THRESHOLD, user?.id, topicId);
-        if (semanticCachedReply) {
-          await logAnalytics({
-            userId: user?.id,
-            query: message,
-            modelId,
-            tokensUsed: 0,
-            isAnonymous,
-            cacheHit: true,
-            responseTimeMs: Date.now() - startTime,
-          });
-
-          return res.json({
-            reply: semanticCachedReply,
-            tokensUsed: 0,
-            topicId: topicId || null,
-            cacheHit: true,
-            model: effectiveModelConfig.label,
-            tokenStats: user ? {
-              total: user.total_tokens,
-              used: user.used_tokens,
-              remaining: user.total_tokens - user.used_tokens,
-            } : null,
-          });
-        }
-      }
-    }
-
-    // ── 6. Fetch RAG context ─────────────────────────────────
-    let ragContext = '';
-    let fileResults = [];
-    let totalFileCount = 0;
-
-    if (ragEnabled) {
-      if (abortController.signal.aborted) throw { name: 'AbortError' };
-      const [ragCtx, fileData] = await Promise.all([
-        buildRAGContext(
-          finalQuery,
-          modelConfig.provider,
-          abortController.signal,
-          queryVector,
-          {
-            tokenBudget: promptBudget.ragTokens,
-            topicId,
-            userId: user?.id,
-          }
-        ),
-        // HYBRID: Get ALL files for the topic (no limit, no similarity filter)
-        listUserFiles(user?.id, topicId)
-      ]);
-      ragContext = ragCtx;
-      const normalizedFileData = Array.isArray(fileData)
-        ? { files: fileData, totalCount: fileData.length }
-        : (fileData || {});
-      fileResults = normalizedFileData.files || [];
-      totalFileCount = normalizedFileData.totalCount || fileResults.length;
-    }
-
-    // ── HYBRID APPROACH: File names only, tools for content ──
-    const fileContext = buildFileContext(fileResults, totalFileCount);
-
-
-    // ── 8. Fetch conversation history context ────────────────
-    const { context: historyContext, summaryTokens: historySummaryTokens } = await buildContextMessages(
-      finalQuery,
-      isAnonymous ? null : topicId,
-      {
-        memoryMode,
-        historyLimit,
-        tokenBudget: promptBudget.historyTokens,
-        userId: user?.id,
-      },
-      abortController.signal
-    );
-
-    // ── 8.5 RAG-based cross-chat memory (accurate mode only) ──
-    let memoryContext = '';
-    if (ragEnabled && memoryMode === 'accurate' && queryVector && user?.id) {
-      memoryContext = await searchMemory(queryVector, user.id, {
-        excludeTopicId: resolvedTopicId,
-        topK: 5,
-        threshold: 0.5,
-      });
-    }
-
-    // ── 9. Build final AI message payload ───────────────────
-    const aiMessages = [];
-
-    // System prompt — static (cacheable) + dynamic (per-request) separated for prompt caching
-    const runtimeIdentity = `MODEL_IDENTITY: ${modelConfig.label} | provider=${effectiveModelConfig.provider} | model=${effectiveModelConfig.model}`;
-    const identityDirective = isIdentityQuestion
-      ? `\n\nIf the user asks what model/company you are, reply EXACTLY with:\n${runtimeIdentity}`
-      : '';
-
-    const generalToolsDirective = `\n\n## General Tools\nYou have access to the following tools. To use them, output EXACTLY the tags below:\n1. Web Search: [WEB_SEARCH:query="your search query"]\n2. Execute JS Code: [EXECUTE_CODE]console.log("hello");[/EXECUTE_CODE]\nWait for the tool result to be provided in the next user message before answering.`;
-
-    const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}${generalToolsDirective}\n\nRules:\n- Format ABAP, SQL, JSON, XML code in \`\`\` blocks with language label ONLY if the user explicitly asks for code/SQL.\n- Use tables for structured data (configuration, field mappings) when presenting DB results.\n- Use bullet points for better clarity.\n- When explaining errors, show the error first, then root cause, then fix.`;
-    aiMessages.push({ role: 'system', content: staticSystem });
-    // Dynamic parts — NOT cacheable (change per request)
-    if (ragContext) {
-      aiMessages.push({ role: 'system', content: `## Retrieved Context\n${ragContext}` });
-    }
-    if (fileContext) {
-      aiMessages.push({ role: 'system', content: `## File Context\n${fileContext}` });
-    }
-    // RAG-based cross-chat memory (accurate mode only)
-    if (memoryContext) {
-      aiMessages.push({ role: 'system', content: memoryContext });
-    }
-
-    // History context (if same topic)
-    if (historyContext && historyContext.length > 0) {
-      aiMessages.push(...historyContext);
-    }
-
-    // Current user message
-    const userContent = image
-      ? [
-        { type: 'text', text: finalQuery || 'Analyze this image' },
-        { type: 'image_url', image_url: { url: image } }
-      ]
-      : trimTextByTokens(finalQuery, promptBudget.queryTokens);
-    aiMessages.push({ role: 'user', content: userContent });
-
-
-    // Accumulate embedding tokens from all embedText calls
-    // Note: estimatedInputTokens covers the raw user message
-    let totalAITokens = 0;
-    const promptTokens = estimateMessagesTokens(aiMessages);
-    if (user && promptTokens > user.per_query_limit) {
-      return res.status(400).json({
-        error: `Query context too large after RAG/history. Max ${user.per_query_limit} tokens per query. Current prompt is ~${promptTokens} tokens.`,
-      });
-    }
-
-    // ── 9. Call AI (tool-call loop) ──────────────────────────
-    let reply, tokensUsed;
-    let finalReply = '';
-    let dbQueried = false;
-    let lastDbResultBlock = '';
-    let consecutiveZeroResults = 0;
-    let lastSqlQuery = '';
-    let dbQueryCount = 0;
-    const fetchedSchemaTables = new Set();
-
-    // Tool-call loop: AI can search files, request full content, or query business DB
-    const MAX_TOOL_ROUNDS = 6;
-    const loopResult = await runToolLoop({
-      effectiveModelConfig,
-      aiMessages,
-      abortController,
-      processToolCallArgs: {
-        user,
-        topicId,
-        abortController,
-        fetchedSchemaTables,
-      },
-      promptBudget,
-      maxToolRounds: MAX_TOOL_ROUNDS,
-      loggerPrefix: 'Tool',
-      getNudgeSourceText: () => finalQuery,
-      onNoToolCall: async ({ reply, aiMessages: loopMessages, trimOldestToolRounds, state }) => {
-        if (false && state.dbQueried && state.lastSqlQuery) {
-          const isDistinctOnly = /SELECT\s+DISTINCT\s+/i.test(state.lastSqlQuery) &&
-            !/\b(COUNT|SUM|AVG|MIN|MAX|GROUP\s+BY)\b/i.test(state.lastSqlQuery);
-          const replyHasPlaceholder = /[\t\n]-\s*[\t\n]/.test(reply) || /would\s+(you\s+)?(like|prefer)/i.test(reply);
-          const userAsksForMetrics = /count|how\s+many|total|number\s+of|status|list|all/i.test(finalQuery);
-
-          if (isDistinctOnly && replyHasPlaceholder && userAsksForMetrics) {
-            loopMessages.push({ role: 'assistant', content: reply });
-            loopMessages.push({ role: 'user', content: '[SYSTEM] You queried DISTINCT values but the user asked for counts/metrics. Run a new query with COUNT(*) and GROUP BY to get actual numbers - no placeholders, no deferring.' });
-            trimOldestToolRounds();
-            return { continueLoop: true };
-          }
-        }
-        return { finalReply: reply };
-      },
-    });
-    if (loopResult.aborted) return;
-    finalReply = loopResult.finalReply;
-    dbQueried = loopResult.dbQueried;
-    lastDbResultBlock = loopResult.lastDbResultBlock;
-    consecutiveZeroResults = loopResult.consecutiveZeroResults;
-    lastSqlQuery = loopResult.lastSqlQuery;
-    dbQueryCount = loopResult.dbQueryCount;
-    totalAITokens += loopResult.totalAITokens || 0;
-    totalEmbeddingTokens += loopResult.totalEmbeddingTokens || 0;
-    // Strip leftover tool-call tags
-    finalReply = stripToolTags(finalReply);
-
-    // Fallback: only if AI literally gave us nothing usable after stripping
-    if (dbQueried && lastDbResultBlock && consecutiveZeroResults < 4 && (!finalReply || finalReply.trim().length < 5)) {
-      finalReply = buildFallbackDbReply(lastDbResultBlock);
-    }
-
-    const billableTokens = calculateBillableTokens({
-      totalAITokens,
-      promptTokens,
-      finalReply,
-      totalEmbeddingTokens,
-      estimatedInputTokens,
-      compressTokens,
-      historySummaryTokens,
-    });
-
-    // Check if user aborted while AI was generating
-    if (abortController.signal.aborted) return;
-
-    // ── 10. Cache the response for future repeated queries ────
-    if (!isIdentityQuestion) {
-      await setCachedResponse(finalQuery, modelId, finalReply, queryVector, user?.id, resolvedTopicId);
-    }
-
-    // ── 12. Save messages to DB (logged-in users only) ────────
-    let savedUserMessageId = null;
-    let savedAssistantMessageId = null;
-
-    if (!isAnonymous) {
-      // Create new topic if none provided
-      if (!resolvedTopicId) {
-        const topicTitle = message.trim().slice(0, 60) + (message.length > 60 ? '...' : '');
-        const { data: newTopic, error: topicError } = await supabase
-          .from('topics')
-          .insert({ user_id: user.id, title: topicTitle, model: modelId })
-          .select('id')
-          .single();
-
-        if (topicError) {
-          console.error('[Chat] Topic creation failed:', topicError.message);
-        } else {
-          resolvedTopicId = newTopic?.id;
-        }
-      }
-
-      if (resolvedTopicId) {
-        // Save user message + assistant reply
-        const { data: savedMessages, error: msgError } = await supabase.from('messages').insert([
-          { topic_id: resolvedTopicId, user_id: user.id, role: 'user', content: message, model: modelId, tokens_used: estimatedInputTokens },
-          { topic_id: resolvedTopicId, user_id: user.id, role: 'assistant', content: finalReply, model: modelId, tokens_used: billableTokens },
-        ]).select('id, role');
-
-        if (!msgError && savedMessages) {
-          for (const m of savedMessages) {
-            if (m.role === 'user') savedUserMessageId = m.id;
-            if (m.role === 'assistant') savedAssistantMessageId = m.id;
-          }
-        }
-
-        // Update topic timestamp + model (so it reflects the latest model used)
-        await supabase.from('topics')
-          .update({ updated_at: new Date().toISOString(), model: modelId })
-          .eq('id', resolvedTopicId);
-      }
-    }
-
-    // ── 12.5 Embed messages for RAG-based cross-chat memory ──
-    // Only in accurate mode — tracks embedding tokens for billing
-    if (!isAnonymous && resolvedTopicId && memoryMode === 'accurate') {
-      const embedPromises = [];
-      if (savedUserMessageId) {
-        embedPromises.push(
-          embedAndStoreMessage({
-            userId: user.id, topicId: resolvedTopicId,
-            messageId: savedUserMessageId, role: 'user',
-            content: message, provider: modelConfig.provider,
-          }).catch(err => { console.warn('[Memory] User msg embed failed:', err.message); return 0; })
-        );
-      }
-      if (savedAssistantMessageId) {
-        embedPromises.push(
-          embedAndStoreMessage({
-            userId: user.id, topicId: resolvedTopicId,
-            messageId: savedAssistantMessageId, role: 'assistant',
-            content: finalReply, provider: modelConfig.provider,
-          }).catch(err => { console.warn('[Memory] Asst msg embed failed:', err.message); return 0; })
-        );
-      }
-      if (embedPromises.length > 0) {
-        const results = await Promise.all(embedPromises);
-        const memoryEmbedTokens = results.reduce((sum, t) => sum + (t || 0), 0);
-        if (memoryEmbedTokens > 0) {
-          totalEmbeddingTokens += memoryEmbedTokens;
-          console.log(`[Memory] Embedding tokens: ${memoryEmbedTokens}`);
-        }
-      }
-    }
-
-    // ── 11. Update user token usage (after successful persistence) ──
-    if (user) {
-      console.log(`[TokenTracking] AI=${totalAITokens} Embedding=${totalEmbeddingTokens} InputMsg=${estimatedInputTokens} Total=${billableTokens}`);
-      await supabase.rpc('increment_user_tokens', { user_id: user.id, token_amount: billableTokens });
-    }
-
-    // ── 13. Log to analytics ─────────────────────────────────
-    await logAnalytics({
-      userId: user?.id, query: message, modelId, tokensUsed: billableTokens,
-      isAnonymous, cacheHit: false, responseTimeMs: Date.now() - startTime,
-    });
-
-    // ── 14. Return response ───────────────────────────────────
-    res.json({
-      reply: finalReply,
-      tokensUsed: billableTokens,
-      topicId: resolvedTopicId,
-      cacheHit: false,
-      model: modelConfig.label,
-      // Updated token stats for header display
-      tokenStats: user ? {
-        total: user.total_tokens,
-        used: user.used_tokens + billableTokens,
-        remaining: user.total_tokens - user.used_tokens - billableTokens,
-      } : null,
-    });
-
-  } catch (err) {
-    // Gracefully handle manual aborts
-    if (err.name === 'AbortError' || abortController.signal.aborted) {
-      return;
-    }
-
-    console.error('[Chat] Error:', err.message);
-
-    const { errorType, userMessage } = classifyError(err.message);
-
-    res.status(503).json({
+    const { errorType, userMessage } = classifyError(result.err.message);
+    return res.status(503).json({
       error: userMessage,
       errorType,
       retryable: true,
       failedModelId: modelId,
     });
   }
+
+  // ── Return response ────────────────────────────────────────
+  res.json({
+    reply: result.finalReply,
+    tokensUsed: result.billableTokens,
+    topicId: result.resolvedTopicId,
+    cacheHit: result.cacheHit,
+    model: result.modelConfig?.label,
+    tokenStats: user ? {
+      total: user.total_tokens,
+      used: user.used_tokens + result.billableTokens,
+      remaining: user.total_tokens - user.used_tokens - result.billableTokens,
+    } : null,
+  });
 };
 
 module.exports = { sendMessage };
-

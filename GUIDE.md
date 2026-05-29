@@ -14,7 +14,8 @@ This is the main setup and maintenance guide for the current repo state.
 - 15 configured AI models across DeepSeek, Groq, Gemini, Mistral, Claude, and OpenRouter in `backend/config/models.js`
 - Live provider catalogs for `openrouter`, `together`, and `anyapi`
 - Authenticated and anonymous chat flows
-- Streaming and non-streaming chat endpoints
+- **Real provider token streaming** — all 10 providers stream native tokens via SSE. No artificial `setTimeout` delays. Tool-call rounds are handled transparently: tool status events are sent during processing, then the final answer streams in naturally.
+- Shared pipeline (`chatPipeline.service.js`) eliminates ~400 lines of duplicated logic between `/message` and `/stream` routes
 - RAG, semantic cache, token accounting, context summarization, and cross-chat memory
 - File upload, search, and abort cleanup
 - AI file generation: Image (Recraft/FLUX via OpenRouter), PPT (pptxgenjs), PDF (pdfkit), Excel (exceljs), Word (docx), CSV, Chart (SVG), HTML, JSON, Markdown — all triggered via `[GENERATE_XXX]` tags in chat
