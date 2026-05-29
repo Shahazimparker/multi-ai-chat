@@ -4,14 +4,14 @@ This is the current test reference for the repo. It reflects the live backend/fr
 
 ## Current Scope
 
-- Backend: Express API with auth, chat, upload, history, admin, token checks, Sentry, business DB helpers, caching, RAG, and provider routing.
+- Backend: Express API with auth, chat, upload, history, admin, token checks, Sentry, caching, RAG, and provider routing.
 - **AI Framework**: 16+ microservices for document loading, vector storage, retrieval, agents, chains, graphs, loops, approval gates, tracing, and flow analysis
 - Frontend: React app with login, chat, anonymous mode, admin, theme toggle, file upload, and unified provider model picker.
-- Database: Supabase/PostgreSQL with `pgvector`, token tracking, cache, topics, messages, uploads, and business DB support.
+- Database: Supabase/PostgreSQL with `pgvector`, token tracking, cache, topics, messages, uploads.
 
 ## What To Verify First
 
-1. `backend/server.js` boots cleanly with `JWT_SECRET`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, and optional Sentry/business DB env vars.
+1. `backend/server.js` boots cleanly with `JWT_SECRET`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, and optional Sentry env vars.
 2. `frontend` starts and resolves `REACT_APP_API_URL`.
 3. `/api/health` responds.
 4. Login works and returns a token.
@@ -147,7 +147,6 @@ This is the current test reference for the repo. It reflects the live backend/fr
 - SSE stream handling in `backend/routes/chat.routes.js`
 - Token accounting in `backend/controllers/chat.controller.js`
 - RAG and semantic cache integration in `backend/services/rag.service.js` and `backend/services/cache.service.js`
-- Business DB tool loop in `backend/services/chat.service.js`
 - Provider catalog loading in `backend/services/modelCatalog.service.js`
 - Agent orchestration and tool selection in `agentOrchestrator.service.js`
 - Graph execution engine in `graphWorkflow.service.js`
@@ -162,9 +161,8 @@ This is the current test reference for the repo. It reflects the live backend/fr
 
 ### Overview
 
-The backend now has an automated test suite using **Vitest** (234 tests across 14 test files). Tests run in ~20s with real Supabase and API connections.
+The backend now has an automated test suite using **Vitest** (200 tests across 16 test files, plus 1 skipped image test). Tests run in ~20s with real Supabase and API connections. **Zero mocks** — all tests use real implementations end-to-end. The only exception is the image generation test (skipped to avoid Recraft/FLUX/DALL-E API costs).
 
-### Quick Start
 
 ```bash
 cd backend
@@ -178,7 +176,7 @@ npm run test:coverage # Run with coverage report
 ```
 backend/
 ├── __tests__/
-│   ├── setup.js                          # Global mocks (Supabase, Business DB)
+│   ├── setup.js                          # Global test setup (env vars)
 │   ├── unit/
 │   │   ├── tokenAccounting.test.js       # Billable token calculation (6 tests)
 │   │   ├── chatCleanup.test.js           # stripToolTags, isPlaceholderOnly, classifyError (39 tests)
@@ -187,48 +185,44 @@ backend/
 │   │   ├── sanitize.test.js              # XSS sanitization (8 tests)
 │   │   ├── tokenCheck.test.js            # Token quota middleware (5 tests)
 │   │   ├── chatRuntime.config.test.js    # Env var parsing with clamping (13 tests)
-│   │   ├── toolProcessor-matchers.test.js # Regex matchers for all tool tags (56 tests)
-│   │   ├── toolProcessor-logic.test.js   # extractReferencedTables, formatDbResults, etc. (18 tests)
+│   │   ├── toolProcessor-matchers.test.js # Regex matchers for all tool tags (36 tests)
+│   │   ├── toolProcessor-logic.test.js   # buildFileContext (5 tests)
 │   │   ├── tokenBudget.test.js           # estimateTokens, budgets, complexity, smartTrim (38 tests)
-│   │   ├── imageGeneration.test.js       # Model list validation + real image generation (5 tests)
+│   │   ├── imageGeneration.test.js       # Model list validation (4 tests, 1 skipped)
+│   │   ├── orchestratorBrain.test.js     # Real framework graph wiring (1 test)
 │   │   ├── pptGeneration.test.js         # Real PPTX generation with DB save (3 tests)
 │   └── integration/
-│       ├── toolProcessor.test.js         # processToolCall with real tool backends (18 tests)
+│       ├── toolProcessor.test.js         # processToolCall with real tool backends (17 tests)
 │       └── toolLoop.test.js              # runToolLoop module load verification (1 test)
 ├── vitest.config.js                      # Vitest configuration with coverage thresholds
-└── setup.js                              # Global test setup (env vars, Supabase mocks)
+└── setup.js                              # Global test setup (env vars)
 ```
 
 ### Test Coverage by Tier
 
-#### Tier 1: Pure Logic (no external deps) — 137 tests
+#### Tier 1: Pure Logic (no external deps) — 150 tests
 | Service | Tests | What's covered |
 |---|---|---|
 | `chatCleanup.service.js` | 39 | `stripToolTags` (all 18 patterns), `isPlaceholderOnly`, `classifyError` (all 8 types) |
 | `tokenBudget.service.js` | 38 | `estimateTokens`, `trimTextByTokens`, `estimateMessagesTokens`, `fitMessagesToBudget`, `createPromptBudget`, `calculateComplexityScore`, `createDynamicPromptBudget`, `parseMemoryBlock`, `rebuildMemoryBlock`, `smartTrimContextBlock` |
-| `toolProcessor-matchers` | 56 | All 16 tool tag matchers: SEARCH_FILES, GET_FILE, WEB_SEARCH, EXECUTE_CODE, GET_SCHEMA, QUERY_DB, GENERATE_IMAGE, GENERATE_PPT, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD, hasBareCloseTag |
-| `toolProcessor-logic` | 18 | `extractReferencedTables`, `buildFileContext`, `formatDbResults`, `buildFallbackDbReply` |
+| `toolProcessor-matchers` | 36 | All 13 remaining tool tag matchers: SEARCH_FILES, GET_FILE, WEB_SEARCH, EXECUTE_CODE, GENERATE_IMAGE, GENERATE_PPT, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD |
+| `toolProcessor-logic` | 5 | `buildFileContext` |
 | `chatRuntime.config.js` | 13 | All 4 config values: defaults, env reading, min/max clamping, non-numeric fallback |
 | `similarity.service.js` | 13 | `jaccardSimilarity` (stop words, case, punctuation), `isSameTopic` (thresholds, last-5 window) |
 | `compress.service.js` | 11 | All 7 filler patterns, short text skip, >50% compression guard |
-| `sanitize.js` | 9 | HTML tag stripping, entity decoding, newline/whitespace preservation, XSS vectors |
+| `sanitize.js` | 11 | HTML tag stripping, entity decoding, newline/whitespace preservation, XSS vectors, sanitizeBody middleware |
 | `tokenAccounting.service.js` | 6 | Both billing paths (API-reported vs fallback), zero inputs, optional fields |
 | `tokenCheck.js` | 5 | Anonymous token cap (10000), remaining tokens, 429 on exhaustion, tokenRemaining |
-| `imageGeneration.service.js` | 5 | Model list validation (Recraft, FLUX.2), real image generation via OpenRouter |
+| `imageGeneration.service.js` | 5 | Model list validation (Recraft, FLUX.2) — 4 active, 1 skipped |
 | `pptGeneration.service.js` | 3 | Real PPTX generation with DB save, subtitle option, safe filename |
+| `orchestratorBrain.service.js` | 1 | Real framework graph wiring with dispatcher |
 
-#### Tier 2: Integration with Real Backends — 19 tests
+#### Tier 2: Integration with Real Backends — 18 tests
 | Service | Tests | What's covered |
 |---|---|---|
-| `toolProcessor.service.js` | 18 | `processToolCall` with real backends: SEARCH_FILES, GET_FILE, WEB_SEARCH, EXECUTE_CODE, GENERATE_IMAGE, GENERATE_PPT, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD, bare close tag, no-tool-match, invalid JSON, empty slides |
+| `toolProcessor.service.js` | 17 | `processToolCall` with real backends: SEARCH_FILES, GET_FILE, WEB_SEARCH, EXECUTE_CODE, GENERATE_PPT, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD, no-tool-match, invalid JSON, empty slides |
 | `toolLoop.service.js` | 1 | Module load verification |
 
-### CI/CD Integration
-
-Automated via GitHub Actions (`.github/workflows/test.yml`):
-- **Triggers**: Push/PR to `main`/`master` when `backend/**` changes
-- **Runs**: `npm ci` → `npm run lint` → `npm run typecheck` → `npm test`
-- **Coverage thresholds**: 70% lines, 70% functions, 60% branches, 70% statements
 
 ### Running Tests Locally
 
@@ -246,23 +240,13 @@ cd backend && npm run test:coverage
 cd backend && npx vitest run __tests__/unit/tokenAccounting.test.js
 ```
 
-### Adding New Tests
 
-1. Create file in `backend/__tests__/unit/` or `backend/__tests__/integration/`
-2. Use vitest globals (`describe`, `it`, `expect`, `vi`) — no imports needed
-3. Mock external deps with `vi.mock()` at the top of the file
-4. Run `npm test` to verify
-
-### Known Limitations
-
-- **Full toolLoop integration tests** require mocking both `dispatchToAI` and `processToolCall` simultaneously, which conflicts with the global Supabase mock in `setup.js`. These paths are covered by the manual regression checklist and the Tier 1 unit tests for `toolProcessor`.
-- **WEB_SEARCH integration test** makes a real HTTP call to DuckDuckGo (takes ~1s). Consider mocking `searchWeb` if this becomes flaky in CI.
 
 ## Real Integration Tests (Live API/DB)
 
 ### Overview
 
-A separate test suite that uses your **actual `.env`** file to test against real Supabase, AI providers, and the running backend. These tests verify that your configuration works end-to-end.
+A separate test suite that uses your **actual `.env`** file to test against real Supabase, AI providers, and the running backend. These tests verify that your configuration works end-to-end. **No mocks** — every test hits real infrastructure.
 
 **⚠️ WARNING: These tests consume real API tokens and may incur costs!**
 
@@ -281,31 +265,24 @@ cd backend && npm run test:real
 ```
 backend/__tests__/integration-real/
 ├── setup.js               # Loads .env for real API keys
-├── supabase.test.js       # Real Supabase queries (8 tests)
+├── supabase.test.js       # Real Supabase queries (7 tests)
 ├── ai-providers.test.js   # Real AI provider calls (10 tests)
-└── chat-api.test.js       # Real HTTP chat endpoints (5 tests)
+├── chat-api.test.js       # Real HTTP chat endpoints (4 tests)
+├── sanitize.test.js       # Real sanitizeInput + sanitizeBody middleware (11 tests)
+└── toolLoop.test.js       # Real toolLoop with Gemini dispatch (2 tests)
 ```
 
 ### What Each Test Verifies
 
 | File | Tests | What's covered |
 |---|---|---|
-| `supabase.test.js` | 8 | Connection, users/topics/messages/cache/analytics table queries, RPC calls, health endpoint |
+| `supabase.test.js` | 7 | Connection, users/topics/messages/cache/analytics table queries, RPC calls, health endpoint |
 | `ai-providers.test.js` | 10 | Gemini Flash/Pro, Groq Mixtral/Llama, Mistral Small/Medium, DeepSeek V4 Flash/Pro, OpenAI, OpenRouter |
-| `chat-api.test.js` | 5 | GET /health, GET /models, anonymous POST /stream, POST /stream (SSE), provider catalog |
+| `chat-api.test.js` | 4 | GET /health, GET /models, anonymous POST /stream, POST /stream (SSE) |
+| `sanitize.test.js` | 11 | `sanitizeInput` HTML stripping, entities, whitespace, edge cases + `sanitizeBody` middleware |
+| `toolLoop.test.js` | 2 | Real Gemini single-round dispatch, abort error propagation |
 
-### Last Test Run Results (2026-05-27)
 
-| Suite | Result | Details |
-|---|---|---|
-| **Supabase** | ✅ 8/8 passed | All tables accessible, RPC working |
-| **AI Providers** | ⚠️ 8/10 passed | Gemini Flash, Groq (both), Mistral (both), DeepSeek (both), OpenRouter — all working. Gemini Pro: quota exceeded. OpenAI: invalid API key. |
-| **Chat API** | ✅ 5/5 passed | Health, models (15), SSE streaming, OpenRouter catalog (355 models), anonymous stream — all working. |
-| **Total** | **22/23 (96%)** | 1 failure is config issue (Gemini Pro quota, OpenAI key) |
-
-### Skipped Tests
-
-Tests for providers without API keys are automatically skipped. For example, if `ANTHROPIC_API_KEY` is not set, Claude tests will show as `SKIPPED`.
 
 ### Running Specific Real Tests
 

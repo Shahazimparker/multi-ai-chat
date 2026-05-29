@@ -12,11 +12,6 @@ declare module 'axios' {
   export = axios;
 }
 
-declare module 'crypto' {
-  const crypto: any;
-  export = crypto;
-}
-
 declare module '@google/generative-ai' {
   export class GoogleGenerativeAI {
     constructor(apiKey: string);
