@@ -11,9 +11,18 @@ const { tokenCheck } = require('../middleware/tokenCheck');
 const { sanitizeBody } = require('../middleware/sanitize');
 const { MODELS } = require('../config/models');
 const { getProviderModels } = require('../services/modelCatalog.service');
-const { classifyError } = require('../services/chat.service');
+const { classifyError } = require('../services/chatCleanup.service');
 const { CANONICAL_CHAT_PIPELINE_FLAGS, runChatPipeline } = require('../services/chatPipeline.service');
 
+const getCookieValue = (cookieHeader, key) => {
+  if (!cookieHeader) return null;
+  const parts = String(cookieHeader).split(';');
+  for (const part of parts) {
+    const [rawKey, ...rest] = part.trim().split('=');
+    if (rawKey === key) return decodeURIComponent(rest.join('='));
+  }
+  return null;
+};
 
 // Rate limit: 30 requests/minute per IP
 const chatLimiter = rateLimit({
@@ -25,12 +34,14 @@ const chatLimiter = rateLimit({
 // Optional auth middleware (allows anonymous)
 const optionalAuth = async (req, res, next) => {
   const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) return next(); // anonymous
+  const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+  const cookieToken = getCookieValue(req.headers.cookie, 'auth_token');
+  const token = bearerToken || cookieToken;
+  if (!token) return next();
 
   try {
     const jwt = require('jsonwebtoken');
     const supabase = require('../config/supabase');
-    const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     const { data: user } = await supabase
@@ -116,7 +127,6 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Access-Control-Allow-Origin', '*');
   res.write('data: {"status": "connected"}\n\n');
 
   // ── Run the shared pipeline ────────────────────────────────

@@ -14,11 +14,13 @@ const OpenAIClient = /** @type {any} */ (OpenAI?.default || OpenAI);
  *  modelName: string,
  *  messages: Array,
  *  system?: any,
+ *  tools?: Array,
+ *  toolChoice?: string|object,
  *  signal?: AbortSignal|null
  * }} options
- * @returns {Promise<{text: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number}>}
+ * @returns {Promise<{text: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number, toolCalls: Array}>}
  */
-const callOpenAICompatible = async ({ baseURL, apiKey, modelName, messages, system, signal }) => {
+const callOpenAICompatible = async ({ baseURL, apiKey, modelName, messages, system, tools, toolChoice, signal }) => {
   const client = new OpenAIClient({
     apiKey,
     baseURL,
@@ -37,14 +39,20 @@ const callOpenAICompatible = async ({ baseURL, apiKey, modelName, messages, syst
       ? system
       : system;
   }
+  if (Array.isArray(tools) && tools.length > 0) {
+    requestBody.tools = tools;
+    requestBody.tool_choice = toolChoice || 'auto';
+  }
 
   const response = await client.chat.completions.create(requestBody, { signal });
+  const assistantMessage = response.choices?.[0]?.message || {};
 
   return {
-    text: response.choices[0].message.content,
-    tokensUsed: response.usage.prompt_tokens + response.usage.completion_tokens,
+    text: assistantMessage.content || '',
+    tokensUsed: (response.usage?.prompt_tokens || 0) + (response.usage?.completion_tokens || 0),
     cacheCreationTokens: response.usage.cache_creation_input_tokens || 0,
     cacheReadTokens: response.usage.cache_read_input_tokens || 0,
+    toolCalls: assistantMessage.tool_calls || [],
   };
 };
 
@@ -58,12 +66,14 @@ const callOpenAICompatible = async ({ baseURL, apiKey, modelName, messages, syst
  *  modelName: string,
  *  messages: Array,
  *  system?: any,
+ *  tools?: Array,
+ *  toolChoice?: string|object,
  *  signal?: AbortSignal|null,
  *  onChunk: (text: string) => void
  * }} options
- * @returns {Promise<{text: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number}>}
+ * @returns {Promise<{text: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number, toolCalls: Array}>}
  */
-const callOpenAICompatibleStream = async ({ baseURL, apiKey, modelName, messages, system, signal, onChunk }) => {
+const callOpenAICompatibleStream = async ({ baseURL, apiKey, modelName, messages, system, tools, toolChoice, signal, onChunk }) => {
   const client = new OpenAIClient({
     apiKey,
     baseURL,
@@ -82,6 +92,10 @@ const callOpenAICompatibleStream = async ({ baseURL, apiKey, modelName, messages
       ? system
       : system;
   }
+  if (Array.isArray(tools) && tools.length > 0) {
+    requestBody.tools = tools;
+    requestBody.tool_choice = toolChoice || 'auto';
+  }
 
   const stream = await client.chat.completions.create(requestBody, { signal });
 
@@ -90,12 +104,35 @@ const callOpenAICompatibleStream = async ({ baseURL, apiKey, modelName, messages
   let completionTokens = 0;
   let cacheCreationTokens = 0;
   let cacheReadTokens = 0;
+  const toolCallsMap = new Map();
 
   for await (const chunk of stream) {
-    const delta = chunk.choices?.[0]?.delta?.content;
+    const deltaObj = chunk.choices?.[0]?.delta || {};
+    const delta = deltaObj.content;
     if (delta) {
       fullText += delta;
       if (onChunk) onChunk(delta);
+    }
+    if (Array.isArray(deltaObj.tool_calls)) {
+      for (const tc of deltaObj.tool_calls) {
+        const idx = Number.isInteger(tc?.index) ? tc.index : 0;
+        if (!toolCallsMap.has(idx)) {
+          toolCallsMap.set(idx, {
+            id: tc?.id,
+            type: tc?.type || 'function',
+            function: {
+              name: tc?.function?.name || '',
+              arguments: '',
+            },
+          });
+        }
+        const curr = toolCallsMap.get(idx);
+        if (tc?.id) curr.id = tc.id;
+        if (tc?.function?.name) curr.function.name = tc.function.name;
+        if (typeof tc?.function?.arguments === 'string') {
+          curr.function.arguments += tc.function.arguments;
+        }
+      }
     }
 
     // Capture usage from the final chunk (x-usage or usage)
@@ -114,11 +151,13 @@ const callOpenAICompatibleStream = async ({ baseURL, apiKey, modelName, messages
     }
   }
 
+  const toolCalls = Array.from(toolCallsMap.values());
   return {
     text: fullText,
     tokensUsed: promptTokens + completionTokens,
     cacheCreationTokens,
     cacheReadTokens,
+    toolCalls,
   };
 };
 

@@ -96,8 +96,6 @@ Required:
 Common optional values:
 
 - `SENTRY_DSN`
-- `BIZ_SUPABASE_URL`
-- `BIZ_SUPABASE_SERVICE_KEY`
 - `GEMINI_API_KEY`
 - `GROQ_API_KEY`
 - `MISTRAL_API_KEY`

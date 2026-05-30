@@ -62,6 +62,18 @@ describe('processToolCall', () => {
   // Run manually if needed with: npx vitest run --tag=api-costly
 
   describe('GENERATE_PPT handler', () => {
+    it('handles generate_ppt function-call with invalid args', async () => {
+      const result = await processToolCall({
+        ...baseArgs,
+        reply: '',
+        aiResponse: {
+          toolCalls: [{ type: 'function', function: { name: 'generate_ppt', arguments: '{bad json' } }],
+        },
+      });
+      expect(result.handled).toBe(true);
+      expect(result.newMessages[1].content).toContain('Invalid function-call arguments');
+    });
+
     it('generates PPT and returns generatedMedia', async () => {
       const pptJson = JSON.stringify({
         title: 'Test Presentation',

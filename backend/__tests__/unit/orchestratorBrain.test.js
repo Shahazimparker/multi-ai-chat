@@ -1,3 +1,10 @@
+vi.mock('../../services/ai/dispatcher.service', () => ({
+  dispatchToAI: vi.fn(async () => ({
+    text: '{"final_answer":"ok"}',
+    tokensUsed: 7,
+  })),
+}));
+
 const { runOrchestratorBrain } = require('../../services/orchestratorBrain.service');
 const { MODELS } = require('../../config/models');
 

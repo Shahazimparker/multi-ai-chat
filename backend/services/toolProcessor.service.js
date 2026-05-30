@@ -43,9 +43,32 @@ const findGenerateChartMatch = (reply) => reply.match(/\[GENERATE_CHART\]([\s\S]
 const findGenerateHTMLMatch = (reply) => reply.match(/\[GENERATE_HTML\]([\s\S]*?)\[\/GENERATE_HTML\]/i);
 const findGenerateJSONMatch = (reply) => reply.match(/\[GENERATE_JSON\]([\s\S]*?)\[\/GENERATE_JSON\]/i);
 const findGenerateMDMatch = (reply) => reply.match(/\[GENERATE_MD\]([\s\S]*?)\[\/GENERATE_MD\]/i);
+const EXECUTE_CODE_ENABLED = String(process.env.ENABLE_EXECUTE_CODE || '').toLowerCase() === 'true';
+
+const runPPTGeneration = async ({ parsed, reply = '', user, topicId, onStatus, consumedText = '' }) => {
+  onStatus?.({ type: 'status', tool: 'ppt_gen', message: 'Generating PowerPoint presentation...' });
+  console.log('[Tool] PPT generation requested');
+  const title = parsed?.title || 'Presentation';
+  const slides = Array.isArray(parsed?.slides) ? parsed.slides : [];
+  if (slides.length === 0) throw new Error('No slides provided in PPT request.');
+
+  const theme = parsed?.theme || parsed?.style || 'modern_corporate';
+  const fileResult = await generatePPT(title, slides, user?.id, topicId, { subtitle: parsed?.subtitle, theme });
+  const resultBlock = `[PPT GENERATION RESULT]\nPresentation successfully created.\nTitle: ${title}\nTheme: ${theme}\nSlides: ${slides.length}\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END PPT GENERATION RESULT]\n\nTell the user the presentation is ready to download and give a brief summary of what was included.`;
+  return {
+    handled: true,
+    generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'pptx' }],
+    newMessages: [
+      { role: 'assistant', content: (consumedText ? reply.replace(consumedText, '').trim() : reply.trim()) || '[Generating PowerPoint]' },
+      { role: 'user', content: resultBlock },
+    ],
+    embedTokens: 0,
+  };
+};
 
 const processToolCall = async ({
   reply,
+  aiResponse,
   aiMessages,
   user,
   topicId,
@@ -132,6 +155,19 @@ const processToolCall = async ({
 
   const executeCodeMatch = findExecuteCodeMatch(reply);
   if (executeCodeMatch) {
+    if (!EXECUTE_CODE_ENABLED || !user?.id) {
+      const disabledMessage = !EXECUTE_CODE_ENABLED
+        ? 'Code execution is disabled by server policy.'
+        : 'Code execution requires authenticated access.';
+      return {
+        handled: true,
+        newMessages: [
+          { role: 'assistant', content: reply.replace(executeCodeMatch[0], '').trim() || '[Code execution blocked]' },
+          { role: 'user', content: `[CODE EXECUTION RESULT]\n${disabledMessage}\n[END CODE EXECUTION RESULT]` },
+        ],
+        embedTokens: 0,
+      };
+    }
     const code = executeCodeMatch[1].trim();
     const result = await executeCode(code);
     const resultBlock = `[CODE EXECUTION RESULT]\n\`\`\`\n${result}\n\`\`\`\n[END CODE EXECUTION RESULT]\n\nNow answer the user's question based on this result.`;
@@ -180,33 +216,45 @@ const processToolCall = async ({
   }
 
   // ── GENERATE_PPT handler ──────────────────────────────────
+  const toolCalls = Array.isArray(aiResponse?.toolCalls) ? aiResponse.toolCalls : [];
+  const pptToolCall = toolCalls.find((tc) => tc?.type === 'function' && tc?.function?.name === 'generate_ppt');
+  if (pptToolCall) {
+    try {
+      const parsed = JSON.parse(String(pptToolCall.function.arguments || '{}'));
+      return await runPPTGeneration({ parsed, reply, user, topicId, onStatus });
+    } catch (err) {
+      console.error('[Tool] PPT generation failed:', err.message);
+      const errBlock = `[PPT GENERATION RESULT]\nFailed to generate presentation: Invalid function-call arguments for generate_ppt.\n[END PPT GENERATION RESULT]`;
+      return {
+        handled: true,
+        generatedMedia: [],
+        newMessages: [
+          { role: 'assistant', content: reply.trim() || '[Generating PPT]' },
+          { role: 'user', content: errBlock },
+        ],
+        embedTokens: 0,
+      };
+    }
+  }
+
   const generatePPTMatch = findGeneratePPTMatch(reply);
   if (generatePPTMatch) {
     const jsonBody = generatePPTMatch[1].trim();
-    onStatus?.({ type: 'status', tool: 'ppt_gen', message: 'Generating PowerPoint presentation...' });
-    console.log('[Tool] PPT generation requested');
     try {
       let parsed;
       try {
         parsed = JSON.parse(jsonBody);
       } catch {
-        throw new Error('Invalid PPT JSON structure — could not parse slides.');
+        throw new Error('Invalid PPT JSON structure - could not parse slides.');
       }
-      const title = parsed.title || 'Presentation';
-      const slides = Array.isArray(parsed.slides) ? parsed.slides : [];
-      if (slides.length === 0) throw new Error('No slides provided in PPT request.');
-
-      const fileResult = await generatePPT(title, slides, user?.id, topicId, { subtitle: parsed.subtitle });
-      const resultBlock = `[PPT GENERATION RESULT]\nPresentation successfully created.\nTitle: ${title}\nSlides: ${slides.length}\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END PPT GENERATION RESULT]\n\nTell the user the presentation is ready to download and give a brief summary of what was included.`;
-      return {
-        handled: true,
-        generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'pptx' }],
-        newMessages: [
-          { role: 'assistant', content: reply.replace(generatePPTMatch[0], '').trim() || '[Generating PowerPoint]' },
-          { role: 'user', content: resultBlock },
-        ],
-        embedTokens: 0,
-      };
+      return await runPPTGeneration({
+        parsed,
+        reply,
+        user,
+        topicId,
+        onStatus,
+        consumedText: generatePPTMatch[0],
+      });
     } catch (err) {
       console.error('[Tool] PPT generation failed:', err.message);
       const errBlock = `[PPT GENERATION RESULT]\nFailed to generate presentation: ${err.message}\n[END PPT GENERATION RESULT]`;
@@ -222,7 +270,6 @@ const processToolCall = async ({
     }
   }
 
-  // ── GENERATE_PDF handler ──────────────────────────────────
   const generatePDFMatch = findGeneratePDFMatch(reply);
   if (generatePDFMatch) {
     const jsonBody = generatePDFMatch[1].trim();

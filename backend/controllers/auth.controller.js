@@ -7,6 +7,9 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const supabase = require('../config/supabase');
+const AUTH_COOKIE_NAME = 'auth_token';
+
+const parseRememberMe = (value) => value === true || value === 'true' || value === 1 || value === '1';
 
 // ── Per-account failed-attempt tracking (complements IP rate limiter) ──
 const failMap = new Map();             // username → { count, lockedUntil }
@@ -109,7 +112,7 @@ setInterval(() => {
  */
 const login = async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password, rememberMe } = req.body;
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password required' });
     }
@@ -164,9 +167,17 @@ const login = async (req, res) => {
     const { generateCsrfToken } = require('../middleware/csrf');
     const csrfToken = generateCsrfToken();
 
-    // Return user info (no sensitive fields)
+    const maxAgeMs = (user.session_minutes || 60) * 60 * 1000;
+    const isProduction = process.env.NODE_ENV === 'production';
+    res.cookie(AUTH_COOKIE_NAME, token, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'lax',
+      maxAge: parseRememberMe(rememberMe) ? maxAgeMs : undefined,
+      path: '/',
+    });
+
     res.json({
-      token,
       csrfToken,
       user: {
         id: user.id,
@@ -203,6 +214,13 @@ const getMe = async (req, res) => {
  * POST /api/auth/logout — client should discard JWT; we just confirm
  */
 const logout = (req, res) => {
+  const isProduction = process.env.NODE_ENV === 'production';
+  res.clearCookie(AUTH_COOKIE_NAME, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: 'lax',
+    path: '/',
+  });
   res.json({ message: 'Logged out successfully' });
 };
 

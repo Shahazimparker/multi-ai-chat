@@ -15,6 +15,7 @@ const { createParser } = require('./outputParser.service');
 const { getGlobalRegistry } = require('./promptTemplate.service');
 const { createRetriever } = require('./retriever.service');
 const { createVectorStore } = require('./vectorStore.service');
+const { dispatchToAI } = require('./ai/dispatcher.service');
 
 const hashTextToVector = (text, dims = 32) => {
   const vector = new Array(dims).fill(0);
@@ -28,13 +29,14 @@ const hashTextToVector = (text, dims = 32) => {
 const makeDispatcher = (effectiveModelConfig, abortController) => ({
   async dispatch({ messages }) {
     if (abortController?.signal?.aborted) throw { name: 'AbortError' };
-    const userMessage = [...(messages || [])].reverse().find((m) => m.role === 'user')?.content || '';
+    const dispatchResult = await dispatchToAI(effectiveModelConfig, messages || [], abortController?.signal || null);
     return {
-      text: JSON.stringify({
-        final_answer: `Prepared runtime plan for: ${String(userMessage).slice(0, 240)}`,
-      }),
-      content: JSON.stringify({ final_answer: String(userMessage).slice(0, 240) }),
-      usage: { input_tokens: 0, output_tokens: 0 },
+      text: dispatchResult?.text || '',
+      content: dispatchResult?.text || '',
+      usage: {
+        input_tokens: 0,
+        output_tokens: dispatchResult?.tokensUsed || 0,
+      },
       model: effectiveModelConfig?.model,
     };
   },

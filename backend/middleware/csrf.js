@@ -14,19 +14,10 @@ const TOKEN_REGEX = /^[a-zA-Z0-9_\-]{8,128}$/;
  */
 const generateCsrfToken = () => crypto.randomBytes(32).toString('hex');
 
-/**
- * Check if request is from a localhost / dev origin (skip CSRF)
- */
-const isLocalOrigin = (req) => {
-  const origin = req.headers.origin || req.headers.referer || '';
-  return (
-    origin.startsWith('http://localhost') ||
-    origin.startsWith('http://127.0.0.1') ||
-    origin.startsWith('http://[::1]') ||
-    origin.startsWith('http://192.168.') ||
-    origin.startsWith('http://10.') ||
-    origin.startsWith('http://172.')
-  );
+const hasAuthCredential = (req) => {
+  const authHeader = req.headers.authorization;
+  const cookie = req.headers.cookie || '';
+  return Boolean(authHeader?.startsWith('Bearer ') || /(?:^|;\s*)auth_token=/.test(cookie));
 };
 
 /**
@@ -37,16 +28,13 @@ const csrfProtection = (req, res, next) => {
   const mutatingMethods = ['POST', 'PUT', 'DELETE', 'PATCH'];
   if (!mutatingMethods.includes(req.method)) return next();
 
-  // Skip CSRF for localhost / dev origins (HTTP allowed)
-  if (isLocalOrigin(req)) {
-    return next();
-  }
-
-  // Also skip for health checks, auth routes, and public stream endpoint
+  // Skip only known public routes
   if (req.path === '/api/health') return next();
   if (req.path === '/api/auth/login') return next();
-  if (req.path === '/api/chat/message') return next();
-  if (req.path === '/api/chat/stream') return next();
+
+  // Require CSRF only for authenticated mutating requests.
+  // Anonymous requests (no auth header/cookie) are not CSRF-relevant.
+  if (!hasAuthCredential(req)) return next();
 
   const csrfToken = req.headers['x-csrf-token'];
 

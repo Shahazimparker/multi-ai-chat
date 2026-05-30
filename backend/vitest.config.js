@@ -10,6 +10,7 @@ module.exports = defineConfig({
     coverage: {
       provider: 'v8',
       include: [
+        'services/chatPipeline.service.js',
         'services/tokenAccounting.service.js',
         'services/chatCleanup.service.js',
         'services/compress.service.js',

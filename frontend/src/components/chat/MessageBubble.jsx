@@ -80,15 +80,13 @@ const FileCard = ({ file, onDownload }) => {
   React.useEffect(() => {
     if (!expanded || !file.file_id) return;
     if (isImage && !imageUrl) {
-      const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
-      fetch(`/api/upload/download/${file.file_id}`, { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`/api/upload/download/${file.file_id}`, { credentials: 'include' })
         .then(res => res.ok ? res.blob() : Promise.reject())
         .then(blob => setImageUrl(URL.createObjectURL(blob)))
         .catch(() => setImageUrl(null));
     }
     if (!isImage && !file.content && !fetchedContent) {
-      const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
-      fetch(`/api/upload/preview/${file.file_id}`, { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`/api/upload/preview/${file.file_id}`, { credentials: 'include' })
         .then(res => res.ok ? res.json() : Promise.reject())
         .then(data => setFetchedContent(data.content || ''))
         .catch(() => setFetchedContent('[Preview unavailable]'));
@@ -263,9 +261,8 @@ const MessageBubble = ({ message, onSidebarRefresh }) => {
             : { file_name: fileName, file_type: lang, content: codeText };
           const handleDownload = (f) => {
             if (f.file_id) {
-              const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
               fetch(`/api/upload/download/${f.file_id}`, {
-                headers: { Authorization: `Bearer ${token}` },
+                credentials: 'include',
               })
                 .then(res => {
                   if (!res.ok) return Promise.reject();
@@ -315,10 +312,9 @@ const MessageBubble = ({ message, onSidebarRefresh }) => {
 
   // Download helper for generated files
   const handleFileDownload = async (f) => {
-    const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
     try {
       const res = await fetch(`/api/upload/download/${f.file_id}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
       });
       if (!res.ok) return alert('Download failed');
       const blob = await res.blob();

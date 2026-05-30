@@ -9,6 +9,7 @@ const express  = require('express');
 const cors     = require('cors');
 const helmet   = require('helmet');
 const morgan   = require('morgan');
+const { csrfProtection } = require('./middleware/csrf');
 
 // ── Sentry configuration ──
 const { initSentry, sentryRequestHandler, sentryTracingHandler, sentryErrorHandler, Sentry } = require('./config/sentry');
@@ -94,6 +95,7 @@ app.use(cors({
 
 // ── Handle OPTIONS preflight explicitly (required by Vercel serverless) ──
 app.options('*', (req, res) => res.sendStatus(204));
+app.use(csrfProtection);
 
 // ── Health check (used by Vercel / uptime monitors) ────────
 app.get('/api/health', (req, res) => {

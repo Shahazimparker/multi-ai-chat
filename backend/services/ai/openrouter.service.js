@@ -5,6 +5,41 @@
 
 const { callOpenAICompatible, callOpenAICompatibleStream } = require('./unified.service');
 
+const OPENROUTER_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'generate_ppt',
+      description: 'Generate a PowerPoint presentation from structured slide data.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          subtitle: { type: 'string' },
+          theme: { type: 'string', enum: ['modern_corporate', 'startup_bold', 'clean_minimal'] },
+          style: { type: 'string', enum: ['modern_corporate', 'startup_bold', 'clean_minimal'] },
+          slides: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                title: { type: 'string' },
+                layout: { type: 'string', enum: ['title_bullets', 'two_column', 'cards', 'quote', 'data_story'] },
+                subtitle: { type: 'string' },
+                footerNote: { type: 'string' },
+                bullets: { type: 'array', items: { type: 'string' } },
+                content: { type: 'string' },
+              },
+              required: ['title'],
+            },
+          },
+        },
+        required: ['title', 'slides'],
+      },
+    },
+  },
+];
+
 /**
  * Shared helper to build base config (used by both streaming and non-streaming)
  */
@@ -20,6 +55,8 @@ function buildOpenRouterConfig(modelName, apiKey, messages, signal) {
     modelName,
     messages: chatMessages,
     signal,
+    tools: OPENROUTER_TOOLS,
+    toolChoice: 'auto',
   };
 
   if (systemMessages.length > 0) {
@@ -56,6 +93,7 @@ const callOpenRouter = async (modelName, apiKey, messages, signal = null) => {
     tokensUsed: response.tokensUsed,
     cacheCreationTokens: response.cacheCreationTokens || 0,
     cacheReadTokens: response.cacheReadTokens || 0,
+    toolCalls: response.toolCalls || [],
   };
 };
 
@@ -77,6 +115,7 @@ const callOpenRouterStream = async (modelName, apiKey, messages, signal = null, 
     tokensUsed: response.tokensUsed,
     cacheCreationTokens: response.cacheCreationTokens || 0,
     cacheReadTokens: response.cacheReadTokens || 0,
+    toolCalls: response.toolCalls || [],
   };
 };
 

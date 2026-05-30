@@ -1,6 +1,5 @@
 const { dispatchToAI, dispatchToAIStream } = require('./ai/dispatcher.service');
 const { estimateMessagesTokens, estimateTokens } = require('./tokenBudget.service');
-const { isPlaceholderOnly } = require('./chatCleanup.service');
 const { processToolCall } = require('./toolProcessor.service');
 
 const runToolLoop = async ({
@@ -18,7 +17,21 @@ const runToolLoop = async ({
   onNoToolCall = null,
   onStreamChunk = null,
 }) => {
+  const emitStatus = (payload) => {
+    if (typeof processToolCallArgs?.onStatus === 'function') {
+      processToolCallArgs.onStatus(payload);
+    }
+  };
+
+  const streamBufferedReplyAsTokens = (chunks, emitChunk) => {
+    const fullText = chunks.join('');
+    if (!fullText) return;
+    const tokenLikeParts = fullText.match(/\S+\s*|\s+/g) || [fullText];
+    for (const part of tokenLikeParts) emitChunk(part);
+  };
+
   let reply;
+  let aiResponse = null;
   let tokensUsed = 0;
   let totalAITokens = 0;
   let totalEmbeddingTokens = 0;
@@ -45,10 +58,13 @@ const runToolLoop = async ({
 
   for (let round = 0; round < maxToolRounds; round++) {
     console.log(`[${loggerPrefix}] Round ${round}/${maxToolRounds}`);
+    emitStatus({
+      type: 'status',
+      tool: 'tool_loop',
+      message: round === 0 ? 'Thinking...' : 'Continuing with tool results...',
+    });
     if (onBeforeDispatch) await onBeforeDispatch({ round });
 
-    // ── Use streaming dispatch when onStreamChunk is provided ──
-    // Buffer chunks during streaming; only forward on final round (no tool call).
     let streamedChunks = [];
 
     if (onStreamChunk) {
@@ -58,6 +74,7 @@ const runToolLoop = async ({
         abortController.signal,
         (chunk) => { streamedChunks.push(chunk); }
       );
+      aiResponse = streamResult;
       reply = streamResult.text;
       tokensUsed = streamResult.tokensUsed;
       cacheCreationTokens += streamResult.cacheCreationTokens || 0;
@@ -65,6 +82,7 @@ const runToolLoop = async ({
       totalAITokens += tokensUsed || 0;
     } else {
       const result = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
+      aiResponse = result;
       reply = result.text;
       tokensUsed = result.tokensUsed;
       cacheCreationTokens += result.cacheCreationTokens || 0;
@@ -84,12 +102,17 @@ const runToolLoop = async ({
     const toolResult = await processToolCall({
       ...processToolCallArgs,
       reply,
+      aiResponse,
       aiMessages,
     });
 
     if (toolResult.handled) {
-      // Tool call detected — discard streamed chunks (they contained tool syntax)
       streamedChunks = [];
+      emitStatus({
+        type: 'status',
+        tool: 'tool_loop',
+        message: 'Using tool and preparing response...',
+      });
       aiMessages.push(...toolResult.newMessages);
       totalEmbeddingTokens += toolResult.embedTokens || 0;
       if (toolResult.generatedMedia?.length) generatedMedia.push(...toolResult.generatedMedia);
@@ -106,12 +129,8 @@ const runToolLoop = async ({
       continue;
     }
 
-    // ── No tool call → this is the final round ──
-    // Forward any buffered stream chunks to the client
     if (onStreamChunk && streamedChunks.length > 0) {
-      for (const chunk of streamedChunks) {
-        onStreamChunk(chunk);
-      }
+      streamBufferedReplyAsTokens(streamedChunks, onStreamChunk);
     }
 
     if (onNoToolCall) {

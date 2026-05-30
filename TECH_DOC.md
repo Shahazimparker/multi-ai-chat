@@ -194,7 +194,6 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
   - `database/migration_add_message_embeddings.sql`
   - `database/migration_add_locked_until.sql`
   - `database/migration_delete_topic_cascade.sql`
-  - `database/business_supabase_functions.sql`
   - ERP sample/schema assets under `database/`
 
 > **Note:** `schema.sql` and `schema_export.sql` differ on `uploaded_files_rag.topic_id`: the local schema says `ON DELETE SET NULL`; the actual deployed constraint is `ON DELETE CASCADE`. Always check `schema_export.sql` for live FK behavior.
@@ -226,7 +225,8 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
 | `chat.service.js` | PII leak: web search query content removed from logs; only query length logged |
 | `server.js` | CORS bypass: `startsWith` replaced with exact `includes` match to prevent subdomain spoofing |
 | `sanitize.js` | Whitespace collapse removed: newlines/indentation preserved for code and markdown in chat messages |
-| `server.js` | CSRF middleware removed: auth uses `Authorization: Bearer` (not cookies), CSRF not exploitable |
+| `server.js` + `csrf.js` | CSRF middleware enabled globally for mutating authenticated requests; private-network origin bypass removed |
+| `auth.controller.js` + `auth.js` | Auth moved to `httpOnly` cookie (`auth_token`) with optional bearer fallback for compatibility |
 | `tokenCheck.js` | Anonymous token cap: anonymous users now get `ANONYMOUS_TOKEN_LIMIT` (default 10000) instead of unlimited spend |
 
 ### Performance Improvements
@@ -253,8 +253,6 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
 ### Backend optional/common
 
 - `SENTRY_DSN`
-- `BIZ_SUPABASE_URL`
-- `BIZ_SUPABASE_SERVICE_KEY`
 - `ANONYMOUS_TOKEN_LIMIT` — token cap for anonymous users (default: 10000)
 - Provider API keys used by configured or optional provider modules
 

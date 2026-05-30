@@ -9,6 +9,7 @@ export interface ToolCallResult {
   handled: boolean;
   newMessages?: ChatMessage[];
   embedTokens?: number;
+  generatedMedia?: Array<{ file_id: string; file_name: string; file_type: string }>;
 }
 
 export interface ToolLoopResult {
@@ -20,7 +21,7 @@ export interface ToolLoopResult {
   cacheCreationTokens?: number;
   cacheReadTokens?: number;
   finalReply: string;
-  generatedMedia?: Array<{ type: string; url: string; name: string }>;
+  generatedMedia?: Array<{ file_id: string; file_name: string; file_type: string }>;
 }
 
 export interface BillableTokenInput {
@@ -79,7 +80,7 @@ export interface ChatPipelineResult {
   cacheCreationTokens: number;
   cacheReadTokens: number;
   cacheHit: boolean;
-  generatedMediaFiles: Array<{ type: string; url: string; name: string }>;
+  generatedMediaFiles: Array<{ file_id: string; file_name: string; file_type: string }>;
   resolvedTopicId: string | null;
   persistError: Error | null;
   estimatedInputTokens: number;
@@ -120,6 +121,7 @@ export interface ChatPipelineOptions {
   historyTokenBudget?: number;
   cacheResponse?: boolean;
   postSaveEmbedding?: boolean;
+  enableOrchestratorBrain?: boolean;
 
   // callbacks
   onStreamChunk?: OnChunkCallback;

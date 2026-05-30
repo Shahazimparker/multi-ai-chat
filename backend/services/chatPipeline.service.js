@@ -30,12 +30,9 @@ const { runOrchestratorBrain } = require('./orchestratorBrain.service');
 const { listUserFiles } = require('./fileUpload.service');
 const { logAnalytics } = require('./analytics.service');
 const { calculateBillableTokens } = require('./tokenAccounting.service');
-const {
-  buildFileContext,
-  runToolLoop,
-  stripToolTags,
-  classifyError,
-} = require('./chat.service');
+const { buildFileContext } = require('./toolProcessor.service');
+const { runToolLoop } = require('./toolLoop.service');
+const { stripToolTags, classifyError } = require('./chatCleanup.service');
 const {
   createPromptBudget,
   createDynamicPromptBudget,
@@ -112,6 +109,36 @@ const CANONICAL_CHAT_PIPELINE_FLAGS = Object.freeze({
   memoryEnabled: true,
   cacheResponse: true,
   postSaveEmbedding: true,
+  enableOrchestratorBrain: false,
+});
+const EXECUTE_CODE_ENABLED = String(process.env.ENABLE_EXECUTE_CODE || '').toLowerCase() === 'true';
+
+const makePipelineResult = (overrides = {}) => ({
+  finalReply: '',
+  billableTokens: 0,
+  totalAITokens: 0,
+  totalEmbeddingTokens: 0,
+  orchestratorBrain: null,
+  queryCacheHit: false,
+  cacheCreationTokens: 0,
+  cacheReadTokens: 0,
+  cacheHit: false,
+  generatedMediaFiles: [],
+  resolvedTopicId: null,
+  persistError: null,
+  estimatedInputTokens: 0,
+  compressTokens: 0,
+  historySummaryTokens: 0,
+  modelConfig: null,
+  effectiveModelConfig: null,
+  isIdentityQuestion: false,
+  savedUserMessageId: null,
+  savedAssistantMessageId: null,
+  promptTokens: 0,
+  err: null,
+  errorType: null,
+  userMessage: null,
+  ...overrides,
 });
 
 const runChatPipeline = async (opts) => {
@@ -142,6 +169,7 @@ const runChatPipeline = async (opts) => {
     historyTokenBudget,
     cacheResponse = false,
     postSaveEmbedding = false,
+    enableOrchestratorBrain = false,
 
     // callbacks
     onStreamChunk,
@@ -157,11 +185,15 @@ const runChatPipeline = async (opts) => {
       ? { ...modelConfig, model: providerModelId }
       : modelConfig;
     if (!modelConfig) {
-      return { err: new Error(`Unknown model: ${modelId}`), errorType: 'invalid_model', userMessage: `Unknown model: ${modelId}` };
+      return makePipelineResult({
+        err: new Error(`Unknown model: ${modelId}`),
+        errorType: 'invalid_model',
+        userMessage: `Unknown model: ${modelId}`,
+      });
     }
 
     const estimatedInputTokens = estimateTokens(message);
-    const orchestratorBrain = onStreamChunk
+    const orchestratorBrain = (enableOrchestratorBrain && onStreamChunk)
       ? await runOrchestratorBrain({
           modelId,
           providerModelId,
@@ -206,11 +238,15 @@ const runChatPipeline = async (opts) => {
     }
 
     if (perQueryLimitEnabled && user && estimatedInputTokens > user.per_query_limit) {
-      return {
+      return makePipelineResult({
         err: new Error(`Query too long. Max ${user.per_query_limit} tokens per query. Your query is ~${estimatedInputTokens} tokens.`),
         errorType: 'query_too_long',
         userMessage: `Query too long. Max ${user.per_query_limit} tokens per query. Your query is ~${estimatedInputTokens} tokens.`,
-      };
+        estimatedInputTokens,
+        modelConfig,
+        effectiveModelConfig,
+        resolvedTopicId,
+      });
     }
 
     // ── 3. Compress prompt ────────────────────────────────────
@@ -223,32 +259,18 @@ const runChatPipeline = async (opts) => {
     if (exactCacheEnabled && !isIdentityQuestion) {
       const cachedReply = await getCachedResponse(compressedQuery, modelId, user?.id, topicId);
       if (cachedReply) {
-        return {
+        return makePipelineResult({
           finalReply: cachedReply,
           billableTokens: 0,
           cacheHit: true,
-          cacheCreationTokens: 0,
-          cacheReadTokens: 0,
           modelConfig,
           effectiveModelConfig,
           isIdentityQuestion,
           resolvedTopicId,
           estimatedInputTokens,
-          compressTokens: 0,
-          historySummaryTokens: 0,
-          generatedMediaFiles: [],
-          totalAITokens: 0,
-          totalEmbeddingTokens: 0,
           orchestratorBrain,
           queryCacheHit: true,
-          savedUserMessageId: null,
-          savedAssistantMessageId: null,
-          persistError: null,
-          promptTokens: 0,
-          err: null,
-          errorType: null,
-          userMessage: null,
-        };
+        });
       }
     }
 
@@ -276,32 +298,20 @@ const runChatPipeline = async (opts) => {
       {
         const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, CHAT_SEMANTIC_CACHE_THRESHOLD, user?.id, topicId);
         if (semanticCachedReply) {
-          return {
+          return makePipelineResult({
             finalReply: semanticCachedReply,
             billableTokens: 0,
             cacheHit: true,
-            cacheCreationTokens: 0,
-            cacheReadTokens: 0,
             modelConfig,
             effectiveModelConfig,
             isIdentityQuestion,
             resolvedTopicId,
             estimatedInputTokens,
             compressTokens,
-            historySummaryTokens: 0,
-            generatedMediaFiles: [],
-            totalAITokens: 0,
             totalEmbeddingTokens,
             orchestratorBrain,
             queryCacheHit: true,
-            savedUserMessageId: null,
-            savedAssistantMessageId: null,
-            persistError: null,
-            promptTokens: 0,
-            err: null,
-            errorType: null,
-            userMessage: null,
-          };
+          });
         }
       }
     }
@@ -365,7 +375,22 @@ const runChatPipeline = async (opts) => {
 
     // ── 8. Build AI messages ──────────────────────────────────
     const aiMessages = [];
-    const generalToolsDirective = `\n\n## General Tools\nYou have access to the following tools. Output EXACTLY the tags shown — no extra text inside the tags:\n1. Web Search: [WEB_SEARCH:query="your search query"]\n2. Execute JS Code: [EXECUTE_CODE]console.log("hello");[/EXECUTE_CODE]\n3. Generate Image (DALL-E 3): [GENERATE_IMAGE:prompt=detailed image description here]\n   - Use when the user asks you to generate, create, or draw an image/picture/photo\n   - Write the most descriptive prompt possible for best results\n4. Generate PowerPoint: [GENERATE_PPT]{"title":"Presentation Title","subtitle":"Optional subtitle","slides":[{"title":"Slide Title","bullets":["Point 1","Point 2"]},{"title":"Slide 2","content":"Paragraph text for slides without bullets"}]}[/GENERATE_PPT]\n   - Use when the user asks you to create a presentation, slides, or PowerPoint\n   - Include 4-8 content slides. Every slide needs a "title" plus either "bullets" (array) or "content" (string)\nWait for the tool result before continuing your response.`;
+    const allowExecuteCode = EXECUTE_CODE_ENABLED && Boolean(user?.id);
+    const toolLines = [
+      '1. Web Search: [WEB_SEARCH:query="your search query"]',
+      ...(allowExecuteCode ? ['2. Execute JS Code: [EXECUTE_CODE]console.log("hello");[/EXECUTE_CODE]'] : []),
+      `${allowExecuteCode ? '3' : '2'}. Generate Image (DALL-E 3): [GENERATE_IMAGE:prompt=detailed image description here]`,
+      '   - Use when the user asks you to generate, create, or draw an image/picture/photo',
+      '   - Write the most descriptive prompt possible for best results',
+      `${allowExecuteCode ? '4' : '3'}. Generate PowerPoint: [GENERATE_PPT]{"title":"Presentation Title","subtitle":"Optional subtitle","theme":"modern_corporate","slides":[{"title":"Slide Title","layout":"cards","bullets":["Point 1","Point 2","Point 3"]},{"title":"Slide 2","layout":"two_column","bullets":["Left insight"],"content":"Right-side narrative"},{"title":"Slide 3","layout":"quote","content":"Key quote or thesis","subtitle":"Optional attribution"}]}[/GENERATE_PPT]`,
+      '   - Use when the user asks you to create a presentation, slides, or PowerPoint',
+      '   - Include 4-8 content slides with varied layouts for visual quality',
+      '   - Allowed themes: modern_corporate, startup_bold, clean_minimal',
+      '   - Allowed slide layouts: title_bullets, two_column, cards, quote, data_story',
+      '   - Every slide needs a "title" plus either "bullets" (array) or "content" (string)',
+      'Wait for the tool result before continuing your response.',
+    ];
+    const generalToolsDirective = `\n\n## General Tools\nYou have access to the following tools. Output EXACTLY the tags shown — no extra text inside the tags:\n${toolLines.join('\n')}`;
 
     const runtimeIdentity = `MODEL_IDENTITY: ${modelConfig.label} | provider=${effectiveModelConfig.provider} | model=${effectiveModelConfig.model}`;
     const identityDirective = identityCheckEnabled && isIdentityQuestion
@@ -373,18 +398,11 @@ const runChatPipeline = async (opts) => {
       : '';
 
     const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}${generalToolsDirective}`;
-    aiMessages.push({ role: 'system', content: staticSystem });
-
-    // Dynamic system parts
-    if (ragContext) {
-      aiMessages.push({ role: 'system', content: `## Retrieved Context\n${ragContext}` });
-    }
-    if (fileContext) {
-      aiMessages.push({ role: 'system', content: `## File Context\n${fileContext}` });
-    }
-    if (memoryContext) {
-      aiMessages.push({ role: 'system', content: memoryContext });
-    }
+    const systemSections = [staticSystem];
+    if (ragContext) systemSections.push(`## Retrieved Context\n${ragContext}`);
+    if (fileContext) systemSections.push(`## File Context\n${fileContext}`);
+    if (memoryContext) systemSections.push(memoryContext);
+    aiMessages.push({ role: 'system', content: systemSections.join('\n\n') });
 
     // History
     if (historyContext && historyContext.length > 0) {
@@ -405,12 +423,20 @@ const runChatPipeline = async (opts) => {
     const promptTokens = estimateMessagesTokens(aiMessages);
 
     if (perQueryLimitEnabled && user && promptTokens > user.per_query_limit) {
-      return {
+      return makePipelineResult({
         err: new Error(`Query context too large after RAG/history. Max ${user.per_query_limit} tokens per query. Current prompt is ~${promptTokens} tokens.`),
         errorType: 'context_too_large',
         userMessage: `Query context too large after RAG/history. Max ${user.per_query_limit} tokens per query. Current prompt is ~${promptTokens} tokens.`,
         promptTokens,
-      };
+        estimatedInputTokens,
+        compressTokens,
+        historySummaryTokens,
+        modelConfig,
+        effectiveModelConfig,
+        isIdentityQuestion,
+        orchestratorBrain,
+        resolvedTopicId,
+      });
     }
 
     // ── 9. Tool-call loop ─────────────────────────────────────
@@ -563,7 +589,7 @@ const runChatPipeline = async (opts) => {
     });
 
     // ── Return ────────────────────────────────────────────────
-    return {
+    return makePipelineResult({
       finalReply,
       billableTokens,
       totalAITokens,
@@ -585,70 +611,27 @@ const runChatPipeline = async (opts) => {
       savedUserMessageId,
       savedAssistantMessageId,
       promptTokens,
-      err: null,
-      errorType: null,
-      userMessage: null,
-    };
+    });
   } catch (err) {
     // Gracefully handle manual aborts
     if (err.name === 'AbortError' || abortController?.signal?.aborted) {
-      return {
+      return makePipelineResult({
         err,
         errorType: 'aborted',
         userMessage: 'Request aborted',
-        finalReply: '',
-        billableTokens: 0,
-        totalAITokens: 0,
-        totalEmbeddingTokens: 0,
-        orchestratorBrain: null,
-        queryCacheHit: false,
-        cacheCreationTokens: 0,
-        cacheReadTokens: 0,
-        cacheHit: false,
-        generatedMediaFiles: [],
         resolvedTopicId: topicId,
-        persistError: null,
-        estimatedInputTokens: 0,
-        compressTokens: 0,
-        historySummaryTokens: 0,
-        modelConfig: null,
-        effectiveModelConfig: null,
-        isIdentityQuestion: false,
-        savedUserMessageId: null,
-        savedAssistantMessageId: null,
-        promptTokens: 0,
-      };
+      });
     }
 
     console.error('[ChatPipeline] Error:', err.message);
     const { errorType, userMessage } = classifyError(err.message);
 
-    return {
+    return makePipelineResult({
       err,
       errorType,
       userMessage,
-      finalReply: '',
-      billableTokens: 0,
-      totalAITokens: 0,
-      totalEmbeddingTokens: 0,
-      orchestratorBrain: null,
-      queryCacheHit: false,
-      cacheCreationTokens: 0,
-      cacheReadTokens: 0,
-      cacheHit: false,
-      generatedMediaFiles: [],
       resolvedTopicId: topicId,
-      persistError: null,
-      estimatedInputTokens: 0,
-      compressTokens: 0,
-      historySummaryTokens: 0,
-      modelConfig: null,
-      effectiveModelConfig: null,
-      isIdentityQuestion: false,
-      savedUserMessageId: null,
-      savedAssistantMessageId: null,
-      promptTokens: 0,
-    };
+    });
   }
 };
 

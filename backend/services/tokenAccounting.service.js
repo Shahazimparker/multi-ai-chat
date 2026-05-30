@@ -1,6 +1,10 @@
 const { estimateTokens } = require('./tokenBudget.service');
 
 /**
+ * Quota accounting note:
+ * This returns an internal usage unit for user quota enforcement.
+ * It is intentionally not a provider-accurate cost model (input/output pricing can differ).
+ *
  * @param {import('../types/chat-contracts').BillableTokenInput} params
  */
 const calculateBillableTokens = ({
@@ -12,6 +16,8 @@ const calculateBillableTokens = ({
   compressTokens = 0,
   historySummaryTokens = 0,
 }) => {
+  // This aggregates multiple token sources into one quota unit.
+  // It may include overlapping estimates in fallback paths by design.
   const summaryTokens = historySummaryTokens || 0;
 
   if (totalAITokens > 0) {

@@ -6,16 +6,28 @@
 
 const jwt      = require('jsonwebtoken');
 const supabase = require('../config/supabase');
+const AUTH_COOKIE_NAME = 'auth_token';
+
+const getCookieValue = (cookieHeader, key) => {
+  if (!cookieHeader) return null;
+  const parts = String(cookieHeader).split(';');
+  for (const part of parts) {
+    const [rawKey, ...rest] = part.trim().split('=');
+    if (rawKey === key) return decodeURIComponent(rest.join('='));
+  }
+  return null;
+};
 
 // ── Verify JWT + session + account expiry ──────────────────
 const requireAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
+    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+    const cookieToken = getCookieValue(req.headers.cookie, AUTH_COOKIE_NAME);
+    const token = bearerToken || cookieToken;
+    if (!token) {
       return res.status(401).json({ error: 'No token provided' });
     }
-
-    const token   = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Fetch fresh user data from DB (check is_active, expires_at)

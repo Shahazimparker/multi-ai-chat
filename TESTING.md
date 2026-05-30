@@ -161,7 +161,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 
 ### Overview
 
-The backend now has an automated test suite using **Vitest** (200 tests across 16 test files, plus 1 skipped image test). Tests run in ~20s with real Supabase and API connections. **Zero mocks** — all tests use real implementations end-to-end. The only exception is the image generation test (skipped to avoid Recraft/FLUX/DALL-E API costs).
+The backend now has an automated test suite using **Vitest**. Unit/integration tests include mocked seams where isolation is required, and `integration-real` tests run against a live backend/services with no mocks.
 
 
 ```bash
@@ -239,6 +239,14 @@ cd backend && npm run test:coverage
 # Single file
 cd backend && npx vitest run __tests__/unit/tokenAccounting.test.js
 ```
+
+### Real Integration Notes
+
+- Run real tests with: `cd backend && npm run test:real`
+- Real CSRF/auth test file: `backend/__tests__/integration-real/csrf-auth.test.js`
+- For authenticated real tests set:
+  - `REAL_TEST_USERNAME` (or `TEST_USERNAME`)
+  - `REAL_TEST_PASSWORD` (or `TEST_PASSWORD`)
 
 
 

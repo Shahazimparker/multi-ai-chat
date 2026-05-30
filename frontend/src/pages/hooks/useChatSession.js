@@ -33,13 +33,12 @@ export const useChatSession = ({ refreshTokenStats }) => {
   useEffect(() => {
     const savedSid = sessionStorage.getItem('uploadSessionId');
     if (!savedSid) return;
-    const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
     let cancelled = false;
     const poll = async () => {
       while (!cancelled) {
         try {
           const res = await fetch(`${API_BASE_URL}/upload/status/${savedSid}`, {
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            credentials: 'include',
           });
           const data = await res.json();
           if (!data.active) {
@@ -136,13 +135,11 @@ export const useChatSession = ({ refreshTokenStats }) => {
     formData.append('modelId', model.id);
     formData.append('ragEnabled', ragEnabled);
     if (topicIdToUse) formData.append('topicId', topicIdToUse);
-    const authToken = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
-
     return await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `${API_BASE_URL}/upload/file`);
+      xhr.withCredentials = true;
       xhr.timeout = 600000;
-      if (authToken) xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
       const csrfToken = sessionStorage.getItem('csrf_token');
       if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
 
@@ -280,12 +277,13 @@ export const useChatSession = ({ refreshTokenStats }) => {
         finalMessage = finalMessage ? `${finalMessage}\n${refs}` : refs;
       }
 
-      const authToken = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
       const headers = { 'Content-Type': 'application/json' };
-      if (authToken) headers.Authorization = `Bearer ${authToken}`;
+      const csrfToken = sessionStorage.getItem('csrf_token');
+      if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
       const response = await fetch(`${API_BASE_URL}/chat/stream`, {
         method: 'POST',
         headers,
+        credentials: 'include',
         body: JSON.stringify({
           message: finalMessage,
           image,
@@ -319,12 +317,12 @@ export const useChatSession = ({ refreshTokenStats }) => {
               setError(data.error);
               break;
             }
-            if (data.type === 'status' && data.tool === 'web_search') {
+            if (data.type === 'status') {
               setMessages((prev) => {
                 const updated = [...prev];
                 const last = updated[updated.length - 1];
                 if (last && last.role === 'assistant') {
-                  updated[updated.length - 1] = { ...last, statusMessage: data.message || 'Searching the web...', streaming: true };
+                  updated[updated.length - 1] = { ...last, statusMessage: data.message || 'Working...', streaming: true };
                 }
                 return updated;
               });
@@ -506,10 +504,11 @@ export const useChatSession = ({ refreshTokenStats }) => {
   const cancelUploadAndStream = useCallback(() => {
     const sid = uploadSessionIdRef.current;
     if (sid) {
-      const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+      const csrfToken = sessionStorage.getItem('csrf_token');
       fetch(`${API_BASE_URL}/upload/cancel/${sid}`, {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
+        credentials: 'include',
       }).catch(() => {});
       uploadSessionIdRef.current = null;
     }

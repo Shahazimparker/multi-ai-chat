@@ -3,7 +3,7 @@
 // PURPOSE: Legacy JSON chat compatibility endpoint — stream is canonical
 // ============================================================
 
-const { classifyError } = require('../services/chat.service');
+const { classifyError } = require('../services/chatCleanup.service');
 const { CANONICAL_CHAT_PIPELINE_FLAGS, runChatPipeline } = require('../services/chatPipeline.service');
 
 /**
