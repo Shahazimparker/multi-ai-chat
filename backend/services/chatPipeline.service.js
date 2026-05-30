@@ -490,9 +490,12 @@ const runChatPipeline = async (opts) => {
       }
 
       if (resolvedTopicId) {
+        // Pass the array directly — JSONB column expects a JS array, not a stringified JSON.
+        // Stringifying causes double-encoding, and on read the frontend gets a string, not an array.
+        const generatedFilesValue = generatedMediaFiles.length > 0 ? generatedMediaFiles : [];
         const { data: savedMessages, error: msgError } = await supabase.from('messages').insert([
           { topic_id: resolvedTopicId, user_id: user.id, role: 'user', content: message, model: modelId, tokens_used: estimatedInputTokens },
-          { topic_id: resolvedTopicId, user_id: user.id, role: 'assistant', content: finalReply, model: modelId, tokens_used: billableTokens },
+          { topic_id: resolvedTopicId, user_id: user.id, role: 'assistant', content: finalReply, model: modelId, tokens_used: billableTokens, generated_files: generatedFilesValue },
         ]).select('id, role');
 
         if (msgError) {

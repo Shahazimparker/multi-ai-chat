@@ -95,13 +95,24 @@ export const useChatSession = ({ refreshTokenStats }) => {
     setMessages([]);
     try {
       const res = await api.get(`/history/topics/${topic.id}/messages`);
-      setMessages(res.data.messages.map((entry) => ({
-        role: entry.role,
-        content: entry.content,
-        model: entry.model,
-        tokensUsed: entry.tokens_used,
-        created_at: entry.created_at,
-      })));
+      setMessages(res.data.messages.map((entry) => {
+        // generated_files is JSONB — may be array, string (double-encoded from earlier bug), or null
+        let gf = [];
+        if (Array.isArray(entry.generated_files)) {
+          gf = entry.generated_files;
+        } else if (typeof entry.generated_files === 'string') {
+          try { gf = JSON.parse(entry.generated_files); } catch { gf = []; }
+          if (!Array.isArray(gf)) gf = [];
+        }
+        return {
+          role: entry.role,
+          content: entry.content,
+          model: entry.model,
+          tokensUsed: entry.tokens_used,
+          created_at: entry.created_at,
+          generatedFiles: gf,
+        };
+      }));
     } catch {
       setMessages([]);
     }

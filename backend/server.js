@@ -58,6 +58,11 @@ cleanupStaleCache(30, 2).catch(err =>
 const app  = express();
 const PORT = process.env.PORT || 5000;
 
+// ── Trust proxy — required behind Vercel / reverse proxies ─────
+// Without this, express-rate-limit throws ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
+// because Vercel sets X-Forwarded-For but Express ignores it by default.
+app.set('trust proxy', 1);
+
 // ── Initialize Sentry (must be before other middleware) ────
 initSentry(app);
 app.use(sentryRequestHandler());

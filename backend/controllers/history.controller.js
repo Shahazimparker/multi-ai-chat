@@ -34,7 +34,7 @@ const getMessages = async (req, res) => {
 
   const { data, error } = await supabase
     .from('messages')
-    .select('id, role, content, model, tokens_used, created_at')
+    .select('id, role, content, model, tokens_used, created_at, generated_files')
     .eq('topic_id', id)
     .eq('is_summary', false)
     .order('created_at', { ascending: true });
