@@ -128,9 +128,29 @@ const ChatPage = () => {
           <div className="llm-error-modal">
             <h3>Selected LLM unavailable</h3>
             <p>{session.llmError.error}</p>
+            {Array.isArray(session.llmError.suggestedModels) && session.llmError.suggestedModels.length > 0 && (
+              <div className="llm-suggested-models">
+                {session.llmError.suggestedModels.map((id) => {
+                  const m = session.models.find((entry) => entry.id === id);
+                  if (!m) return null;
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => {
+                        session.setModel(m);
+                        session.setProviderModelId(null);
+                      }}
+                    >
+                      {m.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             <p className="llm-error-note">Choose another model from the dropdown, then continue.</p>
             <div className="llm-error-actions">
               <button onClick={() => session.setLlmError(null)}>Cancel</button>
+              <button onClick={session.handleContinueWithCurrentModel}>Continue with current model</button>
               <button
                 onClick={() => {
                   if (session.failedMessage) composer.setInput(session.failedMessage.text);

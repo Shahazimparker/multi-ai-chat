@@ -45,10 +45,16 @@ export interface AiProviderStreamResult {
 
 export type OnChunkCallback = (text: string) => void;
 
+// ── Orchestrator Brain ───────────────────────────────────────
+
 export interface OrchestratorBrainResult {
   enabled: boolean;
   traceId: string;
   error?: string;
+  routingDecision?: {
+    intent?: string;
+    recommendedModelId?: string;
+  } | null;
   graph?: any;
   dashboard?: {
     status?: string;
@@ -66,6 +72,20 @@ export interface OrchestratorBrainResult {
   costs?: any;
   errors?: any[];
   logs?: string[];
+}
+
+// ── Hybrid Reranking ─────────────────────────────────────────
+
+export interface RerankDocInput {
+  id: string | number;
+  content: string;
+  similarity: number;
+  [key: string]: unknown;
+}
+
+export interface RerankDocOutput extends RerankDocInput {
+  hybridScore: number;
+  accepted: boolean;
 }
 
 // ── Chat pipeline result ─────────────────────────────────────
@@ -95,6 +115,8 @@ export interface ChatPipelineResult {
   err: Error | null;
   errorType: string | null;
   userMessage: string | null;
+  suggestedModels?: string[] | null;
+  recommendedModelId?: string | null;
 }
 
 export interface ChatPipelineOptions {
@@ -122,8 +144,27 @@ export interface ChatPipelineOptions {
   cacheResponse?: boolean;
   postSaveEmbedding?: boolean;
   enableOrchestratorBrain?: boolean;
+  allowArtifactWithCurrentModel?: boolean;
 
   // callbacks
   onStreamChunk?: OnChunkCallback;
   onToolStatus?: (event: any) => void;
+}
+
+// ── Model Config ─────────────────────────────────────────────
+
+export interface ModelConfig {
+  label: string;
+  provider: string;
+  apiKey?: string;
+  model: string;
+  paid: boolean;
+  maxTokens: number;
+  temperature?: number;
+  unified?: boolean;
+  reasoning?: {
+    thinking: string;
+    reasoningEffort: string;
+  };
+  models?: any[];
 }

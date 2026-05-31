@@ -10,6 +10,87 @@ const crypto = require('crypto');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const supabase = require('../config/supabase');
 const { trimTextByTokens, estimateTokens } = require('./tokenBudget.service');
+const RAG_HYBRID_THRESHOLD = 0.52;
+
+const tokenizeForRanking = (text) => {
+  return String(text || '')
+    .toLowerCase()
+    .match(/[a-z0-9]+(?:[._-][a-z0-9]+)*/g) || [];
+};
+
+const normalizeCosine = (cosine) => {
+  const n = Number(cosine || 0);
+  return Math.max(0, Math.min(1, (n + 1) / 2));
+};
+
+const extractNumericTokens = (text) => {
+  return (String(text || '').match(/\b\d+(?:\.\d+)?\b/g) || []).map((n) => n.trim());
+};
+
+const jaccardScore = (queryTokens, docTokens) => {
+  const qSet = new Set(queryTokens);
+  const dSet = new Set(docTokens);
+  if (!qSet.size || !dSet.size) return 0;
+  let intersection = 0;
+  for (const t of qSet) if (dSet.has(t)) intersection++;
+  const union = qSet.size + dSet.size - intersection;
+  return union > 0 ? intersection / union : 0;
+};
+
+const bm25Score = (queryTokens, docTokens, docsTokens, avgDocLen, k1 = 1.2, b = 0.75) => {
+  if (!queryTokens.length || !docTokens.length || !docsTokens.length) return 0;
+  const tf = new Map();
+  for (const t of docTokens) tf.set(t, (tf.get(t) || 0) + 1);
+  const N = docsTokens.length;
+  const uniqueQ = [...new Set(queryTokens)];
+  let score = 0;
+  for (const term of uniqueQ) {
+    let df = 0;
+    for (const dTok of docsTokens) {
+      if (dTok.includes(term)) df++;
+    }
+    if (df === 0) continue;
+    const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5));
+    const termFreq = tf.get(term) || 0;
+    if (!termFreq) continue;
+    const denom = termFreq + k1 * (1 - b + b * (docTokens.length / Math.max(1, avgDocLen)));
+    score += idf * ((termFreq * (k1 + 1)) / denom);
+  }
+  return score;
+};
+
+const rerankDocsHybrid = (rows, queryText, topK, cosineThreshold) => {
+  if (!rows?.length) return [];
+
+  const qTokens = tokenizeForRanking(queryText);
+  const qNums = extractNumericTokens(queryText);
+  const docsTokens = rows.map((r) => tokenizeForRanking(r.content));
+  const avgLen = docsTokens.reduce((s, d) => s + d.length, 0) / Math.max(1, docsTokens.length);
+
+  const bm25Raw = rows.map((r, i) => bm25Score(qTokens, docsTokens[i], docsTokens, avgLen));
+  const bm25Max = Math.max(1e-9, ...bm25Raw);
+
+  const scored = rows.map((row, idx) => {
+    const cosineNorm = normalizeCosine(row.similarity);
+    const jaccard = jaccardScore(qTokens, docsTokens[idx]);
+    const bm25Norm = bm25Raw[idx] / bm25Max;
+    const contentNums = new Set(extractNumericTokens(row.content));
+    const hasAllNums = qNums.every((n) => contentNums.has(n));
+    const numericBoost = qNums.length > 0 && hasAllNums ? 0.1 : 0;
+    const lexicalOverlap = qTokens.length ? qTokens.filter((t) => docsTokens[idx].includes(t)).length / qTokens.length : 0;
+    const hybridScore = (0.55 * cosineNorm) + (0.3 * bm25Norm) + (0.15 * jaccard) + numericBoost;
+    const numericCriticalMiss = qNums.length > 0 && !hasAllNums && cosineNorm < 0.95;
+    const minAccepted = Math.max(RAG_HYBRID_THRESHOLD, normalizeCosine(cosineThreshold));
+    const lexicalGate = qTokens.length === 0 || lexicalOverlap >= 0.1 || cosineNorm >= 0.85;
+    const accepted = !numericCriticalMiss && hybridScore >= minAccepted && lexicalGate;
+    return { ...row, hybridScore, accepted };
+  });
+
+  return scored
+    .filter((r) => r.accepted)
+    .sort((a, b) => b.hybridScore - a.hybridScore)
+    .slice(0, topK);
+};
 
 const throwIfAborted = (signal) => {
   if (signal?.aborted) throw { name: 'AbortError' };
@@ -322,15 +403,15 @@ const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = '
     rpcCall = supabase.rpc('match_topic_files', {
       query_embedding: embedding,
       p_topic_id: topicId,
-      match_threshold: threshold,
-      match_count: topK,
+      match_threshold: Math.max(0.2, threshold - 0.2),
+      match_count: Math.max(topK * 4, topK),
     });
   } else {
     rpcCall = supabase.rpc('match_documents', {
       query_embedding: embedding,
       provider_param: provider,
-      match_threshold: threshold,
-      match_count: topK,
+      match_threshold: Math.max(0.2, threshold - 0.2),
+      match_count: Math.max(topK * 4, topK),
     });
   }
 
@@ -348,7 +429,7 @@ const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = '
     return [];
   }
 
-  return data || [];
+  return rerankDocsHybrid(data || [], query, topK, threshold);
 };
 
 /**
@@ -381,8 +462,8 @@ const buildRAGContext = async (query, provider = 'openrouter', signal = null, pr
   const rpcCall = supabase.rpc('match_topic_files', {
       query_embedding: embedding,
       p_topic_id: topicId,
-      match_threshold: 0.4,
-      match_count: 3,
+      match_threshold: 0.2,
+      match_count: 12,
     });
 
   const { data: docs, error } = await Promise.race([
@@ -394,9 +475,11 @@ const buildRAGContext = async (query, provider = 'openrouter', signal = null, pr
   ]);
 
   if ((error && error.name !== 'AbortError' && error.name !== 'CanceledError') || !docs || docs.length === 0) return '';
+  const topDocs = rerankDocsHybrid(docs, query, 3, 0.4);
+  if (!topDocs.length) return '';
 
   // ── Chunk-level enhancement: also search rag_chunks for granular matches ──
-  let allDocs = [...docs];
+  let allDocs = [...topDocs];
   if (topicId && userId && embedding) {
     try {
       const { data: chunkResults } = await supabase.rpc('search_uploaded_files', {
@@ -443,4 +526,4 @@ const buildRAGContext = async (query, provider = 'openrouter', signal = null, pr
   return `[KNOWLEDGE BASE CONTEXT]\n${contextBlock}\n[END KNOWLEDGE BASE]\n\nUse the above context if relevant to answer the question.`;
 };
 
-module.exports = { buildRAGContext, embedText, searchRelevantDocs, clearEmbeddingCache };
+module.exports = { buildRAGContext, embedText, searchRelevantDocs, clearEmbeddingCache, rerankDocsHybrid };

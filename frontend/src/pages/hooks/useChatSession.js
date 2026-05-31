@@ -217,10 +217,10 @@ export const useChatSession = ({ refreshTokenStats }) => {
     });
   }, [model, ragEnabled]);
 
-  const sendMessage = useCallback(async (msgText, filesArr, image, isRetry = false) => {
+  const sendMessage = useCallback(async (msgText, filesArr, image, isRetry = false, forceCurrentModel = false) => {
     let finalMessage = String(msgText).trim();
     const files = filesArr || [];
-    setFailedMessage({ text: finalMessage, files, image });
+    setFailedMessage({ text: finalMessage, files, image, forceCurrentModel });
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -293,6 +293,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
           memoryMode,
           historyLimit: Number(historyLimit),
           ragEnabled,
+          allowArtifactWithCurrentModel: Boolean(forceCurrentModel),
         }),
         signal: controller.signal,
       });
@@ -315,6 +316,14 @@ export const useChatSession = ({ refreshTokenStats }) => {
             const data = JSON.parse(line.slice(6));
             if (data.type === 'error') {
               setError(data.error);
+              if (data.errorType === 'model_switch_required') {
+                setLlmError({
+                  error: data.error || 'Model switch required',
+                  suggestedModels: Array.isArray(data.suggestedModels) ? data.suggestedModels : [],
+                  recommendedModelId: data.recommendedModelId || null,
+                  failedModelId: data.failedModelId || null,
+                });
+              }
               break;
             }
             if (data.type === 'status') {
@@ -480,11 +489,20 @@ export const useChatSession = ({ refreshTokenStats }) => {
 
   const handleRetry = useCallback(() => {
     if (!failedMessage) return;
-    const { text, files, image } = failedMessage;
+    const { text, files, image, forceCurrentModel } = failedMessage;
     setFailedMessage(null);
     setError('');
     setMessages((prev) => (prev[prev.length - 1]?.role === 'assistant' ? prev.slice(0, -1) : prev));
-    sendMessage(text, files, image, true);
+    sendMessage(text, files, image, true, forceCurrentModel);
+  }, [failedMessage, sendMessage]);
+
+  const handleContinueWithCurrentModel = useCallback(() => {
+    if (!failedMessage) return;
+    const { text, files, image } = failedMessage;
+    setLlmError(null);
+    setError('');
+    setMessages((prev) => (prev[prev.length - 1]?.role === 'assistant' ? prev.slice(0, -1) : prev));
+    sendMessage(text, files, image, true, true);
   }, [failedMessage, sendMessage]);
 
   const removeFromQueue = useCallback((index) => {
@@ -555,6 +573,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
     failedMessage,
     llmError,
     setLlmError,
+    handleContinueWithCurrentModel,
     handleTopicSelect,
     handleNewChat,
     requestSend,

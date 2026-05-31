@@ -37,25 +37,5 @@ const jaccardSimilarity = (textA, textB) => {
   return intersection / union;
 };
 
-/**
- * isSameTopic — compares new query against last N messages combined
- * @param {string}   newQuery      current user input
- * @param {Array}    recentMessages array of {content} objects
- * @param {number}   threshold     similarity cutoff (default 0.2)
- * @returns {boolean}
- */
-const isSameTopic = (newQuery, recentMessages = [], threshold = 0.2) => {
-  if (recentMessages.length === 0) return false;
 
-  // Combine last 5 messages into one reference block
-  const reference = recentMessages
-    .slice(-5)
-    .map(m => m.content)
-    .join(' ');
-
-  const score = jaccardSimilarity(newQuery, reference);
-  console.log(`[Similarity] Score: ${score.toFixed(3)} (threshold: ${threshold})`);
-  return score >= threshold;
-};
-
-module.exports = { isSameTopic, jaccardSimilarity };
+module.exports = { jaccardSimilarity };

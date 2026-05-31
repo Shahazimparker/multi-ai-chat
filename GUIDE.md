@@ -11,14 +11,14 @@ This is the main setup and maintenance guide for the current repo state.
 
 ## Current Features
 
-- 15 configured AI models across DeepSeek, Groq, Gemini, Mistral, Claude, and OpenRouter in `backend/config/models.js`
+- 15 configured AI models across DeepSeek (128K context), Groq, Gemini, Mistral, Claude, and OpenRouter in `backend/config/models.js`
 - Live provider catalogs for `openrouter`, `together`, and `anyapi`
 - Authenticated and anonymous chat flows
 - **Real provider token streaming** — all 10 providers stream native tokens via SSE. No artificial `setTimeout` delays. Tool-call rounds are handled transparently: tool status events are sent during processing, then the final answer streams in naturally.
 - Shared pipeline (`chatPipeline.service.js`) keeps legacy JSON and streaming chat behavior aligned
 - OrchestratorBrain is wired into `/api/chat/stream` as a real pre-stream runtime layer using the custom graph, agent, callback, tracing, parser, retriever, vector-store, and flow-visibility services.
 - Human approval checkpoints are persisted in Supabase (`human_approvals`) and controlled through `/api/approvals`, so Vercel/serverless invocations do not wait in memory for a human response.
-- RAG, semantic cache, token accounting, context summarization, and cross-chat memory
+- RAG with hybrid reranking (cosine+BM25+Jaccard), semantic cache, token accounting, context summarization, and cross-chat memory with hybrid reranking
 - File upload, search, and abort cleanup
 - AI file generation: Image (Recraft/FLUX via OpenRouter), PPT (pptxgenjs), PDF (pdfkit), Excel (exceljs), Word (docx), CSV, Chart (SVG), HTML, JSON, Markdown — all triggered via `[GENERATE_XXX]` tags in chat
 - Admin dashboard and analytics
@@ -223,6 +223,7 @@ const mermaid = TraceFormatter.formatMermaidFlowchart(trace);
 - Add new provider catalogs in `backend/services/modelCatalog.service.js`.
 - Adjust chat behavior in `backend/controllers/chat.controller.js` and `backend/routes/chat.routes.js`.
 - Tune token budgeting in `backend/services/tokenBudget.service.js`.
+- Hybrid reranking weights: `rerankDocsHybrid` (rag.service.js) and `rerankMemoryRowsHybrid` (memory.service.js) — 55% cosine, 30% BM25, 15% Jaccard, +0.1 numeric boost. Thresholds: `RAG_HYBRID_THRESHOLD=0.52`, `MEMORY_HYBRID_THRESHOLD=0.56`.
 - Tune history and summary behavior in `backend/services/context.service.js` and `backend/services/summary.service.js`.
 - Cross-chat memory (accurate mode): `embedAndStoreMessage` and `searchMemory` in `backend/services/memory.service.js`. Requires `message_embeddings` table and `search_memory` RPC — run `database/migration_add_message_embeddings.sql` if not deployed.
 - Cache: exact hash-based cache is disabled. Only semantic cache (`getSemanticCachedResponse`) is active. To re-enable exact cache, uncomment the `getCachedResponse` block in `chat.routes.js` and the `setCachedResponse` call in `chat.controller.js` — but note it will return stale answers for time-sensitive or DB-backed queries.

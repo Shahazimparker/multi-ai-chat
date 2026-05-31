@@ -16,15 +16,15 @@ const OPENROUTER_TOOLS = [
         properties: {
           title: { type: 'string' },
           subtitle: { type: 'string' },
-          theme: { type: 'string', enum: ['modern_corporate', 'startup_bold', 'clean_minimal'] },
-          style: { type: 'string', enum: ['modern_corporate', 'startup_bold', 'clean_minimal'] },
+          theme: { type: 'string', enum: ['modern_corporate', 'startup_bold', 'clean_minimal', 'emerald_glass', 'sunset_warm', 'charcoal_lime', 'sandstone_editorial', 'ruby_noir', 'violet_tech', 'ocean_depth', 'rose_creative', 'mono_editorial'] },
+          style: { type: 'string', enum: ['modern_corporate', 'startup_bold', 'clean_minimal', 'emerald_glass', 'sunset_warm', 'charcoal_lime', 'sandstone_editorial', 'ruby_noir', 'violet_tech', 'ocean_depth', 'rose_creative', 'mono_editorial'] },
           slides: {
             type: 'array',
             items: {
               type: 'object',
               properties: {
                 title: { type: 'string' },
-                layout: { type: 'string', enum: ['title_bullets', 'two_column', 'cards', 'quote', 'data_story'] },
+                layout: { type: 'string', enum: ['title_bullets', 'two_column', 'cards', 'quote', 'data_story', 'timeline', 'process_steps', 'comparison_split', 'swot_grid', 'kpi_dashboard', 'checklist', 'section_break', 'statistics_strip', 'faq', 'table_like'] },
                 subtitle: { type: 'string' },
                 footerNote: { type: 'string' },
                 bullets: { type: 'array', items: { type: 'string' } },

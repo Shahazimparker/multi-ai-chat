@@ -70,6 +70,7 @@ const {
  * @param {number}   [opts.historyTokenBudget]       — token budget for history context
  * @param {boolean}  [opts.cacheResponse=false]      — whether to call setCachedResponse
  * @param {boolean}  [opts.postSaveEmbedding=false]  — embed messages after save
+ * @param {boolean}  [opts.allowArtifactWithCurrentModel=false] — explicit user override for artifact routing model recommendation
  *
  * // ---- callbacks ----
  * @param {(chunk: string) => void} [opts.onStreamChunk]
@@ -109,7 +110,7 @@ const CANONICAL_CHAT_PIPELINE_FLAGS = Object.freeze({
   memoryEnabled: true,
   cacheResponse: true,
   postSaveEmbedding: true,
-  enableOrchestratorBrain: false,
+  enableOrchestratorBrain: true,
 });
 const EXECUTE_CODE_ENABLED = String(process.env.ENABLE_EXECUTE_CODE || '').toLowerCase() === 'true';
 
@@ -138,6 +139,8 @@ const makePipelineResult = (overrides = {}) => ({
   err: null,
   errorType: null,
   userMessage: null,
+  suggestedModels: null,
+  recommendedModelId: null,
   ...overrides,
 });
 
@@ -170,6 +173,7 @@ const runChatPipeline = async (opts) => {
     cacheResponse = false,
     postSaveEmbedding = false,
     enableOrchestratorBrain = false,
+    allowArtifactWithCurrentModel = false,
 
     // callbacks
     onStreamChunk,
@@ -181,7 +185,7 @@ const runChatPipeline = async (opts) => {
   try {
     // ── 1. Validate model ──────────────────────────────────────
     const modelConfig = MODELS[modelId];
-    const effectiveModelConfig = providerModelId
+    let effectiveModelConfig = providerModelId
       ? { ...modelConfig, model: providerModelId }
       : modelConfig;
     if (!modelConfig) {
@@ -193,7 +197,7 @@ const runChatPipeline = async (opts) => {
     }
 
     const estimatedInputTokens = estimateTokens(message);
-    const orchestratorBrain = (enableOrchestratorBrain && onStreamChunk)
+    const orchestratorBrain = enableOrchestratorBrain
       ? await runOrchestratorBrain({
           modelId,
           providerModelId,
@@ -211,6 +215,26 @@ const runChatPipeline = async (opts) => {
           onToolStatus,
         })
       : null;
+
+    // Orchestrator-selected model handling:
+    // for artifact intents, request user model switch instead of silent override.
+    const routedModelId = orchestratorBrain?.routingDecision?.recommendedModelId;
+    const routedIntent = orchestratorBrain?.routingDecision?.intent;
+    const artifactIntent = routedIntent === 'artifact_ppt' || routedIntent === 'artifact_other';
+    if (!providerModelId && !allowArtifactWithCurrentModel && artifactIntent && routedModelId && MODELS[routedModelId] && routedModelId !== modelId) {
+      return makePipelineResult({
+        err: new Error(`Model switch required for artifact intent: ${routedModelId}`),
+        errorType: 'model_switch_required',
+        userMessage: 'This request needs a stronger model for artifact generation. Please switch model and continue.',
+        suggestedModels: [routedModelId, 'deepseek-v4-pro', 'claude-sonnet'].filter((v, idx, arr) => arr.indexOf(v) === idx && MODELS[v]),
+        recommendedModelId: routedModelId,
+        orchestratorBrain,
+        estimatedInputTokens,
+        modelConfig,
+        effectiveModelConfig,
+        resolvedTopicId,
+      });
+    }
 
     // ── 2. Prompt budget ──────────────────────────────────────
     let promptBudget = createPromptBudget(modelConfig);
@@ -348,6 +372,7 @@ const runChatPipeline = async (opts) => {
       memoryMode,
       historyLimit,
       userId: user?.id,
+      modelMaxTokens: modelConfig.maxTokens || 8000,
     };
     if (historyTokenBudget !== undefined) {
       historyOpts.tokenBudget = historyTokenBudget;
@@ -367,6 +392,7 @@ const runChatPipeline = async (opts) => {
     let memoryContext = '';
     if (memoryEnabled && ragEnabled && memoryMode === 'accurate' && queryVector && user?.id) {
       memoryContext = await searchMemory(queryVector, user.id, {
+        queryText: finalQuery,
         excludeTopicId: resolvedTopicId,
         topK: 5,
         threshold: 0.5,
@@ -382,11 +408,12 @@ const runChatPipeline = async (opts) => {
       `${allowExecuteCode ? '3' : '2'}. Generate Image (DALL-E 3): [GENERATE_IMAGE:prompt=detailed image description here]`,
       '   - Use when the user asks you to generate, create, or draw an image/picture/photo',
       '   - Write the most descriptive prompt possible for best results',
-      `${allowExecuteCode ? '4' : '3'}. Generate PowerPoint: [GENERATE_PPT]{"title":"Presentation Title","subtitle":"Optional subtitle","theme":"modern_corporate","slides":[{"title":"Slide Title","layout":"cards","bullets":["Point 1","Point 2","Point 3"]},{"title":"Slide 2","layout":"two_column","bullets":["Left insight"],"content":"Right-side narrative"},{"title":"Slide 3","layout":"quote","content":"Key quote or thesis","subtitle":"Optional attribution"}]}[/GENERATE_PPT]`,
+      `${allowExecuteCode ? '4' : '3'}. Generate PowerPoint: [GENERATE_PPT]{"title":"Presentation Title","subtitle":"Optional subtitle","theme":"emerald_glass","slides":[{"title":"Slide Title","layout":"cards","bullets":["Point 1","Point 2","Point 3"]},{"title":"Roadmap","layout":"timeline","bullets":["Now","Next","Later"]},{"title":"KPIs","layout":"kpi_dashboard","bullets":["Revenue: $2.4M","Margin: 58%","NPS: 51"]}]}[/GENERATE_PPT]`,
       '   - Use when the user asks you to create a presentation, slides, or PowerPoint',
       '   - Include 4-8 content slides with varied layouts for visual quality',
-      '   - Allowed themes: modern_corporate, startup_bold, clean_minimal',
-      '   - Allowed slide layouts: title_bullets, two_column, cards, quote, data_story',
+      '   - Allowed themes: modern_corporate, startup_bold, clean_minimal, emerald_glass, sunset_warm, charcoal_lime, sandstone_editorial, ruby_noir, violet_tech, ocean_depth, rose_creative, mono_editorial',
+      '   - Allowed slide layouts: title_bullets, two_column, cards, quote, data_story, timeline, process_steps, comparison_split, swot_grid, kpi_dashboard, checklist, section_break, statistics_strip, faq, table_like',
+      '   - Vary layouts: do not repeat the same layout more than 2 times in one deck',
       '   - Every slide needs a "title" plus either "bullets" (array) or "content" (string)',
       'Wait for the tool result before continuing your response.',
     ];

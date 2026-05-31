@@ -39,6 +39,8 @@ describe('chatPipeline result shape', () => {
       'err',
       'errorType',
       'userMessage',
+      'suggestedModels',
+      'recommendedModelId',
     ];
 
     for (const key of requiredKeys) {

@@ -57,7 +57,7 @@ This document is the technical reference for the current codebase state.
   - `memory.service.js` now exports `embedAndStoreMessage` and `searchMemory` for RAG-based cross-chat memory (accurate mode only)
   - Cross-chat memory persisted in `message_embeddings` table; searched via `search_memory` Supabase RPC
   - Memory context trimmed with token-budget-aware `trimTextByTokens` (600 token fixed budget, split evenly across results)
-- RAG and embeddings: `backend/services/rag.service.js`
+- RAG and embeddings: `backend/services/rag.service.js` (hybrid reranking: cosine+BM25+Jaccard with numeric critical miss protection)
 - File pipeline: `backend/services/fileUpload.service.js`
 - Cache: `backend/services/cache.service.js`
   - Exact cache reads are disabled for live chat to avoid stale answers; successful responses can still be stored for semantic/RAG-aware reuse.
@@ -89,7 +89,7 @@ This document is the technical reference for the current codebase state.
 - `agentOrchestrator.service.js` — SmartAgent with intelligent orchestration
 
 **Memory & State:**
-- `memory.service.js` — 6 in-process memory strategies (Buffer, Summary, Entity, TokenBuffer, Window, Combined) + `embedAndStoreMessage` + `searchMemory` for cross-chat RAG memory
+- `memory.service.js` — 6 in-process memory strategies (Buffer, Summary, Entity, TokenBuffer, Window, Combined) + `embedAndStoreMessage` + `searchMemory` with hybrid reranking (cosine+BM25+Jaccard) for cross-chat RAG memory
 - `loopManagement.service.js` — 4 loop patterns (RefinementLoop, QueryLoop, ValidationLoop, PipelineLoop)
 
 **Observability & Control:**
@@ -272,3 +272,8 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
 - Implementation guide: `GUIDE.md`
 - Testing guide: `TESTING.md`
 - Management summary: `MANAGEMENT_PRESENTATION.md`
+## Artifact Intent Model Guard
+
+- For artifact intents (`artifact_ppt`, `artifact_other`), orchestrator can require model switch via `errorType: model_switch_required`.
+- SSE error payload includes `suggestedModels`, `recommendedModelId`, and `failedModelId`.
+- Client can explicitly override by resending with `allowArtifactWithCurrentModel: true` to continue with the currently selected model.

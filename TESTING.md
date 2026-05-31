@@ -29,6 +29,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 ### Chat Pipeline
 
 - `/api/chat/stream` returns real provider-token SSE chunks (no artificial `setTimeout` delays) and a final `done` event.
+- Artifact model routing guard: when orchestrator returns `model_switch_required`, SSE error includes `suggestedModels` and `recommendedModelId`; if client resends with `allowArtifactWithCurrentModel: true`, request continues on the current model.
 - `/api/chat/message` remains available only as legacy JSON compatibility.
 - OrchestratorBrain emits `framework_status` SSE events before provider token chunks and is covered by `backend/__tests__/unit/orchestratorBrain.test.js`, which uses the real model registry and real framework classes without mocks.
 - Human approval deploy safety is covered by `backend/__tests__/unit/humanApproval.test.js`: approvals persist, return immediately in serverless mode, and can be approved by a separate manager instance.
@@ -181,7 +182,7 @@ backend/
 │   │   ├── tokenAccounting.test.js       # Billable token calculation (6 tests)
 │   │   ├── chatCleanup.test.js           # stripToolTags, isPlaceholderOnly, classifyError (39 tests)
 │   │   ├── compress.test.js              # Prompt compression (11 tests)
-│   │   ├── similarity.test.js            # Jaccard similarity, topic detection (13 tests)
+│   │   ├── similarity.test.js            # Jaccard similarity (8 tests)
 │   │   ├── sanitize.test.js              # XSS sanitization (8 tests)
 │   │   ├── tokenCheck.test.js            # Token quota middleware (5 tests)
 │   │   ├── chatRuntime.config.test.js    # Env var parsing with clamping (13 tests)
@@ -189,7 +190,7 @@ backend/
 │   │   ├── toolProcessor-logic.test.js   # buildFileContext (5 tests)
 │   │   ├── tokenBudget.test.js           # estimateTokens, budgets, complexity, smartTrim (38 tests)
 │   │   ├── imageGeneration.test.js       # Model list validation (4 tests, 1 skipped)
-│   │   ├── orchestratorBrain.test.js     # Real framework graph wiring (1 test)
+│   │   ├── orchestratorBrain.test.js     # Module load + degraded config (2 tests)
 │   │   ├── pptGeneration.test.js         # Real PPTX generation with DB save (3 tests)
 │   └── integration/
 │       ├── toolProcessor.test.js         # processToolCall with real tool backends (17 tests)
@@ -200,7 +201,7 @@ backend/
 
 ### Test Coverage by Tier
 
-#### Tier 1: Pure Logic (no external deps) — 150 tests
+#### Tier 1: Pure Logic (no external deps) — 171 tests
 | Service | Tests | What's covered |
 |---|---|---|
 | `chatCleanup.service.js` | 39 | `stripToolTags` (all 18 patterns), `isPlaceholderOnly`, `classifyError` (all 8 types) |
@@ -208,14 +209,16 @@ backend/
 | `toolProcessor-matchers` | 36 | All 13 remaining tool tag matchers: SEARCH_FILES, GET_FILE, WEB_SEARCH, EXECUTE_CODE, GENERATE_IMAGE, GENERATE_PPT, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD |
 | `toolProcessor-logic` | 5 | `buildFileContext` |
 | `chatRuntime.config.js` | 13 | All 4 config values: defaults, env reading, min/max clamping, non-numeric fallback |
-| `similarity.service.js` | 13 | `jaccardSimilarity` (stop words, case, punctuation), `isSameTopic` (thresholds, last-5 window) |
+| `similarity.service.js` | 8 | `jaccardSimilarity` (stop words, case, punctuation) |
 | `compress.service.js` | 11 | All 7 filler patterns, short text skip, >50% compression guard |
 | `sanitize.js` | 11 | HTML tag stripping, entity decoding, newline/whitespace preservation, XSS vectors, sanitizeBody middleware |
 | `tokenAccounting.service.js` | 6 | Both billing paths (API-reported vs fallback), zero inputs, optional fields |
 | `tokenCheck.js` | 5 | Anonymous token cap (10000), remaining tokens, 429 on exhaustion, tokenRemaining |
 | `imageGeneration.service.js` | 5 | Model list validation (Recraft, FLUX.2) — 4 active, 1 skipped |
 | `pptGeneration.service.js` | 3 | Real PPTX generation with DB save, subtitle option, safe filename |
-| `orchestratorBrain.service.js` | 1 | Real framework graph wiring with dispatcher |
+| `orchestratorBrain.service.js` | 2 | Module load check + degraded result on null config |
+| `ragHybrid.test.js` | 10 | `rerankDocsHybrid` — cosine+BM25+Jaccard hybrid reranking, numeric critical miss, lexical gate, topK |
+| `memoryHybrid.test.js` | 11 | `rerankMemoryRowsHybrid` — same hybrid scoring for cross-chat memory, role preservation |
 
 #### Tier 2: Integration with Real Backends — 18 tests
 | Service | Tests | What's covered |
@@ -303,20 +306,24 @@ cd backend && npx vitest run --config vitest.real.config.js __tests__/integratio
 
 # Only chat API tests (requires backend running)
 cd backend && npx vitest run --config vitest.real.config.js __tests__/integration-real/chat-api.test.js
+
+# Only chat pipeline result-shape test (fast local)
+cd backend && npx vitest run __tests__/unit/chatPipeline.resultShape.test.js
 ```
 
 ## Test Status
 
-- **Backend unit**: 234 automated tests via Vitest (`npm test`) — requires `.env` with Supabase + API keys
+- **Backend unit**: 223 automated tests via Vitest (`npm test`) — requires `.env` with Supabase + API keys
 - **Backend real**: 25 real integration tests (`npm run test:real`) — requires `.env` + backend running
 - **Backend lint**: ESLint (`npm run lint`)
 - **Backend types**: TypeScript type checking (`npm run typecheck`)
 - **Frontend**: `npm run test` from `frontend` (react-scripts test)
 - **CI**: GitHub Actions runs lint + typecheck + unit tests on every push/PR (real tests excluded from CI)
 
-### Last Test Run (2026-05-28)
-- **234 tests, 0 failures, 14 test files** — all passing with real Supabase + OpenRouter connections
+### Last Test Run (2026-05-31)
+- **223 tests, 0 failures, 21 test files** — all passing with real Supabase + OpenRouter connections
 - File generation verified: Image (Recraft v4.1), PPT, PDF, Excel, DOCX, CSV, Chart/SVG, HTML, JSON, Markdown
+- Hybrid reranking verified: cosine+BM25+Jaccard with numeric critical miss protection for RAG and cross-chat memory
 
 ## Merged Checklists
 

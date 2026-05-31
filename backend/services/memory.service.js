@@ -18,6 +18,91 @@ const { embedText } = require('./rag.service');
 // Token budget reserved for cross-chat memory block in the AI prompt.
 // Carved out separately — does not compete with historyTokens or ragTokens.
 const MEMORY_CONTEXT_TOKEN_BUDGET = 600;
+const MEMORY_HYBRID_THRESHOLD = 0.56;
+
+const tokenizeForRanking = (text) => {
+  return String(text || '')
+    .toLowerCase()
+    .match(/[a-z0-9]+(?:[._-][a-z0-9]+)*/g) || [];
+};
+
+const normalizeCosine = (cosine) => {
+  const n = Number(cosine || 0);
+  return Math.max(0, Math.min(1, (n + 1) / 2));
+};
+
+const extractNumericTokens = (text) => {
+  return (String(text || '').match(/\b\d+(?:\.\d+)?\b/g) || []).map((n) => n.trim());
+};
+
+const jaccardScore = (queryTokens, docTokens) => {
+  const qSet = new Set(queryTokens);
+  const dSet = new Set(docTokens);
+  if (!qSet.size || !dSet.size) return 0;
+  let intersection = 0;
+  for (const t of qSet) if (dSet.has(t)) intersection++;
+  const union = qSet.size + dSet.size - intersection;
+  return union > 0 ? intersection / union : 0;
+};
+
+const bm25Score = (queryTokens, docTokens, docsTokens, avgDocLen, k1 = 1.2, b = 0.75) => {
+  if (!queryTokens.length || !docTokens.length || !docsTokens.length) return 0;
+  const tf = new Map();
+  for (const t of docTokens) tf.set(t, (tf.get(t) || 0) + 1);
+  const N = docsTokens.length;
+  const uniqueQ = [...new Set(queryTokens)];
+  let score = 0;
+  for (const term of uniqueQ) {
+    let df = 0;
+    for (const dTok of docsTokens) {
+      if (dTok.includes(term)) df++;
+    }
+    if (df === 0) continue;
+    const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5));
+    const termFreq = tf.get(term) || 0;
+    if (!termFreq) continue;
+    const denom = termFreq + k1 * (1 - b + b * (docTokens.length / Math.max(1, avgDocLen)));
+    score += idf * ((termFreq * (k1 + 1)) / denom);
+  }
+  return score;
+};
+
+const rerankMemoryRowsHybrid = (rows, queryText, topK, cosineThreshold) => {
+  if (!rows?.length) return [];
+
+  const qTokens = tokenizeForRanking(queryText);
+  const qNums = extractNumericTokens(queryText);
+  const docsTokens = rows.map((r) => tokenizeForRanking(r.content));
+  const avgLen = docsTokens.reduce((s, d) => s + d.length, 0) / Math.max(1, docsTokens.length);
+
+  const bm25Raw = rows.map((r, i) => bm25Score(qTokens, docsTokens[i], docsTokens, avgLen));
+  const bm25Max = Math.max(1e-9, ...bm25Raw);
+
+  const scored = rows.map((row, idx) => {
+    const cosineNorm = normalizeCosine(row.similarity);
+    const jaccard = jaccardScore(qTokens, docsTokens[idx]);
+    const bm25Norm = bm25Raw[idx] / bm25Max;
+
+    const contentNums = new Set(extractNumericTokens(row.content));
+    const hasAllNums = qNums.every((n) => contentNums.has(n));
+    const numericBoost = qNums.length > 0 && hasAllNums ? 0.1 : 0;
+
+    const lexicalOverlap = qTokens.length ? qTokens.filter((t) => docsTokens[idx].includes(t)).length / qTokens.length : 0;
+    const hybridScore = (0.55 * cosineNorm) + (0.3 * bm25Norm) + (0.15 * jaccard) + numericBoost;
+
+    const numericCriticalMiss = qNums.length > 0 && !hasAllNums && cosineNorm < 0.95;
+    const minAccepted = Math.max(MEMORY_HYBRID_THRESHOLD, normalizeCosine(cosineThreshold));
+    const lexicalGate = qTokens.length === 0 || lexicalOverlap >= 0.1 || cosineNorm >= 0.85;
+    const accepted = !numericCriticalMiss && hybridScore >= minAccepted && lexicalGate;
+
+    return { ...row, hybridScore, accepted };
+  });
+
+  return scored
+    .filter((r) => r.accepted)
+    .sort((a, b) => b.hybridScore - a.hybridScore)
+    .slice(0, topK);
+};
 
 /**
  * Base Memory class
@@ -637,15 +722,21 @@ const embedAndStoreMessage = async ({ userId, topicId, messageId, role, content,
 const searchMemory = async (queryVector, userId, options = {}) => {
   if (!queryVector || !userId) return '';
 
-  const { excludeTopicId = null, topK = 5, threshold = 0.5, tokenBudget = MEMORY_CONTEXT_TOKEN_BUDGET } = options;
+  const {
+    queryText = '',
+    excludeTopicId = null,
+    topK = 5,
+    threshold = 0.5,
+    tokenBudget = MEMORY_CONTEXT_TOKEN_BUDGET
+  } = options;
 
   try {
     const { data, error } = await supabase.rpc('search_memory', {
       query_embedding: queryVector,
       p_user_id: userId,
       p_exclude_topic: excludeTopicId || null,
-      match_threshold: threshold,
-      match_count: topK,
+      match_threshold: Math.max(0.2, threshold - 0.2),
+      match_count: Math.max(topK * 4, topK),
     });
 
     if (error) {
@@ -654,11 +745,13 @@ const searchMemory = async (queryVector, userId, options = {}) => {
     }
 
     if (!data || data.length === 0) return '';
+    const rankedRows = rerankMemoryRowsHybrid(data, queryText, topK, threshold);
+    if (!rankedRows.length) return '';
 
     // Split budget evenly across results, minimum 40 tokens per result
-    const perResultBudget = Math.max(40, Math.floor(tokenBudget / data.length));
+    const perResultBudget = Math.max(40, Math.floor(tokenBudget / rankedRows.length));
 
-    const lines = data.map((row) => {
+    const lines = rankedRows.map((row) => {
       const speaker = row.role === 'user' ? 'User' : 'Assistant';
       const trimmed = trimTextByTokens(row.content, perResultBudget);
       return `- [${speaker}]: ${trimmed}`;
@@ -682,4 +775,5 @@ module.exports = {
   MemoryManager,
   embedAndStoreMessage,
   searchMemory,
+  rerankMemoryRowsHybrid,
 };

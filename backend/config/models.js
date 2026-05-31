@@ -13,7 +13,7 @@ const MODELS = {
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: 'deepseek-v4-flash',
     paid: true,
-    maxTokens: 64000,
+    maxTokens: 128000,
     reasoning: {
       thinking: 'enabled',
       reasoningEffort: 'high',
@@ -25,7 +25,7 @@ const MODELS = {
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: 'deepseek-v4-flash',
     paid: true,
-    maxTokens: 64000,
+    maxTokens: 128000,
     reasoning: {
       thinking: 'enabled',
       reasoningEffort: 'max',
@@ -37,7 +37,7 @@ const MODELS = {
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: 'deepseek-v4-pro',
     paid: true,
-    maxTokens: 64000,
+    maxTokens: 128000,
     reasoning: {
       thinking: 'enabled',
       reasoningEffort: 'high',
@@ -49,7 +49,7 @@ const MODELS = {
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: 'deepseek-v4-pro',
     paid: true,
-    maxTokens: 64000,
+    maxTokens: 128000,
     reasoning: {
       thinking: 'enabled',
       reasoningEffort: 'max',
@@ -61,7 +61,7 @@ const MODELS = {
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: 'deepseek-v4-pro',
     paid: true,
-    maxTokens: 64000,
+    maxTokens: 128000,
     temperature: 0.2,
     reasoning: {
       thinking: 'enabled',

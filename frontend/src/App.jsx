@@ -10,7 +10,6 @@ import { ThemeProvider } from './context/ThemeContext';
 import LoginPage        from './pages/LoginPage';
 import ChatPage         from './pages/ChatPage';
 import AdminPage        from './pages/AdminPage';
-import AnonymousPage    from './pages/AnonymousPage';
 
 // ── Protected route wrapper ────────────────────────────────
 const ProtectedRoute = ({ children, adminOnly = false }) => {
@@ -24,7 +23,6 @@ const ProtectedRoute = ({ children, adminOnly = false }) => {
 const AppRoutes = () => (
   <Routes>
     <Route path="/login"     element={<LoginPage />} />
-    <Route path="/anonymous" element={<AnonymousPage />} />
     <Route path="/chat"      element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
     <Route path="/admin"     element={<ProtectedRoute adminOnly><AdminPage /></ProtectedRoute>} />
     <Route path="*"          element={<Navigate to="/login" replace />} />

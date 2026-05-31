@@ -16,6 +16,7 @@ const { getGlobalRegistry } = require('./promptTemplate.service');
 const { createRetriever } = require('./retriever.service');
 const { createVectorStore } = require('./vectorStore.service');
 const { dispatchToAI } = require('./ai/dispatcher.service');
+const { MODELS } = require('../config/models');
 
 const hashTextToVector = (text, dims = 32) => {
   const vector = new Array(dims).fill(0);
@@ -41,6 +42,72 @@ const makeDispatcher = (effectiveModelConfig, abortController) => ({
     };
   },
 });
+
+const parseFirstJsonObject = (text) => {
+  const raw = String(text || '');
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start < 0 || end < start) return null;
+  try {
+    return JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+};
+
+const runRoutingDecision = async (input, abortController) => {
+  const flash = MODELS['deepseek-v4-flash'];
+  const pro = MODELS['deepseek-v4-pro'];
+  if (!flash?.apiKey || !pro?.apiKey) return null;
+
+  const buildMessages = (query, previousDecision = null) => ([
+    {
+      role: 'system',
+      content: [
+        'You are a routing orchestrator for a multi-tool chatbot.',
+        'Return ONLY valid JSON with fields:',
+        '{"intent":"chat|artifact_ppt|artifact_other|rag_data|code_or_db","confidence":0-1,"needsRag":boolean,"needsTools":boolean,"recommendedModelId":"string","reason":"string"}',
+        'Rules:',
+        '- If query asks for ppt/powerpoint/slides => intent artifact_ppt and needsTools=true',
+        '- Prefer deepseek-v4-pro for complex multi-step or low confidence cases',
+        '- Prefer deepseek-v4-flash for simple chat and high confidence',
+        previousDecision ? `Previous decision: ${JSON.stringify(previousDecision)}` : '',
+      ].filter(Boolean).join('\n'),
+    },
+    { role: 'user', content: String(query || '') },
+  ]);
+
+  const call = async (modelCfg, messages) => {
+    const result = await dispatchToAI(modelCfg, messages, abortController?.signal || null);
+    return parseFirstJsonObject(result?.text || '');
+  };
+
+  const flashDecision = await call(flash, buildMessages(input?.message));
+  if (!flashDecision) return null;
+
+  const lowConfidence = Number(flashDecision.confidence || 0) < 0.72;
+  if (!lowConfidence) {
+    return {
+      ...flashDecision,
+      stage: 'flash',
+      recommendedModelId: flashDecision.recommendedModelId || 'deepseek-v4-flash',
+    };
+  }
+
+  const proDecision = await call(pro, buildMessages(input?.message, flashDecision));
+  if (!proDecision) {
+    return {
+      ...flashDecision,
+      stage: 'flash_fallback',
+      recommendedModelId: flashDecision.recommendedModelId || 'deepseek-v4-flash',
+    };
+  }
+  return {
+    ...proDecision,
+    stage: 'pro_refined',
+    recommendedModelId: proDecision.recommendedModelId || 'deepseek-v4-pro',
+  };
+};
 
 const createFrameworkRuntime = (options = {}) => {
   const { effectiveModelConfig, abortController, onToolStatus } = options;
@@ -173,6 +240,8 @@ const runOrchestratorBrain = async (input, options = {}) => {
   });
 
   try {
+    const routingDecision = await runRoutingDecision(input, options?.abortController).catch(() => null);
+
     await runtime.callbackManager.onOperationStart(
       runtime.callbackManager.createContext('orchestrator-brain', 'workflow')
     );
@@ -213,6 +282,7 @@ const runOrchestratorBrain = async (input, options = {}) => {
     return {
       enabled: true,
       traceId: trace.id,
+      routingDecision,
       graph: graphResult,
       dashboard,
       suggestions,
@@ -235,6 +305,7 @@ const runOrchestratorBrain = async (input, options = {}) => {
       enabled: true,
       traceId: completedTrace.id,
       error: err.message,
+      routingDecision: null,
       dashboard: FlowDashboard.getSummary(completedTrace, runtime.stateTracker),
     };
   }

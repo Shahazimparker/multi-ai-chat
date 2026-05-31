@@ -34,6 +34,11 @@ declare module 'os' {
   export = os;
 }
 
+declare module 'crypto' {
+  const crypto: any;
+  export = crypto;
+}
+
 declare module 'jszip' {
   const JSZip: any;
   export = JSZip;

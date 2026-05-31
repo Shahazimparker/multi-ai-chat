@@ -157,7 +157,7 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
   const dynamicBudget = createDynamicPromptBudget(
     turnCount,
     complexityScore,
-    { maxTokens: 8000 }
+    { maxTokens: options.modelMaxTokens || 8000 }
   );
   const tokenBudget = options.tokenBudget || dynamicBudget.historyTokens;
 

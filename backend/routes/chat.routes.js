@@ -109,6 +109,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
     historyLimit = 5,
     ragEnabled = false,
     history,
+    allowArtifactWithCurrentModel = false,
   } = req.body;
 
   const user = req.user;
@@ -142,6 +143,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
     historyLimit,
     ragEnabled,
     history,
+    allowArtifactWithCurrentModel: Boolean(allowArtifactWithCurrentModel),
     abortController,
 
     ...CANONICAL_CHAT_PIPELINE_FLAGS,
@@ -187,6 +189,9 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
         error: errorMessage,
         errorType,
         originalError: result.err?.message || '',
+        suggestedModels: result.suggestedModels || undefined,
+        recommendedModelId: result.recommendedModelId || undefined,
+        failedModelId: modelId,
       })}\n\n`);
     } catch (writeErr) {
       console.warn('[Stream] Failed to write SSE error response:', writeErr.message);

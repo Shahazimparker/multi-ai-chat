@@ -7,7 +7,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import ThemeToggle from '../components/layout/ThemeToggle';
-import { Sparkles, Lock, User, Eye, EyeOff, Ghost } from 'lucide-react';
+import { Sparkles, Lock, User, Eye, EyeOff } from 'lucide-react';
 import './LoginPage.css';
 
 const LoginPage = () => {
@@ -95,14 +95,6 @@ const LoginPage = () => {
             {loading ? <span className="btn-spinner" /> : 'Sign In'}
           </button>
         </form>
-
-        <div className="login-divider"><span>or</span></div>
-
-        <button className="btn-anonymous" onClick={() => navigate('/anonymous')}>
-          <Ghost size={16} />
-          Continue Anonymously
-          <span className="anon-note">No account needed · No history saved</span>
-        </button>
       </div>
     </div>
   );

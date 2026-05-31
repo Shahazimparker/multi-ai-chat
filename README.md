@@ -19,7 +19,7 @@ Unified AI chat platform with authentication, anonymous mode, file-aware chat (R
 - **OrchestratorBrain**: `/api/chat/stream` initializes the real custom framework runtime (graph workflow, SmartAgent, callbacks, tracing, flow dashboard, parser, retriever, and vector store) before provider streaming; covered by no-mock unit tests.
 - **Deploy-safe human approvals**: approval requests persist in Supabase via `human_approvals`; API approval/rejection runs through `/api/approvals` without blocking serverless invocations.
 - Authenticated and anonymous chat flows
-- Semantic query cache, RAG context, history summarization, cross-chat memory
+- Semantic query cache, RAG context with hybrid reranking (cosine+BM25+Jaccard), history summarization, cross-chat memory with hybrid reranking
 - File upload/search integration
 - Admin panel (users, quotas, analytics)
 - Theme toggle in frontend
