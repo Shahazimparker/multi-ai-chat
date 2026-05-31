@@ -133,7 +133,7 @@ const processToolCall = async ({
     onStatus?.({
       type: 'status',
       tool: 'web_search',
-      message: `Searching the web for "${query}"...`,
+      message: 'searching on web',
     });
     console.log(`[Tool] Web search requested (${query.length} chars)`);
     const results = await searchWeb(query);
@@ -146,7 +146,7 @@ const processToolCall = async ({
     return {
       handled: true,
       newMessages: [
-        { role: 'assistant', content: reply.replace(webSearchMatch[0], '').trim() || `[Searching web for "${query}"]` },
+        { role: 'assistant', content: reply.replace(webSearchMatch[0], '').trim() || '[searching on web]' },
         { role: 'user', content: resultBlock },
       ],
       embedTokens: 0,

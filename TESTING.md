@@ -276,6 +276,7 @@ cd backend && npm run test:real
 ```
 backend/__tests__/integration-real/
 ├── setup.js               # Loads .env for real API keys
+├── webSearch.test.js      # Real web search provider chain test (no mocks)
 ├── supabase.test.js       # Real Supabase queries (7 tests)
 ├── ai-providers.test.js   # Real AI provider calls (10 tests)
 ├── chat-api.test.js       # Real HTTP chat endpoints (4 tests)
@@ -292,6 +293,7 @@ backend/__tests__/integration-real/
 | `chat-api.test.js` | 4 | GET /health, GET /models, anonymous POST /stream, POST /stream (SSE) |
 | `sanitize.test.js` | 11 | `sanitizeInput` HTML stripping, entities, whitespace, edge cases + `sanitizeBody` middleware |
 | `toolLoop.test.js` | 2 | Real Gemini single-round dispatch, abort error propagation |
+| `webSearch.test.js` | 1 | Real provider-backed web search with normalized result shape (`title/snippet/url`) |
 
 
 
@@ -306,6 +308,9 @@ cd backend && npx vitest run --config vitest.real.config.js __tests__/integratio
 
 # Only chat API tests (requires backend running)
 cd backend && npx vitest run --config vitest.real.config.js __tests__/integration-real/chat-api.test.js
+
+# Only live websearch provider test
+cd backend && npx vitest run --config vitest.real.config.js __tests__/integration-real/webSearch.test.js
 
 # Only chat pipeline result-shape test (fast local)
 cd backend && npx vitest run __tests__/unit/chatPipeline.resultShape.test.js

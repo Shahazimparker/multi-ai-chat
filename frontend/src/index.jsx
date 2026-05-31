@@ -8,6 +8,7 @@ import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/react';
 import './index.css';
 import App from './App';
+console.log = () => {};
 
 // Initialize Sentry for error tracking
 if (process.env.REACT_APP_SENTRY_DSN) {

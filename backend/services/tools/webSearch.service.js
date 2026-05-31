@@ -1,87 +1,244 @@
 const axios = require('axios');
 
 /**
- * Searches the web using DuckDuckGo Instant Answers API.
- * Falls back to Wikipedia if DuckDuckGo returns no results.
+ * Searches the web with provider fallback in this order:
+ * 1) Tavily
+ * 2) Firecrawl
+ * 3) Exa
+ * 4) SerpAPI
+ * LangSearch is always queried for aggregation enhancement.
+ * Falls back on error, timeout, rate-limit, or empty results.
  * @param {string} query
  * @returns {Promise<Array>} Array of { title, snippet, url }
  */
 const searchWeb = async (query) => {
-  // ── DuckDuckGo (primary) ──
-  try {
-    const response = await axios.get('https://api.duckduckgo.com/', {
+  const timeout = Number(process.env.WEB_SEARCH_TIMEOUT_MS || 8000);
+  const userAgent = 'MultiAIChatBot/1.0 (https://github.com/Azim/multi-ai-chat) axios/1.7.9';
+
+  const normalize = (raw = []) => raw
+    .map((item) => ({
+      title: String(item?.title || '').trim(),
+      snippet: String(item?.snippet || '').replace(/<[^>]+>/g, '').trim(),
+      url: String(item?.url || '').trim(),
+    }))
+    .filter((item) => item.title && item.url)
+    .slice(0, 5);
+
+  const toCanonicalUrl = (value = '') => {
+    try {
+      const u = new URL(value);
+      return `${u.origin}${u.pathname}`.replace(/\/+$/, '').toLowerCase();
+    } catch {
+      return String(value || '').trim().toLowerCase();
+    }
+  };
+
+  const aggregateResults = (base = [], extra = []) => {
+    const merged = [...base, ...extra];
+    const seen = new Set();
+    const output = [];
+    for (const item of merged) {
+      const key = toCanonicalUrl(item.url);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      output.push(item);
+      if (output.length >= 5) break;
+    }
+    return output;
+  };
+
+  const safeProviderCall = async (name, fn) => {
+    try {
+      const results = normalize(await fn());
+      if (results.length === 0) {
+        console.warn(`[WebSearch] ${name} returned empty results, falling back...`);
+        return null;
+      }
+      return results;
+    } catch (err) {
+      const status = err?.response?.status;
+      const label = status ? `${err.message} (HTTP ${status})` : err.message;
+      console.error(`[WebSearch] ${name} failed:`, label);
+      return null;
+    }
+  };
+
+  const exaSearch = async () => {
+    const apiKey = process.env.EXA_API_KEY;
+    if (!apiKey) return [];
+
+    const response = await axios.post(
+      'https://api.exa.ai/search',
+      { query, numResults: 5, type: 'auto' },
+      {
+        timeout,
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': userAgent,
+          'x-api-key': apiKey,
+        },
+      }
+    );
+
+    const items = Array.isArray(response?.data?.results) ? response.data.results : [];
+    return items.map((item) => ({
+      title: item?.title || item?.url || query,
+      snippet: item?.text || '',
+      url: item?.url || '',
+    }));
+  };
+
+  const tavilySearch = async () => {
+    const apiKey = process.env.TAVILY_API_KEY;
+    if (!apiKey) return [];
+
+    const response = await axios.post(
+      'https://api.tavily.com/search',
+      {
+        api_key: apiKey,
+        query,
+        max_results: 5,
+        include_answer: false,
+        search_depth: 'basic',
+      },
+      {
+        timeout,
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': userAgent,
+        },
+      }
+    );
+
+    const items = Array.isArray(response?.data?.results) ? response.data.results : [];
+    return items.map((item) => ({
+      title: item?.title || item?.url || query,
+      snippet: item?.content || '',
+      url: item?.url || '',
+    }));
+  };
+
+  const firecrawlSearch = async () => {
+    const apiKey = process.env.FIRECRAWL_API_KEY;
+    if (!apiKey) return [];
+
+    const response = await axios.post(
+      'https://api.firecrawl.dev/v1/search',
+      { query, limit: 5 },
+      {
+        timeout,
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': userAgent,
+          Authorization: `Bearer ${apiKey}`,
+        },
+      }
+    );
+
+    const items = Array.isArray(response?.data?.data) ? response.data.data : [];
+    return items.map((item) => ({
+      title: item?.title || item?.url || query,
+      snippet: item?.description || item?.markdown || '',
+      url: item?.url || '',
+    }));
+  };
+
+  const serpApiSearch = async () => {
+    const apiKey = process.env.SERPAPI_API_KEY;
+    if (!apiKey) return [];
+
+    const response = await axios.get('https://serpapi.com/search.json', {
+      timeout,
       params: {
         q: query,
-        format: 'json',
-        no_html: 1,
-        skip_disambig: 1
+        api_key: apiKey,
+        num: 5,
+        engine: 'google',
       },
       headers: {
-        'User-Agent': 'MultiAIChatBot/1.0 (https://github.com/Azim/multi-ai-chat) axios/1.7.9'
-      }
-    });
-
-    const data = response.data;
-    const results = [];
-
-    // Abstract (main answer)
-    if (data.AbstractText) {
-      results.push({
-        title: data.Heading || query,
-        snippet: data.AbstractText,
-        url: data.AbstractURL || `https://duckduckgo.com/?q=${encodeURIComponent(query)}`
-      });
-    }
-
-    // Related topics
-    if (data.RelatedTopics && data.RelatedTopics.length > 0) {
-      for (const topic of data.RelatedTopics) {
-        if (results.length >= 5) break;
-        if (topic.Text && topic.FirstURL) {
-          results.push({
-            title: topic.Text.split(' - ')[0] || query,
-            snippet: topic.Text,
-            url: topic.FirstURL
-          });
-        }
-      }
-    }
-
-    if (results.length > 0) return results;
-  } catch (err) {
-    console.error('[WebSearch] DuckDuckGo error:', err.message);
-  }
-
-  // ── Wikipedia fallback ──
-  try {
-    const response = await axios.get('https://en.wikipedia.org/w/api.php', {
-      params: {
-        action: 'query',
-        list: 'search',
-        srsearch: query,
-        utf8: '',
-        format: 'json'
+        'User-Agent': userAgent,
       },
-      headers: {
-        'User-Agent': 'MultiAIChatBot/1.0 (https://github.com/Azim/multi-ai-chat) axios/1.7.9'
-      }
     });
 
-    if (!response.data || !response.data.query || !response.data.query.search) {
-      return [];
-    }
-
-    const results = response.data.query.search.slice(0, 5).map(item => ({
-      title: item.title,
-      snippet: item.snippet.replace(/<[^>]+>/g, ''),
-      url: `https://en.wikipedia.org/wiki/${encodeURIComponent(item.title.replace(/ /g, '_'))}`
+    const items = Array.isArray(response?.data?.organic_results) ? response.data.organic_results : [];
+    return items.map((item) => ({
+      title: item?.title || item?.link || query,
+      snippet: item?.snippet || '',
+      url: item?.link || '',
     }));
-    
-    return results;
-  } catch (err) {
-    console.error('[WebSearch] Wikipedia error:', err.message);
-    return [];
+  };
+
+  const langSearch = async () => {
+    const apiKey = process.env.LANGSEARCH_API_KEY;
+    if (!apiKey) return [];
+
+    const response = await axios.post(
+      'https://api.langsearch.com/v1/web-search',
+      {
+        query,
+        freshness: process.env.LANGSEARCH_FRESHNESS || 'noLimit',
+        summary: String(process.env.LANGSEARCH_SUMMARY || 'true').toLowerCase() === 'true',
+        count: 5,
+      },
+      {
+        timeout,
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': userAgent,
+          Authorization: `Bearer ${apiKey}`,
+        },
+      }
+    );
+
+    const payload = response?.data?.data;
+    let items = [];
+
+    if (Array.isArray(payload)) {
+      items = payload;
+    } else if (Array.isArray(payload?.results)) {
+      items = payload.results;
+    } else if (Array.isArray(payload?.webPages?.value)) {
+      items = payload.webPages.value;
+    } else if (Array.isArray(payload?.organic_results)) {
+      items = payload.organic_results;
+    }
+
+    return items.map((item) => ({
+      title: item?.title || item?.name || item?.url || item?.link || query,
+      snippet: item?.summary || item?.content || item?.snippet || item?.description || '',
+      url: item?.url || item?.link || '',
+    }));
+  };
+
+  const providers = [
+    { name: 'Tavily', fn: tavilySearch },
+    { name: 'Firecrawl', fn: firecrawlSearch },
+    { name: 'Exa', fn: exaSearch },
+    { name: 'SerpAPI', fn: serpApiSearch },
+  ];
+
+  let primaryResults = null;
+  let primaryProvider = null;
+  for (const provider of providers) {
+    const results = await safeProviderCall(provider.name, provider.fn);
+    if (results) {
+      primaryResults = results;
+      primaryProvider = provider.name;
+      break;
+    }
   }
+
+  const langResults = await safeProviderCall('LangSearch', langSearch);
+  const base = primaryResults || [];
+  const extra = langResults || [];
+  const finalResults = aggregateResults(base, extra);
+
+  if (finalResults.length > 0) {
+    return finalResults;
+  }
+
+  console.warn('[WebSearch] No provider returned results.');
+  return [];
 };
 
 module.exports = { searchWeb };

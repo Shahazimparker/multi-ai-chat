@@ -22,6 +22,7 @@ const sendMessage = async (req, res) => {
     memoryMode = 'summarized',
     historyLimit = 5,
     ragEnabled = false,
+    forceWebSearch = false,
   } = req.body;
 
   // ── Setup Abort Controller ─────────────────────────────────
@@ -49,6 +50,7 @@ const sendMessage = async (req, res) => {
     memoryMode,
     historyLimit,
     ragEnabled,
+    forceWebSearch: Boolean(forceWebSearch),
 
     abortController,
 

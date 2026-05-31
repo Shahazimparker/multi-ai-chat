@@ -7,6 +7,7 @@ export const useChatComposer = () => {
   const [input, setInput] = useState('');
   const [pendingFiles, setPendingFiles] = useState([]);
   const [pendingImage, setPendingImage] = useState(null);
+  const [webEnabled, setWebEnabled] = useState(false);
   const textareaRef = useRef(null);
 
   const handlePaste = useCallback((event, model) => {
@@ -37,7 +38,7 @@ export const useChatComposer = () => {
   }, []);
 
   const consumeDraft = useCallback(() => {
-    const payload = { text: input, files: [...pendingFiles], image: pendingImage };
+    const payload = { text: input, files: [...pendingFiles], image: pendingImage, forceWebSearch: webEnabled };
     setInput('');
     setPendingFiles([]);
     setPendingImage(null);
@@ -56,6 +57,8 @@ export const useChatComposer = () => {
     setPendingFiles,
     pendingImage,
     setPendingImage,
+    webEnabled,
+    setWebEnabled,
     textareaRef,
     handlePaste,
     consumeDraft,

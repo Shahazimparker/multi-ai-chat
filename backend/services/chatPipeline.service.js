@@ -33,6 +33,7 @@ const { calculateBillableTokens } = require('./tokenAccounting.service');
 const { buildFileContext } = require('./toolProcessor.service');
 const { runToolLoop } = require('./toolLoop.service');
 const { stripToolTags, classifyError } = require('./chatCleanup.service');
+const { searchWeb } = require('./tools/webSearch.service');
 const {
   createPromptBudget,
   createDynamicPromptBudget,
@@ -57,6 +58,7 @@ const {
  * @param {string}   [opts.memoryMode='summarized']
  * @param {number}   [opts.historyLimit=5]
  * @param {boolean}  [opts.ragEnabled=false]
+ * @param {boolean}  [opts.forceWebSearch=false]
  * @param {Array}    [opts.history]             — client-provided history for anonymous
  * @param {AbortController} opts.abortController
  *
@@ -159,6 +161,7 @@ const runChatPipeline = async (opts) => {
     memoryMode = 'summarized',
     historyLimit = 5,
     ragEnabled = false,
+    forceWebSearch = false,
     history,
     abortController,
 
@@ -181,6 +184,8 @@ const runChatPipeline = async (opts) => {
   } = opts;
 
   let resolvedTopicId = topicId;
+  // Web toggle is additive: always include internal retrieval with web search.
+  const effectiveRagEnabled = Boolean(ragEnabled || forceWebSearch);
 
   try {
     // ── 1. Validate model ──────────────────────────────────────
@@ -310,7 +315,7 @@ const runChatPipeline = async (opts) => {
     let queryVector = null;
     let totalEmbeddingTokens = 0;
 
-    if (ragEnabled) {
+    if (effectiveRagEnabled) {
       if (abortController.signal.aborted) throw { name: 'AbortError' };
       const embedResult = await embedText(finalQuery, embedProvider, 3, abortController.signal, user?.id);
       if (embedResult) {
@@ -342,10 +347,11 @@ const runChatPipeline = async (opts) => {
 
     // ── 6. RAG context + file listing ─────────────────────────
     let ragContext = '';
+    let forcedWebContext = '';
     let fileResults = [];
     let totalFileCount = 0;
 
-    if (ragEnabled) {
+    if (effectiveRagEnabled) {
       if (abortController.signal.aborted) throw { name: 'AbortError' };
       const [ragCtx, fileData] = await Promise.all([
         buildRAGContext(
@@ -363,6 +369,18 @@ const runChatPipeline = async (opts) => {
         : (fileData || {});
       fileResults = normalizedFileData.files || [];
       totalFileCount = normalizedFileData.totalCount || fileResults.length;
+    }
+
+    if (forceWebSearch) {
+      onToolStatus?.({
+        type: 'status',
+        tool: 'web_search',
+        message: 'searching on web',
+      });
+      const webResults = await searchWeb(finalQuery);
+      forcedWebContext = webResults.length > 0
+        ? `[WEB SEARCH RESULTS for "${finalQuery}"]\n${webResults.map((r) => `- [${r.title}](${r.url}): ${r.snippet}`).join('\n')}\n[END WEB SEARCH RESULTS]`
+        : `[WEB SEARCH RESULTS for "${finalQuery}"]\nNo results found.\n[END WEB SEARCH RESULTS]`;
     }
 
     const fileContext = buildFileContext(fileResults, totalFileCount);
@@ -390,7 +408,7 @@ const runChatPipeline = async (opts) => {
 
     // ── 7.5 Cross-chat memory (accurate mode, message only) ───
     let memoryContext = '';
-    if (memoryEnabled && ragEnabled && memoryMode === 'accurate' && queryVector && user?.id) {
+    if (memoryEnabled && effectiveRagEnabled && memoryMode === 'accurate' && queryVector && user?.id) {
       memoryContext = await searchMemory(queryVector, user.id, {
         queryText: finalQuery,
         excludeTopicId: resolvedTopicId,
@@ -427,6 +445,7 @@ const runChatPipeline = async (opts) => {
     const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}${generalToolsDirective}`;
     const systemSections = [staticSystem];
     if (ragContext) systemSections.push(`## Retrieved Context\n${ragContext}`);
+    if (forcedWebContext) systemSections.push(`## Web Search Context\n${forcedWebContext}`);
     if (fileContext) systemSections.push(`## File Context\n${fileContext}`);
     if (memoryContext) systemSections.push(memoryContext);
     aiMessages.push({ role: 'system', content: systemSections.join('\n\n') });

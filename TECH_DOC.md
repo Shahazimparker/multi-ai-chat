@@ -66,6 +66,7 @@ This document is the technical reference for the current codebase state.
 - Analytics: `backend/services/analytics.service.js`
 - Similarity and compression: `backend/services/similarity.service.js`, `backend/services/compress.service.js`
 - Tool execution helpers: `backend/services/tools/webSearch.service.js`, `backend/services/tools/codeExecute.service.js`
+  - `webSearch.service.js` uses provider fallback in this order: `Exa -> Tavily -> Firecrawl -> SerpAPI -> LangSearch` and falls back on errors, timeouts, rate limits, or empty results.
 - File generation: `backend/services/imageGeneration.service.js` (Recraft/FLUX via OpenRouter), `backend/services/pptGeneration.service.js` (pptxgenjs), `backend/services/pdfGeneration.service.js` (pdfkit), `backend/services/excelGeneration.service.js` (exceljs), `backend/services/wordGeneration.service.js` (docx), `backend/services/csvGeneration.service.js`, `backend/services/chartGeneration.service.js` (SVG), `backend/services/htmlGeneration.service.js`, `backend/services/jsonGeneration.service.js`, `backend/services/markdownGeneration.service.js`
 
 ### AI Framework Services (LangChain/LangGraph/LangSmith Equivalent)
@@ -255,6 +256,8 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
 - `SENTRY_DSN`
 - `ANONYMOUS_TOKEN_LIMIT` — token cap for anonymous users (default: 10000)
 - Provider API keys used by configured or optional provider modules
+- Web search provider keys: `EXA_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY`, `SERPAPI_API_KEY`, `LANGSEARCH_API_KEY`
+- Web search optional tuning: `WEB_SEARCH_TIMEOUT_MS`, `LANGSEARCH_FRESHNESS`, `LANGSEARCH_SUMMARY`
 
 ### Frontend
 
@@ -263,9 +266,9 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
 
 ## Testing Reality
 
-- Backend has no dedicated unit/integration test script in `backend/package.json`
+- Backend scripts exist in `backend/package.json`: `test`, `test:coverage`, `test:real`, `typecheck`, and `lint`
 - Frontend test command exists (`react-scripts test`)
-- Current backend validation pattern is lint + manual regression (`TESTING.md`)
+- Real integration tests include live web search coverage in `backend/__tests__/integration-real/webSearch.test.js`
 
 ## Related Docs
 

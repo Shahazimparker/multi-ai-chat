@@ -217,10 +217,10 @@ export const useChatSession = ({ refreshTokenStats }) => {
     });
   }, [model, ragEnabled]);
 
-  const sendMessage = useCallback(async (msgText, filesArr, image, isRetry = false, forceCurrentModel = false) => {
+  const sendMessage = useCallback(async (msgText, filesArr, image, isRetry = false, forceCurrentModel = false, forceWebSearch = false) => {
     let finalMessage = String(msgText).trim();
     const files = filesArr || [];
-    setFailedMessage({ text: finalMessage, files, image, forceCurrentModel });
+    setFailedMessage({ text: finalMessage, files, image, forceCurrentModel, forceWebSearch: Boolean(forceWebSearch) });
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -293,6 +293,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
           memoryMode,
           historyLimit: Number(historyLimit),
           ragEnabled,
+          forceWebSearch: Boolean(forceWebSearch),
           allowArtifactWithCurrentModel: Boolean(forceCurrentModel),
         }),
         signal: controller.signal,
@@ -465,7 +466,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
     if (loading || messageQueue.length === 0) return;
     const [next, ...rest] = messageQueue;
     setMessageQueue(rest);
-    sendMessage(next.text, next.files, next.image);
+    sendMessage(next.text, next.files, next.image, false, false, Boolean(next.forceWebSearch));
   }, [loading, messageQueue, sendMessage]);
 
   useEffect(() => {
@@ -478,31 +479,31 @@ export const useChatSession = ({ refreshTokenStats }) => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [queuePopoverOpen]);
 
-  const requestSend = useCallback(async ({ text, files, image }) => {
+  const requestSend = useCallback(async ({ text, files, image, forceWebSearch }) => {
     if (!String(text || '').trim() && (!files || files.length === 0)) return;
     if (loading) {
-      setMessageQueue((prev) => [...prev, { text, files: [...(files || [])], image }]);
+      setMessageQueue((prev) => [...prev, { text, files: [...(files || [])], image, forceWebSearch: Boolean(forceWebSearch) }]);
       return;
     }
-    await sendMessage(text, files || [], image);
+    await sendMessage(text, files || [], image, false, false, Boolean(forceWebSearch));
   }, [loading, sendMessage]);
 
   const handleRetry = useCallback(() => {
     if (!failedMessage) return;
-    const { text, files, image, forceCurrentModel } = failedMessage;
+    const { text, files, image, forceCurrentModel, forceWebSearch } = failedMessage;
     setFailedMessage(null);
     setError('');
     setMessages((prev) => (prev[prev.length - 1]?.role === 'assistant' ? prev.slice(0, -1) : prev));
-    sendMessage(text, files, image, true, forceCurrentModel);
+    sendMessage(text, files, image, true, forceCurrentModel, Boolean(forceWebSearch));
   }, [failedMessage, sendMessage]);
 
   const handleContinueWithCurrentModel = useCallback(() => {
     if (!failedMessage) return;
-    const { text, files, image } = failedMessage;
+    const { text, files, image, forceWebSearch } = failedMessage;
     setLlmError(null);
     setError('');
     setMessages((prev) => (prev[prev.length - 1]?.role === 'assistant' ? prev.slice(0, -1) : prev));
-    sendMessage(text, files, image, true, true);
+    sendMessage(text, files, image, true, true, Boolean(forceWebSearch));
   }, [failedMessage, sendMessage]);
 
   const removeFromQueue = useCallback((index) => {

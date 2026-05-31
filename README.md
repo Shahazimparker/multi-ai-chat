@@ -21,6 +21,7 @@ Unified AI chat platform with authentication, anonymous mode, file-aware chat (R
 - Authenticated and anonymous chat flows
 - Semantic query cache, RAG context with hybrid reranking (cosine+BM25+Jaccard), history summarization, cross-chat memory with hybrid reranking
 - File upload/search integration
+- Web search fallback chain: `Exa -> Tavily -> Firecrawl -> SerpAPI -> LangSearch` (fallback on errors/timeouts/rate limits/empty results)
 - Admin panel (users, quotas, analytics)
 - Theme toggle in frontend
 - Sentry integration (frontend + backend)

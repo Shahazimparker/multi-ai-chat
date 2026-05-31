@@ -77,6 +77,17 @@ const ChatInputPanel = ({
       )}
 
       <button
+        type="button"
+        className={`web-toggle-btn ${composer.webEnabled ? 'active' : ''}`}
+        onClick={() => composer.setWebEnabled((prev) => !prev)}
+        disabled={session.loading || !session.model}
+        title="Enable web search for this query"
+      >
+        <span className={`web-toggle-dot ${composer.webEnabled ? 'on' : 'off'}`} />
+        Web
+      </button>
+
+      <button
         className={`send-btn ${session.loading ? 'stop-btn' : ''}`}
         onClick={session.loading ? session.handleStop : handleSend}
         disabled={session.loading ? false : (!composer.input.trim() && composer.pendingFiles.length === 0) || !session.model}
