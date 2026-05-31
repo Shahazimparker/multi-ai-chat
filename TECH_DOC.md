@@ -220,6 +220,16 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
 | `humanApproval.service.js` | Approval timeout: `null` timeout no longer means infinite wait — clamped to `MAX_APPROVAL_TIMEOUT_MS = 3600000` |
 | `humanApproval.service.js` | `approvalFn` now fire-and-forget via `Promise.resolve().then(...).catch(...)` — auto-rejects pending request if delivery fails |
 
+### PPT Generation Fixes
+| File | Fix |
+|---|---|
+| `toolProcessor.service.js` | Function-call error path now includes `err.message` instead of a hardcoded generic string, so the AI and user see the actual cause |
+| `pptGeneration.service.js` | `statistics_strip` layout: bullets formatted as `"Label: Value"` are split on the first `:` — the left part becomes the metric label, the right part the big-number value; unlabelled bullets fall back to `"Metric N"` |
+| `pptGeneration.service.js` | `timeline` layout with a single item: dot is centred at x=6.6 instead of snapping to the far-left edge (denominator was `items.length - 1 = 0`) |
+| `pptGeneration.service.js` | `faq` layout: capped at 5 items (was 6) — the 6th row's bottom edge reached y=6.62, leaving only 0.33" before the footer note at y=6.95 |
+| `openrouter.service.js` | Removed the duplicate `style` field from the `generate_ppt` tool schema; `theme` is now the single authoritative field (runtime still accepts `style` from the text-tag path for backwards compatibility) |
+| `openrouter.service.js` | Added `leftTitle` and `rightTitle` to the slide schema so the AI can populate `comparison_split` column headers |
+
 ### Dead Code Removed
 | File | Fix |
 |---|---|

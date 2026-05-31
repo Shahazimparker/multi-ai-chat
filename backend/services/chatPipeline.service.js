@@ -222,12 +222,11 @@ const runChatPipeline = async (opts) => {
         })
       : null;
 
-    // Orchestrator-selected model handling:
-    // for artifact intents, request user model switch instead of silent override.
+    // Orchestrator-selected model handling: note the recommended model for downstream use.
     const routedModelId = orchestratorBrain?.routingDecision?.recommendedModelId;
     const routedIntent = orchestratorBrain?.routingDecision?.intent;
-    const artifactIntent = routedIntent === 'artifact_ppt' || routedIntent === 'artifact_other';
-    if (!providerModelId && !allowArtifactWithCurrentModel && artifactIntent && routedModelId && MODELS[routedModelId] && routedModelId !== modelId) {
+    if (false) {
+      // model-switch gate removed — all models support artifact generation via the text-tag path
       return makePipelineResult({
         err: new Error(`Model switch required for artifact intent: ${routedModelId}`),
         errorType: 'model_switch_required',

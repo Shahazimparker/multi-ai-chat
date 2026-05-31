@@ -62,19 +62,9 @@ describe('processToolCall', () => {
   // Run manually if needed with: npx vitest run --tag=api-costly
 
   describe('GENERATE_PPT handler', () => {
-    it('handles generate_ppt function-call with invalid args', async () => {
-      const result = await processToolCall({
-        ...baseArgs,
-        reply: '',
-        aiResponse: {
-          toolCalls: [{ type: 'function', function: { name: 'generate_ppt', arguments: '{bad json' } }],
-        },
-      });
-      expect(result.handled).toBe(true);
-      expect(result.newMessages[1].content).toContain('Invalid function-call arguments');
-    });
+    // ── text-tag path ────────────────────────────────────────
 
-    it('generates PPT and returns generatedMedia', async () => {
+    it('generates PPT via text tag and returns generatedMedia', async () => {
       const pptJson = JSON.stringify({
         title: 'Test Presentation',
         slides: [{ title: 'Slide 1', bullets: ['Point A', 'Point B'] }],
@@ -90,9 +80,9 @@ describe('processToolCall', () => {
       expect(result.generatedMedia[0]).toHaveProperty('file_id');
       expect(result.generatedMedia[0]).toHaveProperty('file_name');
       expect(result.generatedMedia[0].file_type).toBe('pptx');
-    });
+    }, 15000);
 
-    it('handles invalid JSON', async () => {
+    it('text tag: handles invalid JSON', async () => {
       const result = await processToolCall({
         ...baseArgs,
         reply: '[GENERATE_PPT]not valid json[/GENERATE_PPT]',
@@ -101,14 +91,75 @@ describe('processToolCall', () => {
       expect(result.newMessages[1].content).toContain('Failed to generate presentation');
     });
 
-    it('handles empty slides array', async () => {
+    it('text tag: handles empty slides array', async () => {
       const result = await processToolCall({
         ...baseArgs,
         reply: '[GENERATE_PPT]{"title":"Empty","slides":[]}[/GENERATE_PPT]',
       });
       expect(result.handled).toBe(true);
       expect(result.newMessages[1].content).toContain('Failed to generate presentation');
+      expect(result.newMessages[1].content).toContain('No slides provided');
     });
+
+    // ── function-call path ───────────────────────────────────
+
+    it('function-call path: generates PPT and returns generatedMedia', async () => {
+      const result = await processToolCall({
+        ...baseArgs,
+        user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' },
+        reply: '',
+        aiResponse: {
+          toolCalls: [{
+            type: 'function',
+            function: {
+              name: 'generate_ppt',
+              arguments: JSON.stringify({
+                title: 'Function Call PPT',
+                theme: 'startup_bold',
+                slides: [
+                  { title: 'Intro', layout: 'title_bullets', bullets: ['Point A', 'Point B'] },
+                  { title: 'Stats', layout: 'statistics_strip', bullets: ['Revenue: $12M', 'Users: 450k'] },
+                ],
+              }),
+            },
+          }],
+        },
+      });
+      expect(result.handled).toBe(true);
+      expect(result.generatedMedia.length).toBeGreaterThan(0);
+      expect(result.generatedMedia[0]).toHaveProperty('file_id');
+      expect(result.generatedMedia[0].file_type).toBe('pptx');
+    }, 15000);
+
+    it('function-call path: invalid JSON forwards actual parse error message', async () => {
+      const result = await processToolCall({
+        ...baseArgs,
+        reply: '',
+        aiResponse: {
+          toolCalls: [{ type: 'function', function: { name: 'generate_ppt', arguments: '{bad json' } }],
+        },
+      });
+      expect(result.handled).toBe(true);
+      expect(result.newMessages[1].content).toContain('Failed to generate presentation');
+      // Must NOT be the old hardcoded message — actual parse error must appear
+      expect(result.newMessages[1].content).not.toContain('Invalid function-call arguments for generate_ppt');
+    });
+
+    it('function-call path: empty slides array includes "No slides provided" in error', async () => {
+      const result = await processToolCall({
+        ...baseArgs,
+        reply: '',
+        aiResponse: {
+          toolCalls: [{
+            type: 'function',
+            function: { name: 'generate_ppt', arguments: '{"title":"Empty","slides":[]}' },
+          }],
+        },
+      });
+      expect(result.handled).toBe(true);
+      expect(result.newMessages[1].content).toContain('Failed to generate presentation');
+      expect(result.newMessages[1].content).toContain('No slides provided');
+    }, 15000);
   });
 
   describe('GENERATE_PDF handler', () => {

@@ -198,7 +198,7 @@ backend/
 │   │   ├── tokenBudget.test.js           # estimateTokens, budgets, complexity, smartTrim (38 tests)
 │   │   ├── imageGeneration.test.js       # Model list validation (4 tests, 1 skipped)
 │   │   ├── orchestratorBrain.test.js     # Module load + degraded config (2 tests)
-│   │   ├── pptGeneration.test.js         # Real PPTX generation with DB save (3 tests)
+│   │   ├── pptGeneration.test.js         # Real PPTX generation with DB save (23 tests)
 │   └── integration/
 │       ├── toolProcessor.test.js         # processToolCall with real tool backends (17 tests)
 │       └── toolLoop.test.js              # runToolLoop module load verification (1 test)
@@ -222,7 +222,7 @@ backend/
 | `tokenAccounting.service.js` | 6 | Both billing paths (API-reported vs fallback), zero inputs, optional fields |
 | `tokenCheck.js` | 5 | Anonymous token cap (10000), remaining tokens, 429 on exhaustion, tokenRemaining |
 | `imageGeneration.service.js` | 5 | Model list validation (Recraft, FLUX.2) — 4 active, 1 skipped |
-| `pptGeneration.service.js` | 3 | Real PPTX generation with DB save, subtitle option, safe filename |
+| `pptGeneration.service.js` | 23 | Real PPTX generation with DB save; all 15 layouts in one pass; timeline single-item fix; statistics_strip label:value parsing; faq 5-item cap; comparison_split leftTitle/rightTitle; all 12 themes; unknown theme fallback; unknown layout fallback; filename edge cases |
 | `orchestratorBrain.service.js` | 2 | Module load check + degraded result on null config |
 | `ragHybrid.test.js` | 10 | `rerankDocsHybrid` — cosine+BM25+Jaccard hybrid reranking, numeric critical miss, lexical gate, topK |
 | `memoryHybrid.test.js` | 11 | `rerankMemoryRowsHybrid` — same hybrid scoring for cross-chat memory, role preservation |
@@ -230,7 +230,7 @@ backend/
 #### Tier 2: Integration with Real Backends — 18 tests
 | Service | Tests | What's covered |
 |---|---|---|
-| `toolProcessor.service.js` | 17 | `processToolCall` with real backends: SEARCH_FILES, GET_FILE, WEB_SEARCH, EXECUTE_CODE, GENERATE_PPT, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD, no-tool-match, invalid JSON, empty slides |
+| `toolProcessor.service.js` | 21 | `processToolCall` with real backends: SEARCH_FILES, GET_FILE, WEB_SEARCH, EXECUTE_CODE, GENERATE_PPT (text-tag + function-call paths), GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD, no-tool-match, invalid JSON, empty slides, function-call error message forwarding |
 | `toolLoop.service.js` | 1 | Module load verification |
 
 
@@ -325,7 +325,7 @@ cd backend && npx vitest run __tests__/unit/chatPipeline.resultShape.test.js
 
 ## Test Status
 
-- **Backend unit**: 223 automated tests via Vitest (`npm test`) — requires `.env` with Supabase + API keys
+- **Backend unit**: 243 automated tests via Vitest (`npm test`) — requires `.env` with Supabase + API keys
 - **Backend real**: 25 real integration tests (`npm run test:real`) — requires `.env` + backend running
 - **Backend lint**: ESLint (`npm run lint`)
 - **Backend types**: TypeScript type checking (`npm run typecheck`)

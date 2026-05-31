@@ -224,7 +224,7 @@ const processToolCall = async ({
       return await runPPTGeneration({ parsed, reply, user, topicId, onStatus });
     } catch (err) {
       console.error('[Tool] PPT generation failed:', err.message);
-      const errBlock = `[PPT GENERATION RESULT]\nFailed to generate presentation: Invalid function-call arguments for generate_ppt.\n[END PPT GENERATION RESULT]`;
+      const errBlock = `[PPT GENERATION RESULT]\nFailed to generate presentation: ${err.message}\n[END PPT GENERATION RESULT]`;
       return {
         handled: true,
         generatedMedia: [],

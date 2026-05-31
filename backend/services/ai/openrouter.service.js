@@ -17,7 +17,6 @@ const OPENROUTER_TOOLS = [
           title: { type: 'string' },
           subtitle: { type: 'string' },
           theme: { type: 'string', enum: ['modern_corporate', 'startup_bold', 'clean_minimal', 'emerald_glass', 'sunset_warm', 'charcoal_lime', 'sandstone_editorial', 'ruby_noir', 'violet_tech', 'ocean_depth', 'rose_creative', 'mono_editorial'] },
-          style: { type: 'string', enum: ['modern_corporate', 'startup_bold', 'clean_minimal', 'emerald_glass', 'sunset_warm', 'charcoal_lime', 'sandstone_editorial', 'ruby_noir', 'violet_tech', 'ocean_depth', 'rose_creative', 'mono_editorial'] },
           slides: {
             type: 'array',
             items: {
@@ -29,6 +28,8 @@ const OPENROUTER_TOOLS = [
                 footerNote: { type: 'string' },
                 bullets: { type: 'array', items: { type: 'string' } },
                 content: { type: 'string' },
+                leftTitle: { type: 'string' },
+                rightTitle: { type: 'string' },
               },
               required: ['title'],
             },

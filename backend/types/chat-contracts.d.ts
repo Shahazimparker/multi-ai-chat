@@ -153,6 +153,68 @@ export interface ChatPipelineOptions {
 
 // ── Model Config ─────────────────────────────────────────────
 
+// ── PPT Generation ───────────────────────────────────────────
+
+export type PPTTheme =
+  | 'modern_corporate'
+  | 'startup_bold'
+  | 'clean_minimal'
+  | 'emerald_glass'
+  | 'sunset_warm'
+  | 'charcoal_lime'
+  | 'sandstone_editorial'
+  | 'ruby_noir'
+  | 'violet_tech'
+  | 'ocean_depth'
+  | 'rose_creative'
+  | 'mono_editorial';
+
+export type SlideLayout =
+  | 'title_bullets'
+  | 'two_column'
+  | 'cards'
+  | 'quote'
+  | 'data_story'
+  | 'timeline'
+  | 'process_steps'
+  | 'comparison_split'
+  | 'swot_grid'
+  | 'kpi_dashboard'
+  | 'checklist'
+  | 'section_break'
+  | 'statistics_strip'
+  | 'faq'
+  | 'table_like';
+
+export interface SlideInput {
+  title: string;
+  layout?: SlideLayout;
+  subtitle?: string;
+  footerNote?: string;
+  bullets?: string[];
+  /** Plain narrative text rendered when bullets are absent (or as a secondary panel). */
+  content?: string;
+  /** Left-column header for the comparison_split layout. */
+  leftTitle?: string;
+  /** Right-column header for the comparison_split layout. */
+  rightTitle?: string;
+}
+
+export interface PPTGenerationOptions {
+  subtitle?: string;
+  /** Preferred field — selects one of the 12 built-in themes. */
+  theme?: PPTTheme | string;
+  /** Legacy alias for theme; theme takes precedence when both are present. */
+  style?: PPTTheme | string;
+}
+
+export interface PPTGenerationResult {
+  file_id: string;
+  file_name: string;
+  file_type: 'pptx';
+  created_at?: string;
+}
+
 export interface ModelConfig {
   label: string;
   provider: string;
