@@ -169,10 +169,11 @@ const login = async (req, res) => {
 
     const maxAgeMs = (user.session_minutes || 60) * 60 * 1000;
     const isProduction = process.env.NODE_ENV === 'production';
+    const cookieSameSite = isProduction ? 'none' : 'lax';
     res.cookie(AUTH_COOKIE_NAME, token, {
       httpOnly: true,
       secure: isProduction,
-      sameSite: 'lax',
+      sameSite: cookieSameSite,
       maxAge: parseRememberMe(rememberMe) ? maxAgeMs : undefined,
       path: '/',
     });
@@ -215,10 +216,11 @@ const getMe = async (req, res) => {
  */
 const logout = (req, res) => {
   const isProduction = process.env.NODE_ENV === 'production';
+  const cookieSameSite = isProduction ? 'none' : 'lax';
   res.clearCookie(AUTH_COOKIE_NAME, {
     httpOnly: true,
     secure: isProduction,
-    sameSite: 'lax',
+    sameSite: cookieSameSite,
     path: '/',
   });
   res.json({ message: 'Logged out successfully' });
