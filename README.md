@@ -22,6 +22,10 @@ Unified AI chat platform with authentication, anonymous mode, file-aware chat (R
 - Semantic query cache, RAG context with hybrid reranking (cosine+BM25+Jaccard), history summarization, cross-chat memory with hybrid reranking
 - File upload/search integration
 - Web search fallback chain: `Exa -> Tavily -> Firecrawl -> SerpAPI -> LangSearch` (fallback on errors/timeouts/rate limits/empty results)
+- URL intelligence (auto-triggered by links in chat text):
+  - Dedicated deep readers: GitHub, GitLab, Bitbucket, StackOverflow, Notion, Confluence
+  - Additional domain readers: arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, API docs (Swagger/OpenAPI-like), Gov/Legal
+  - Generic fallback: Exa/Tavily/Firecrawl extraction when site-specific readers do not return usable content
 - Admin panel (users, quotas, analytics)
 - Theme toggle in frontend
 - Sentry integration (frontend + backend)

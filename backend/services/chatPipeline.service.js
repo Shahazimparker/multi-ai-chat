@@ -34,6 +34,7 @@ const { buildFileContext } = require('./toolProcessor.service');
 const { runToolLoop } = require('./toolLoop.service');
 const { stripToolTags, classifyError } = require('./chatCleanup.service');
 const { searchWeb } = require('./tools/webSearch.service');
+const { extractUrls, readUrls } = require('./tools/urlReader.service');
 const {
   createPromptBudget,
   createDynamicPromptBudget,
@@ -348,6 +349,7 @@ const runChatPipeline = async (opts) => {
     // ── 6. RAG context + file listing ─────────────────────────
     let ragContext = '';
     let forcedWebContext = '';
+    let urlContext = '';
     let fileResults = [];
     let totalFileCount = 0;
 
@@ -381,6 +383,27 @@ const runChatPipeline = async (opts) => {
       forcedWebContext = webResults.length > 0
         ? `[WEB SEARCH RESULTS for "${finalQuery}"]\n${webResults.map((r) => `- [${r.title}](${r.url}): ${r.snippet}`).join('\n')}\n[END WEB SEARCH RESULTS]`
         : `[WEB SEARCH RESULTS for "${finalQuery}"]\nNo results found.\n[END WEB SEARCH RESULTS]`;
+    }
+
+    const detectedUrls = extractUrls(finalQuery);
+    if (detectedUrls.length > 0) {
+      onToolStatus?.({
+        type: 'status',
+        tool: 'url_reader',
+        message: 'reading provided URL(s)',
+      });
+      const pages = await readUrls(detectedUrls);
+      if (pages.length > 0) {
+        const rawContext = pages
+          .map((page, idx) => `[URL SOURCE ${idx + 1}]
+Title: ${page.title}
+URL: ${page.url}
+Provider: ${page.source}
+Content:
+${page.text}`)
+          .join('\n\n');
+        urlContext = trimTextByTokens(rawContext, Math.max(800, Math.floor(promptBudget.ragTokens * 0.8)));
+      }
     }
 
     const fileContext = buildFileContext(fileResults, totalFileCount);
@@ -446,6 +469,7 @@ const runChatPipeline = async (opts) => {
     const systemSections = [staticSystem];
     if (ragContext) systemSections.push(`## Retrieved Context\n${ragContext}`);
     if (forcedWebContext) systemSections.push(`## Web Search Context\n${forcedWebContext}`);
+    if (urlContext) systemSections.push(`## URL Context\n${urlContext}`);
     if (fileContext) systemSections.push(`## File Context\n${fileContext}`);
     if (memoryContext) systemSections.push(memoryContext);
     aiMessages.push({ role: 'system', content: systemSections.join('\n\n') });

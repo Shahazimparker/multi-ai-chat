@@ -41,6 +41,12 @@ This is the current test reference for the repo. It reflects the live backend/fr
 - `embedAndStoreMessage` stores embeddings in `message_embeddings` table after each reply in accurate mode.
 - `searchMemory` returns empty string gracefully if `message_embeddings` table or `search_memory` RPC is not deployed.
 - Tool-call flows complete without hanging the stream.
+- URL intelligence behavior:
+  - URL read works even when Web toggle is OFF.
+  - GitHub/GitLab/Bitbucket repo URLs return repository-aware context (not only page HTML).
+  - StackOverflow URLs include thread context.
+  - Notion/Confluence and added domain readers return structured page text where accessible.
+  - If site-specific reader does not return usable content, Exa/Tavily/Firecrawl fallback still attempts extraction.
 
 ### Token and Budgeting
 
@@ -155,6 +161,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 - Flow analysis cycle detection in `flowVisibility.service.js`
 - Cross-chat memory embedding token cost in accurate mode (each message triggers `embedText` call; mitigated by LRU embedding cache)
 - `search_memory` RPC and `message_embeddings` table must be deployed via `migration_add_message_embeddings.sql` for accurate mode to work
+- Site-specific URL readers may return partial content on protected/paywalled/private pages; fallback coverage depends on external provider response quality.
 - Artifact cleanup on topic deletion — `delete_topic_cascade` may not be deployed in all environments; the controller now does an explicit pre-delete as a safety net (`backend/controllers/history.controller.js`)
 - AI-generated file `topic_id` association — files must be saved after the stream `done` event so the backend-assigned `topic_id` is available (`frontend/src/pages/hooks/useChatSession.js`)
 
@@ -325,10 +332,8 @@ cd backend && npx vitest run __tests__/unit/chatPipeline.resultShape.test.js
 - **Frontend**: `npm run test` from `frontend` (react-scripts test)
 - **CI**: GitHub Actions runs lint + typecheck + unit tests on every push/PR (real tests excluded from CI)
 
-### Last Test Run (2026-05-31)
-- **223 tests, 0 failures, 21 test files** — all passing with real Supabase + OpenRouter connections
-- File generation verified: Image (Recraft v4.1), PPT, PDF, Excel, DOCX, CSV, Chart/SVG, HTML, JSON, Markdown
-- Hybrid reranking verified: cosine+BM25+Jaccard with numeric critical miss protection for RAG and cross-chat memory
+### Last Known Real-Test Caveat
+- Real-test failures can occur from provider quota/rate limits (for example Gemini `429` on free-tier), even when application wiring is correct.
 
 ## Merged Checklists
 

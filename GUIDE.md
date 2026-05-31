@@ -20,6 +20,11 @@ This is the main setup and maintenance guide for the current repo state.
 - Human approval checkpoints are persisted in Supabase (`human_approvals`) and controlled through `/api/approvals`, so Vercel/serverless invocations do not wait in memory for a human response.
 - RAG with hybrid reranking (cosine+BM25+Jaccard), semantic cache, token accounting, context summarization, and cross-chat memory with hybrid reranking
 - File upload, search, and abort cleanup
+- URL intelligence (auto-triggered by links in chat text; no tool-tag needed):
+  - Dedicated repo/thread readers: GitHub, GitLab, Bitbucket, StackOverflow
+  - Dedicated page readers: Notion, Confluence
+  - Additional domain readers: arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, API docs, Gov/Legal
+  - Generic fallback: Exa/Tavily/Firecrawl extraction when site-specific readers do not return usable content
 - AI file generation: Image (Recraft/FLUX via OpenRouter), PPT (pptxgenjs), PDF (pdfkit), Excel (exceljs), Word (docx), CSV, Chart (SVG), HTML, JSON, Markdown — all triggered via `[GENERATE_XXX]` tags in chat
 - Admin dashboard and analytics
 - Theme toggle with persistent preferences
@@ -106,6 +111,19 @@ Common optional values:
 - `OPENROUTER_API_KEY`
 - `TOGETHER_API_KEY`
 - `ANYAPI_API_KEY`
+- `EXA_API_KEY`
+- `TAVILY_API_KEY`
+- `FIRECRAWL_API_KEY`
+- `SERPAPI_API_KEY`
+- `LANGSEARCH_API_KEY`
+- `GITHUB_TOKEN` — optional, raises GitHub API limits for repo deep read
+- `WEB_SEARCH_TIMEOUT_MS`
+- `GITHUB_READER_MAX_FILES`
+- `GITHUB_READER_MAX_FILE_BYTES`
+- `GITHUB_READER_MAX_TOTAL_CHARS`
+- `SITE_READER_MAX_FILES`
+- `SITE_READER_MAX_FILE_BYTES`
+- `SITE_READER_MAX_TOTAL_CHARS`
 - `GEMINI_SUMMARY_API_KEY` — dedicated key for summarization (falls back to `GEMINI_API_KEY` if absent)
 - `MISTRAL_SUMMARY_API_KEY` — dedicated key for summarization
 - `CEREBRAS_SUMMARY_API_KEY` — dedicated key for summarization (Llama 3.1-8b fallback)
@@ -224,6 +242,7 @@ const mermaid = TraceFormatter.formatMermaidFlowchart(trace);
 - Adjust chat behavior in `backend/controllers/chat.controller.js` and `backend/routes/chat.routes.js`.
 - Tune token budgeting in `backend/services/tokenBudget.service.js`.
 - Hybrid reranking weights: `rerankDocsHybrid` (rag.service.js) and `rerankMemoryRowsHybrid` (memory.service.js) — 55% cosine, 30% BM25, 15% Jaccard, +0.1 numeric boost. Thresholds: `RAG_HYBRID_THRESHOLD=0.52`, `MEMORY_HYBRID_THRESHOLD=0.56`.
+- External rerank API (LangSearch rerank) is currently unwired from runtime due to free-tier reliability/load limits.
 - Tune history and summary behavior in `backend/services/context.service.js` and `backend/services/summary.service.js`.
 - Cross-chat memory (accurate mode): `embedAndStoreMessage` and `searchMemory` in `backend/services/memory.service.js`. Requires `message_embeddings` table and `search_memory` RPC — run `database/migration_add_message_embeddings.sql` if not deployed.
 - Cache: exact hash-based cache is disabled. Only semantic cache (`getSemanticCachedResponse`) is active. To re-enable exact cache, uncomment the `getCachedResponse` block in `chat.routes.js` and the `setCachedResponse` call in `chat.controller.js` — but note it will return stale answers for time-sensitive or DB-backed queries.

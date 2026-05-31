@@ -13,6 +13,7 @@ Multi-AI Chat is a full-stack chat platform that unifies 15 configured AI models
 - One UI for multiple providers reduces vendor lock-in.
 - Free and paid model options help control operating cost.
 - RAG lets the system answer from uploaded documents and business data.
+- URL intelligence reads and summarizes user-provided links directly in chat, with dedicated handling for code repos and major knowledge/content sites.
 - Semantic caching reduces repeated API spend (exact cache disabled — avoids stale answers on dynamic data).
 - Token quotas prevent runaway usage.
 - Anonymous mode lowers onboarding friction.
@@ -38,6 +39,7 @@ Multi-AI Chat is a full-stack chat platform that unifies 15 configured AI models
 | Models | 15 configured models plus live catalogs for `openrouter`, `together`, and `anyapi` |
 | Memory | Per-topic history with dynamic summarization + cross-chat semantic memory (accurate mode) |
 | RAG | File and document retrieval support (40+ formats) |
+| URL Intelligence | Deep-read for GitHub/GitLab/Bitbucket/StackOverflow + major content/doc domains with generic fallback extraction |
 | Cache | Semantic query caching (vector similarity ≥ 0.92); exact cache disabled to prevent stale answers |
 | Admin | User management, quota controls, analytics |
 | UX | Theme toggle, mobile navigation, token bar, unified model modal |
@@ -62,6 +64,7 @@ Multi-AI Chat is a full-stack chat platform that unifies 15 configured AI models
 
 - Token accounting and stream persistence need regression coverage.
 - Provider API changes can affect live model catalogs.
+- External website/API structure changes can reduce URL-read depth for specific domains.
 - Business DB tool flows need careful prompt and schema validation.
 - Sentry and CSRF behavior should be verified after environment changes.
 - **New:** Complex workflows may exceed iteration limits or timeout.
@@ -87,6 +90,7 @@ Multi-AI Chat is a full-stack chat platform that unifies 15 configured AI models
 - **New:** Approval gate response time and rejection rate.
 - **New:** Execution trace generation overhead and storage usage.
 - **New:** Critical path duration vs. total execution time (parallelization effectiveness).
+- URL-read success/fallback ratios by domain (site-specific success vs generic fallback).
 
 ## Recommendation
 

@@ -67,6 +67,12 @@ This document is the technical reference for the current codebase state.
 - Similarity and compression: `backend/services/similarity.service.js`, `backend/services/compress.service.js`
 - Tool execution helpers: `backend/services/tools/webSearch.service.js`, `backend/services/tools/codeExecute.service.js`
   - `webSearch.service.js` uses provider fallback in this order: `Exa -> Tavily -> Firecrawl -> SerpAPI -> LangSearch` and falls back on errors, timeouts, rate limits, or empty results.
+- URL reading helpers:
+  - `backend/services/tools/urlReader.service.js` — extracts/validates URLs from user query and injects URL context
+  - `backend/services/tools/githubReader.service.js` — GitHub repo deep-read (tree + raw file content with limits)
+  - `backend/services/tools/siteReaders.service.js` — site-specific readers for GitLab, Bitbucket, StackOverflow, Notion, Confluence, arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, API docs, Gov/Legal
+  - Runtime order: site-specific reader first, then generic provider fallback (Exa/Tavily/Firecrawl)
+  - `backend/services/tools/rerank.service.js` exists but is currently not wired in runtime paths.
 - File generation: `backend/services/imageGeneration.service.js` (Recraft/FLUX via OpenRouter), `backend/services/pptGeneration.service.js` (pptxgenjs), `backend/services/pdfGeneration.service.js` (pdfkit), `backend/services/excelGeneration.service.js` (exceljs), `backend/services/wordGeneration.service.js` (docx), `backend/services/csvGeneration.service.js`, `backend/services/chartGeneration.service.js` (SVG), `backend/services/htmlGeneration.service.js`, `backend/services/jsonGeneration.service.js`, `backend/services/markdownGeneration.service.js`
 
 ### AI Framework Services (LangChain/LangGraph/LangSmith Equivalent)
@@ -258,6 +264,10 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
 - Provider API keys used by configured or optional provider modules
 - Web search provider keys: `EXA_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY`, `SERPAPI_API_KEY`, `LANGSEARCH_API_KEY`
 - Web search optional tuning: `WEB_SEARCH_TIMEOUT_MS`, `LANGSEARCH_FRESHNESS`, `LANGSEARCH_SUMMARY`
+- URL deep-read optional tuning:
+  - `GITHUB_TOKEN`
+  - `GITHUB_READER_MAX_FILES`, `GITHUB_READER_MAX_FILE_BYTES`, `GITHUB_READER_MAX_TOTAL_CHARS`
+  - `SITE_READER_MAX_FILES`, `SITE_READER_MAX_FILE_BYTES`, `SITE_READER_MAX_TOTAL_CHARS`
 
 ### Frontend
 
@@ -280,3 +290,9 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
 - For artifact intents (`artifact_ppt`, `artifact_other`), orchestrator can require model switch via `errorType: model_switch_required`.
 - SSE error payload includes `suggestedModels`, `recommendedModelId`, and `failedModelId`.
 - Client can explicitly override by resending with `allowArtifactWithCurrentModel: true` to continue with the currently selected model.
+
+## URL Read Triggering
+
+- URL intelligence is independent of the frontend `Web` toggle.
+- `Web` toggle controls `forceWebSearch` only.
+- URL reading is auto-triggered when `extractUrls(finalQuery)` finds links in the message.
