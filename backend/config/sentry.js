@@ -11,6 +11,7 @@ const initSentry = (app) => {
     environment: process.env.NODE_ENV || 'development',
     integrations: [
       Sentry.expressIntegration(),
+      Sentry.captureConsoleIntegration({ levels: ['error', 'warn'] }),
     ],
     // Performance Monitoring
     tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,

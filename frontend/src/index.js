@@ -20,6 +20,7 @@ if (process.env.REACT_APP_SENTRY_DSN) {
         maskAllText: false,
         blockAllMedia: false,
       }),
+      Sentry.captureConsoleIntegration({ levels: ['error', 'warn'] }),
     ],
     // Performance Monitoring
     tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
