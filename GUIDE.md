@@ -13,7 +13,7 @@ This is the main setup and maintenance guide for the current repo state.
 
 - 15 configured AI models across DeepSeek (128K context), Groq, Gemini, Mistral, Claude, and OpenRouter in `backend/config/models.js`
 - Live provider catalogs for `openrouter`, `together`, and `anyapi`
-- Authenticated and anonymous chat flows
+- Authenticated chat flows
 - **Real provider token streaming** — all 10 providers stream native tokens via SSE. No artificial `setTimeout` delays. Tool-call rounds are handled transparently: tool status events are sent during processing, then the final answer streams in naturally.
 - Shared pipeline (`chatPipeline.service.js`) keeps legacy JSON and streaming chat behavior aligned
 - OrchestratorBrain is wired into `/api/chat/stream` as a real pre-stream runtime layer using the custom graph, agent, callback, tracing, parser, retriever, vector-store, and flow-visibility services.
@@ -26,7 +26,7 @@ This is the main setup and maintenance guide for the current repo state.
   - Dedicated repo/thread readers: GitHub, GitLab, Bitbucket, StackOverflow
   - Dedicated page readers: Notion, Confluence
   - Additional domain readers: arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, API docs, Gov/Legal
-  - Generic fallback: Exa/Tavily/Firecrawl extraction when site-specific readers do not return usable content
+  - Generic fallback: Tavily/Exa/Firecrawl extraction when site-specific readers do not return usable content
 - AI file generation: Image (Recraft/FLUX via OpenRouter), PPT (pptxgenjs), PDF (pdfkit), Excel (exceljs), Word (docx), CSV, Chart (SVG), HTML, JSON, Markdown — all triggered via `[GENERATE_XXX]` tags in chat
 - Admin dashboard and analytics
 - Theme toggle with persistent preferences
@@ -84,7 +84,7 @@ This is the main setup and maintenance guide for the current repo state.
 - `backend/routes/chat.routes.js` handles canonical `/stream`, legacy `/message` compatibility, model listing, and provider model lookup.
 - `backend/controllers/chat.controller.js` owns the main chat pipeline.
 - `backend/services/` contains cache, RAG, token budget, file upload, context, summary, analytics, and provider services.
-- `frontend/src/App.jsx` defines `/login`, `/anonymous`, `/chat`, and `/admin`.
+- `frontend/src/App.jsx` defines `/login`, `/chat`, and `/admin`.
 - `frontend/src/components/` contains the chat UI, theme toggle, token bar, unified model modal, and admin UI.
 
 ## Environment Variables
@@ -269,7 +269,7 @@ WHERE topic_id IS NULL
 
 - Backend boots without missing env errors.
 - `/api/health` works.
-- Login, chat, stream, admin, and anonymous routes all render.
+- Login, chat, stream, and admin routes all render.
 - Model picker loads both static and live provider models.
 - File upload, cache, RAG, and token accounting behave as expected.
 - Theme toggle persists after refresh.

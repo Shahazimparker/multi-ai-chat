@@ -1,6 +1,6 @@
 # Multi-AI Chat
 
-Unified AI chat platform with authentication, anonymous mode, file-aware chat (RAG), **real provider token streaming** (no artificial delays), token controls, and admin analytics. Now includes a **complete LangChain + LangGraph + LangSmith equivalent** framework built from scratch.
+Unified AI chat platform with authentication, file-aware chat (RAG), **real provider token streaming** (no artificial delays), token controls, and admin analytics. Now includes a **complete LangChain + LangGraph + LangSmith equivalent** framework built from scratch.
 
 ## Current Scope
 
@@ -18,16 +18,16 @@ Unified AI chat platform with authentication, anonymous mode, file-aware chat (R
 - **Shared pipeline**: `chatPipeline.service.js` keeps legacy JSON and streaming chat behavior aligned
 - **OrchestratorBrain**: `/api/chat/stream` initializes the real custom framework runtime (graph workflow, SmartAgent, callbacks, tracing, flow dashboard, parser, retriever, and vector store) before provider streaming; covered by no-mock unit tests.
 - **Deploy-safe human approvals**: approval requests persist in Supabase via `human_approvals`; API approval/rejection runs through `/api/approvals` without blocking serverless invocations.
-- Authenticated and anonymous chat flows
+- Authenticated chat flows
 - Semantic query cache, RAG context with hybrid reranking (cosine+BM25+Jaccard), history summarization, cross-chat memory with hybrid reranking
 - File upload/search integration
 - Upload embedding fallback for large inputs: on provider max-context errors, upload embedding retries with smaller adaptive splits to avoid zero-vector saves.
 - Generated file download/preview uses API-client routes (baseURL-aware), preventing mobile SPA fallback downloads (`index.html`).
-- Web search fallback chain: `Exa -> Tavily -> Firecrawl -> SerpAPI -> LangSearch` (fallback on errors/timeouts/rate limits/empty results)
+- Web search fallback chain: `Exa -> Firecrawl -> Tavily -> SerpAPI -> LangSearch` (fallback on errors/timeouts/rate limits/empty results)
 - URL intelligence (auto-triggered by links in chat text):
   - Dedicated deep readers: GitHub, GitLab, Bitbucket, StackOverflow, Notion, Confluence
   - Additional domain readers: arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, API docs (Swagger/OpenAPI-like), Gov/Legal
-  - Generic fallback: Exa/Tavily/Firecrawl extraction when site-specific readers do not return usable content
+  - Generic fallback: Tavily/Exa/Firecrawl extraction when site-specific readers do not return usable content
 - Admin panel (users, quotas, analytics)
 - Theme toggle in frontend
 - Sentry integration (frontend + backend)

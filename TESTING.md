@@ -6,7 +6,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 
 - Backend: Express API with auth, chat, upload, history, admin, token checks, Sentry, caching, RAG, and provider routing.
 - **AI Framework**: 16+ microservices for document loading, vector storage, retrieval, agents, chains, graphs, loops, approval gates, tracing, and flow analysis
-- Frontend: React app with login, chat, anonymous mode, admin, theme toggle, file upload, and unified provider model picker.
+- Frontend: React app with login, chat, admin, theme toggle, file upload, and unified provider model picker.
 - Database: Supabase/PostgreSQL with `pgvector`, token tracking, cache, topics, messages, uploads.
 
 ## What To Verify First
@@ -15,7 +15,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 2. `frontend` starts and resolves `REACT_APP_API_URL`.
 3. `/api/health` responds.
 4. Login works and returns a token.
-5. Chat works in `/chat` and `/anonymous`.
+5. Chat works in `/chat`.
 
 ## Manual Regression Checklist
 
@@ -24,7 +24,6 @@ This is the current test reference for the repo. It reflects the live backend/fr
 - Valid login redirects to the main chat screen.
 - Invalid or expired JWT returns `401` and does not loop on the login page.
 - Admin-only routes reject non-admin users.
-- Anonymous mode works without persisting chat history.
 
 ### Chat Pipeline
 
@@ -46,7 +45,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
   - GitHub/GitLab/Bitbucket repo URLs return repository-aware context (not only page HTML).
   - StackOverflow URLs include thread context.
   - Notion/Confluence and added domain readers return structured page text where accessible.
-  - If site-specific reader does not return usable content, Exa/Tavily/Firecrawl fallback still attempts extraction.
+  - If site-specific reader does not return usable content, Tavily/Exa/Firecrawl fallback still attempts extraction.
 
 ### Token and Budgeting
 

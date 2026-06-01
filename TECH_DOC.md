@@ -67,12 +67,12 @@ This document is the technical reference for the current codebase state.
 - Analytics: `backend/services/analytics.service.js`
 - Similarity and compression: `backend/services/similarity.service.js`, `backend/services/compress.service.js`
 - Tool execution helpers: `backend/services/tools/webSearch.service.js`, `backend/services/tools/codeExecute.service.js`
-  - `webSearch.service.js` uses provider fallback in this order: `Exa -> Tavily -> Firecrawl -> SerpAPI -> LangSearch` and falls back on errors, timeouts, rate limits, or empty results.
+  - `webSearch.service.js` uses provider fallback in this order: `Exa -> Firecrawl -> Tavily -> SerpAPI -> LangSearch` and falls back on errors, timeouts, rate limits, or empty results.
 - URL reading helpers:
   - `backend/services/tools/urlReader.service.js` — extracts/validates URLs from user query and injects URL context
   - `backend/services/tools/githubReader.service.js` — GitHub repo deep-read (tree + raw file content with limits)
   - `backend/services/tools/siteReaders.service.js` — site-specific readers for GitLab, Bitbucket, StackOverflow, Notion, Confluence, arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, API docs, Gov/Legal
-  - Runtime order: site-specific reader first, then generic provider fallback (Exa/Tavily/Firecrawl)
+  - Runtime order: site-specific reader first, then generic provider fallback (Tavily/Exa/Firecrawl)
   - `backend/services/tools/rerank.service.js` exists but is currently not wired in runtime paths.
 - File generation: `backend/services/imageGeneration.service.js` (Recraft/FLUX via OpenRouter), `backend/services/pptGeneration.service.js` (pptxgenjs), `backend/services/pdfGeneration.service.js` (pdfkit), `backend/services/excelGeneration.service.js` (exceljs), `backend/services/wordGeneration.service.js` (docx), `backend/services/csvGeneration.service.js`, `backend/services/chartGeneration.service.js` (SVG), `backend/services/htmlGeneration.service.js`, `backend/services/jsonGeneration.service.js`, `backend/services/markdownGeneration.service.js`
 
@@ -146,7 +146,6 @@ This document is the technical reference for the current codebase state.
 - App root: `frontend/src/App.jsx`
 - Route map:
   - `/login`
-  - `/anonymous`
   - `/chat`
   - `/admin`
 
@@ -162,7 +161,6 @@ This document is the technical reference for the current codebase state.
 - `frontend/src/pages/ChatPage.jsx` - thin container that composes the chat hooks/components
 - `frontend/src/pages/hooks/useChatSession.js` - chat stream/session orchestration
 - `frontend/src/pages/hooks/useChatComposer.js` - draft input and attachment handling
-- `frontend/src/pages/AnonymousPage.jsx`
 - `frontend/src/pages/AdminPage.jsx`
 
 ### Key UI components

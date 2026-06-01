@@ -4,7 +4,7 @@
 
 ## Executive Summary
 
-Multi-AI Chat is a full-stack chat platform that unifies 15 configured AI models and 3 live provider catalogs behind one interface. The current implementation supports authenticated users, anonymous chat, file upload, retrieval-augmented responses, caching, token quotas, admin management, theme persistence, and live model discovery.
+Multi-AI Chat is a full-stack chat platform that unifies 15 configured AI models and 3 live provider catalogs behind one interface. The current implementation supports authenticated users, file upload, retrieval-augmented responses, caching, token quotas, admin management, theme persistence, and live model discovery.
 
 **New:** Complete AI orchestration framework (LangChain/LangGraph/LangSmith equivalent) with 16+ enterprise-grade services enabling sophisticated workflows, approval gates, automatic refinement, and complete execution visibility.
 
@@ -16,7 +16,6 @@ Multi-AI Chat is a full-stack chat platform that unifies 15 configured AI models
 - URL intelligence reads and summarizes user-provided links directly in chat, with dedicated handling for code repos and major knowledge/content sites.
 - Semantic caching reduces repeated API spend (exact cache disabled — avoids stale answers on dynamic data).
 - Token quotas prevent runaway usage.
-- Anonymous mode lowers onboarding friction.
 - **New:** Enterprise-grade AI orchestration enables complex, multi-step workflows.
 - **New:** Human-in-the-loop approval gates provide control and compliance.
 - **New:** Complete execution tracing enables debugging and optimization.
@@ -34,7 +33,7 @@ Multi-AI Chat is a full-stack chat platform that unifies 15 configured AI models
 
 | Area | Current State |
 |---|---|
-| Auth | Login, JWT sessions, admin checks, anonymous access |
+| Auth | Login, JWT sessions, admin checks |
 | Chat | Streaming and non-streaming responses |
 | Models | 15 configured models plus live catalogs for `openrouter`, `together`, and `anyapi` |
 | Memory | Per-topic history with dynamic summarization + cross-chat semantic memory (accurate mode) |
