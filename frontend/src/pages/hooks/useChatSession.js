@@ -410,7 +410,13 @@ export const useChatSession = ({ refreshTokenStats }) => {
           const content = fileMatch[2].trim();
           const fileName = extractFileName(content, lang, fileIdx);
           try {
-            const res = await api.post('/upload/generate-file', { topicId: topicIdToUse, fileName, content, fileType: lang });
+            const res = await api.post('/upload/generate-file', {
+              topicId: topicIdToUse,
+              fileName,
+              content,
+              fileType: lang,
+              messageId: metadata.assistantMessageId || null,
+            });
             if (res.data?.file) generatedFiles.push(res.data.file);
           } catch (uploadError) {
             console.error('[saveGeneratedFile]', uploadError);

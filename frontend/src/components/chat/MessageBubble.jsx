@@ -15,14 +15,6 @@ import api from '../../config/api';
 import './MessageBubble.css';
 
 // ── File languages that trigger file-card UI ─────────────────
-const FILE_LANGUAGES = new Set([
-  'html','htm','js','jsx','ts','tsx','css','scss','sass','less',
-  'json','xml','yaml','yml','md','csv','svg','txt','log',
-  'py','rb','php','java','c','cpp','h','hpp','cs','go','rs','swift',
-  'kt','sql','r','sh','bash','ps1','bat','pl','lua',
-  'xlsx','xls','doc','docx','pdf','ppt','pptx',
-]);
-const MIN_FILE_LINES = 300;
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -145,6 +137,10 @@ const FileCard = ({ file, onDownload }) => {
 // ── CodeBlock component (handles its own copy state) ─────────
 const CodeBlock = ({ code, language, csvContent, onDownloadCSV }) => {
   const [copied, setCopied] = React.useState(false);
+  const [expanded, setExpanded] = React.useState(false);
+  const lineCount = React.useMemo(() => code.split('\n').length, [code]);
+  const shouldClamp = lineCount > 3;
+  const displayCode = shouldClamp && !expanded ? code.split('\n').slice(0, 3).join('\n') : code;
 
   const handleCopy = async () => {
     try {
@@ -157,9 +153,18 @@ const CodeBlock = ({ code, language, csvContent, onDownloadCSV }) => {
   return (
     <div className="code-block-wrapper">
       <SyntaxHighlighter style={vscDarkPlus} language={language} PreTag="div">
-        {code}
+        {displayCode}
       </SyntaxHighlighter>
       <div className="code-block-actions">
+        {shouldClamp && (
+          <button
+            className="code-action-btn"
+            onClick={() => setExpanded((prev) => !prev)}
+            title={expanded ? 'Collapse code' : 'Expand code'}
+          >
+            {expanded ? 'Collapse' : 'Expand'}
+          </button>
+        )}
         <button className="code-action-btn" onClick={handleCopy} title="Copy code">
           {copied ? <Check size={13} /> : <Copy size={13} />}
         </button>
@@ -205,10 +210,8 @@ const MessageBubble = ({ message, onSidebarRefresh }) => {
   // Counters used inside render (reset each render)
   const tableIdx = React.useRef(0);
   const csvIdx = React.useRef(0);
-  const fileCodeBlockIdx = React.useRef(0);
   tableIdx.current = 0;
   csvIdx.current = 0;
-  fileCodeBlockIdx.current = 0;
 
   const handleCopy = async () => {
     try {
@@ -249,42 +252,6 @@ const MessageBubble = ({ message, onSidebarRefresh }) => {
 
       if (!inline && match) {
         const codeText = String(children).replace(/\n$/, '');
-
-        // Show as FileCard only for large code blocks (>= 300 lines)
-        if (FILE_LANGUAGES.has(lang) && codeText.split('\n').length >= MIN_FILE_LINES) {
-          const idx = fileCodeBlockIdx.current++;
-          // Prefer server-backed file if available, else build client-side file object
-          const serverFile = message.generatedFiles?.[idx];
-          const fileName = serverFile?.file_name || `generated.${lang}`;
-          const file = serverFile
-            ? { ...serverFile, content: serverFile.content || codeText }
-            : { file_name: fileName, file_type: lang, content: codeText };
-          const handleDownload = (f) => {
-            if (f.file_id) {
-              fetch(`/api/upload/download/${f.file_id}`, {
-                credentials: 'include',
-              })
-                .then(res => {
-                  if (!res.ok) return Promise.reject();
-                  const cd = res.headers.get('Content-Disposition');
-                  const filenameMatch = cd?.match(/filename="?(.+?)"?$/);
-                  return res.blob().then(blob => ({ blob, filename: filenameMatch?.[1] }));
-                })
-                .then(({ blob, filename }) => {
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = filename || f.file_name || 'file';
-                  a.click();
-                  URL.revokeObjectURL(url);
-                })
-                .catch(() => alert('Download failed'));
-            } else {
-              downloadFile(f.content, f.file_name, 'text/plain;charset=utf-8');
-            }
-          };
-          return <FileCard file={file} onDownload={handleDownload} />;
-        }
 
         if (lang === 'csv') {
           const idx = csvIdx.current++;

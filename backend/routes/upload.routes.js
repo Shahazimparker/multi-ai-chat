@@ -415,11 +415,13 @@ router.get('/download/:fileId', requireAuth, async (req, res) => {
       return;
     }
 
-    // Fallback: serve extracted text
+    // Fallback: serve extracted text using original filename/extension
     const safeName = sanitizeFilename(fileName);
     const content = fileData.original_content || fileData.llm_analysis || '';
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${safeName}.txt"`);
+    const fallbackMime = getMimeType(safeName);
+    const isTextLike = /^text\/|application\/(json|xml|javascript|typescript)/i.test(fallbackMime);
+    res.setHeader('Content-Type', isTextLike ? `${fallbackMime}; charset=utf-8` : fallbackMime);
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
     res.send(content);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -432,7 +434,7 @@ router.get('/download/:fileId', requireAuth, async (req, res) => {
  */
 router.post('/generate-file', requireAuth, async (req, res) => {
   try {
-    const { topicId, fileName, content, fileType } = req.body;
+    const { topicId, fileName, content, fileType, messageId } = req.body;
     if (!fileName || !content) {
       return res.status(400).json({ error: 'fileName and content are required' });
     }
@@ -440,6 +442,33 @@ router.post('/generate-file', requireAuth, async (req, res) => {
     const result = await saveGeneratedFile(req.user.id, topicId || null, safeFileName, content, fileType);
     if (!result) {
       return res.status(500).json({ error: 'Failed to save generated file' });
+    }
+    if (messageId) {
+      const { data: msgRow, error: msgFetchErr } = await supabase
+        .from('messages')
+        .select('id, generated_files')
+        .eq('id', messageId)
+        .eq('user_id', req.user.id)
+        .single();
+
+      if (!msgFetchErr && msgRow) {
+        let existing = [];
+        if (Array.isArray(msgRow.generated_files)) {
+          existing = msgRow.generated_files;
+        } else if (typeof msgRow.generated_files === 'string') {
+          try { existing = JSON.parse(msgRow.generated_files); } catch { existing = []; }
+          if (!Array.isArray(existing)) existing = [];
+        }
+
+        const alreadyExists = existing.some((f) => f?.file_id === result.file_id);
+        if (!alreadyExists) {
+          await supabase
+            .from('messages')
+            .update({ generated_files: [...existing, result] })
+            .eq('id', messageId)
+            .eq('user_id', req.user.id);
+        }
+      }
     }
     res.json({ file: result });
   } catch (err) {
