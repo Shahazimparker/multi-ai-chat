@@ -45,7 +45,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
   - GitHub/GitLab/Bitbucket repo URLs return repository-aware context (not only page HTML).
   - StackOverflow URLs include thread context.
   - Notion/Confluence and added domain readers return structured page text where accessible.
-  - If site-specific reader does not return usable content, Tavily/Exa/Firecrawl fallback still attempts extraction.
+  - If site-specific reader does not return usable content, Firecrawl/Tavily/Exa fallback still attempts extraction.
 
 ### Token and Budgeting
 

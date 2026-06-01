@@ -166,9 +166,9 @@ const readUrls = async (rawUrls = []) => {
   if (genericUrls.length === 0) return output;
 
   const providers = [
+    { name: 'FirecrawlScrape', fn: readWithFirecrawl },
     { name: 'TavilyExtract', fn: readWithTavily },
     { name: 'ExaContents', fn: readWithExa },
-    { name: 'FirecrawlScrape', fn: readWithFirecrawl },
   ];
 
   for (const provider of providers) {

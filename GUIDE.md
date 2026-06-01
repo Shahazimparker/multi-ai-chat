@@ -26,7 +26,7 @@ This is the main setup and maintenance guide for the current repo state.
   - Dedicated repo/thread readers: GitHub, GitLab, Bitbucket, StackOverflow
   - Dedicated page readers: Notion, Confluence
   - Additional domain readers: arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, API docs, Gov/Legal
-  - Generic fallback: Tavily/Exa/Firecrawl extraction when site-specific readers do not return usable content
+  - Generic fallback: Firecrawl/Tavily/Exa extraction when site-specific readers do not return usable content
 - AI file generation: Image (Recraft/FLUX via OpenRouter), PPT (pptxgenjs), PDF (pdfkit), Excel (exceljs), Word (docx), CSV, Chart (SVG), HTML, JSON, Markdown — all triggered via `[GENERATE_XXX]` tags in chat
 - Admin dashboard and analytics
 - Theme toggle with persistent preferences

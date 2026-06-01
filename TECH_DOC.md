@@ -72,7 +72,7 @@ This document is the technical reference for the current codebase state.
   - `backend/services/tools/urlReader.service.js` — extracts/validates URLs from user query and injects URL context
   - `backend/services/tools/githubReader.service.js` — GitHub repo deep-read (tree + raw file content with limits)
   - `backend/services/tools/siteReaders.service.js` — site-specific readers for GitLab, Bitbucket, StackOverflow, Notion, Confluence, arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, API docs, Gov/Legal
-  - Runtime order: site-specific reader first, then generic provider fallback (Tavily/Exa/Firecrawl)
+  - Runtime order: site-specific reader first, then generic provider fallback (Firecrawl/Tavily/Exa)
   - `backend/services/tools/rerank.service.js` exists but is currently not wired in runtime paths.
 - File generation: `backend/services/imageGeneration.service.js` (Recraft/FLUX via OpenRouter), `backend/services/pptGeneration.service.js` (pptxgenjs), `backend/services/pdfGeneration.service.js` (pdfkit), `backend/services/excelGeneration.service.js` (exceljs), `backend/services/wordGeneration.service.js` (docx), `backend/services/csvGeneration.service.js`, `backend/services/chartGeneration.service.js` (SVG), `backend/services/htmlGeneration.service.js`, `backend/services/jsonGeneration.service.js`, `backend/services/markdownGeneration.service.js`
 

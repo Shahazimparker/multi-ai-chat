@@ -27,7 +27,7 @@ Unified AI chat platform with authentication, file-aware chat (RAG), **real prov
 - URL intelligence (auto-triggered by links in chat text):
   - Dedicated deep readers: GitHub, GitLab, Bitbucket, StackOverflow, Notion, Confluence
   - Additional domain readers: arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, API docs (Swagger/OpenAPI-like), Gov/Legal
-  - Generic fallback: Tavily/Exa/Firecrawl extraction when site-specific readers do not return usable content
+  - Generic fallback: Firecrawl/Tavily/Exa extraction when site-specific readers do not return usable content
 - Admin panel (users, quotas, analytics)
 - Theme toggle in frontend
 - Sentry integration (frontend + backend)
