@@ -16,11 +16,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:real": "vitest run --config vitest.real.config.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "typecheck:full": "tsc -p tsconfig.full.json --noEmit",
-    "typecheck:phase13": "tsc -p tsconfig.phase13.json --noEmit",
-    "typecheck:phase14": "tsc -p tsconfig.phase14.json --noEmit",
-    "typecheck:phase15": "tsc -p tsconfig.phase15.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.20.9",

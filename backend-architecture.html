@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Multi-AI Chat — How It Works</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d0f1a;
+    --surface: #141726;
+    --surface2: #1c2035;
+    --border: #2a2f4a;
+    --text: #e2e8f0;
+    --muted: #8892a4;
+    --pipeline: #3b82f6;
+    --orch: #8b5cf6;
+    --ai: #ec4899;
+    --memory: #14b8a6;
+    --rag: #f59e0b;
+    --tools: #10b981;
+    --gen: #f97316;
+    --tokens: #06b6d4;
+    --obs: #6366f1;
+    --approval: #ef4444;
+    --middleware: #a78bfa;
+  }
+
+  body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; min-height: 100vh; }
+
+  /* ── Header ── */
+  header {
+    background: linear-gradient(135deg, #1a1f3a 0%, #0d1124 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 20px 32px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .logo { font-size: 28px; }
+  header h1 { font-size: 22px; font-weight: 700; }
+  header p { color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+  /* ── Tabs ── */
+  nav {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex; gap: 4px; padding: 8px 24px;
+  }
+  .tab {
+    padding: 8px 20px; border-radius: 8px; cursor: pointer;
+    font-size: 13px; font-weight: 500; color: var(--muted);
+    border: none; background: none; transition: all .2s;
+  }
+  .tab:hover { color: var(--text); background: var(--surface2); }
+  .tab.active { background: var(--pipeline); color: #fff; }
+
+  /* ── Page content ── */
+  .page { display: none; padding: 32px; max-width: 1400px; margin: 0 auto; }
+  .page.active { display: block; }
+
+  /* ── Section heading ── */
+  .section-title { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+  .section-sub { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+
+  /* ══════════════════════════════════════════════════
+     TAB 1 – JOURNEY
+  ══════════════════════════════════════════════════ */
+  .journey-controls { display: flex; gap: 10px; margin-bottom: 28px; align-items: center; flex-wrap: wrap; }
+  .btn {
+    padding: 9px 20px; border-radius: 8px; border: none; cursor: pointer;
+    font-size: 13px; font-weight: 600; transition: all .2s;
+  }
+  .btn-primary { background: var(--pipeline); color: #fff; }
+  .btn-primary:hover { background: #2563eb; }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { border-color: var(--pipeline); color: var(--pipeline); }
+  .speed-label { color: var(--muted); font-size: 12px; }
+  select.speed-select {
+    background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer;
+  }
+
+  .journey-flow {
+    display: flex; flex-direction: column; gap: 0; position: relative;
+  }
+
+  .journey-step {
+    display: flex; align-items: stretch; gap: 0; position: relative;
+    cursor: pointer; transition: all .2s;
+  }
+
+  /* Left: connector line */
+  .step-connector {
+    display: flex; flex-direction: column; align-items: center;
+    width: 48px; flex-shrink: 0;
+  }
+  .step-dot {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--surface2); border: 2px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; flex-shrink: 0; transition: all .3s; z-index: 1;
+  }
+  .step-line {
+    width: 2px; flex: 1; background: var(--border); min-height: 16px; transition: background .3s;
+  }
+  .step-line.last { background: transparent; }
+
+  /* Right: card */
+  .step-card {
+    flex: 1; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px 20px; margin: 4px 0 4px 12px;
+    transition: all .3s; position: relative;
+  }
+  .step-card:hover { border-color: #4a5280; }
+  .step-header { display: flex; align-items: center; gap: 10px; }
+  .step-badge { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 99px; text-transform: uppercase; letter-spacing: .5px; }
+  .step-name { font-weight: 700; font-size: 15px; }
+  .step-desc { color: var(--muted); font-size: 13px; margin-top: 6px; line-height: 1.5; }
+  .step-detail {
+    display: none; margin-top: 14px; padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .step-detail.open { display: block; }
+  .step-detail h4 { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
+  .file-pill {
+    display: inline-block; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 10px; font-size: 11px; font-family: monospace;
+    color: #a5b4fc; margin: 2px;
+  }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
+  .detail-item { background: var(--surface2); border-radius: 8px; padding: 10px 14px; }
+  .detail-item strong { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
+  .detail-item span { font-size: 13px; }
+
+  /* Active / animated step */
+  .journey-step.active .step-dot {
+    transform: scale(1.15);
+    box-shadow: 0 0 0 4px rgba(59,130,246,.25);
+  }
+  .journey-step.active .step-card { border-color: var(--step-color, var(--pipeline)); box-shadow: 0 0 0 1px var(--step-color, var(--pipeline)); }
+  .journey-step.active .step-line { background: var(--step-color, var(--pipeline)); }
+  .journey-step.done .step-dot { opacity: .5; }
+  .journey-step.done .step-card { opacity: .7; }
+
+  /* Pulse animation */
+  @keyframes pulse-ring {
+    0% { box-shadow: 0 0 0 0 rgba(59,130,246,.5); }
+    70% { box-shadow: 0 0 0 10px rgba(59,130,246,0); }
+    100% { box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+  }
+  .journey-step.pulsing .step-dot { animation: pulse-ring 1s infinite; }
+
+  /* ══════════════════════════════════════════════════
+     TAB 2 – SERVICES
+  ══════════════════════════════════════════════════ */
+  .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; }
+  .filter-btn {
+    padding: 6px 14px; border-radius: 99px; border: 1px solid var(--border);
+    background: var(--surface2); color: var(--muted); font-size: 12px;
+    font-weight: 600; cursor: pointer; transition: all .2s;
+  }
+  .filter-btn:hover { color: var(--text); }
+  .filter-btn.active { color: #fff; border-color: transparent; }
+
+  .search-bar {
+    width: 100%; max-width: 360px; padding: 9px 14px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-size: 13px; margin-bottom: 20px;
+  }
+  .search-bar:focus { outline: none; border-color: var(--pipeline); }
+
+  .services-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px;
+  }
+  .svc-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px 18px; cursor: pointer; transition: all .2s;
+  }
+  .svc-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+  .svc-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .svc-name { font-weight: 700; font-size: 14px; flex: 1; }
+  .svc-desc { color: var(--muted); font-size: 12px; margin-top: 6px; line-height: 1.5; }
+  .svc-file { font-size: 10px; font-family: monospace; color: #6366f1; margin-top: 8px; opacity: .8; }
+  .svc-deps { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .dep-chip {
+    font-size: 10px; padding: 2px 7px; border-radius: 99px;
+    background: var(--surface2); color: var(--muted); border: 1px solid var(--border);
+  }
+
+  /* Detail panel */
+  .detail-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 100;
+  }
+  .detail-overlay.open { display: block; }
+  .detail-panel {
+    position: fixed; right: 0; top: 0; bottom: 0; width: 420px;
+    background: var(--surface); border-left: 1px solid var(--border);
+    overflow-y: auto; z-index: 101; transform: translateX(100%);
+    transition: transform .3s ease; padding: 28px;
+  }
+  .detail-panel.open { transform: translateX(0); }
+  .panel-close {
+    position: absolute; top: 16px; right: 16px; background: var(--surface2);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+    cursor: pointer; color: var(--muted); font-size: 18px;
+  }
+  .panel-badge { display: inline-block; margin-bottom: 12px; }
+  .panel-name { font-size: 22px; font-weight: 800; margin-bottom: 8px; }
+  .panel-file { font-size: 11px; font-family: monospace; color: #6366f1; margin-bottom: 16px; }
+  .panel-desc { color: var(--muted); font-size: 14px; line-height: 1.6; margin-bottom: 20px; }
+  .panel-section { margin-bottom: 20px; }
+  .panel-section h4 { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; }
+  .dep-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .dep-tag {
+    padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: all .2s;
+  }
+  .dep-tag:hover { opacity: .8; transform: scale(.97); }
+
+  /* ══════════════════════════════════════════════════
+     TAB 3 – GRAPH
+  ══════════════════════════════════════════════════ */
+  .graph-wrap {
+    position: relative; border: 1px solid var(--border); border-radius: 16px;
+    overflow: hidden; background: var(--surface); height: 700px;
+  }
+  #graph-svg { width: 100%; height: 100%; cursor: grab; }
+  #graph-svg:active { cursor: grabbing; }
+  .graph-legend {
+    position: absolute; bottom: 16px; left: 16px;
+    background: rgba(20,23,38,.9); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 6px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .graph-hint { position: absolute; top: 12px; right: 12px; font-size: 11px; color: var(--muted); background: rgba(20,23,38,.8); padding: 6px 10px; border-radius: 6px; }
+
+  /* ══════════════════════════════════════════════════
+     TAB 4 – PROVIDERS
+  ══════════════════════════════════════════════════ */
+  .providers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+  .provider-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; transition: all .2s;
+  }
+  .provider-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+  .provider-icon { font-size: 28px; margin-bottom: 10px; }
+  .provider-name { font-weight: 800; font-size: 16px; margin-bottom: 4px; }
+  .provider-company { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  .provider-models { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+  .model-chip { font-size: 10px; padding: 3px 8px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); }
+  .provider-feature { font-size: 12px; color: var(--tools); display: flex; align-items: center; gap: 4px; }
+  .provider-file { font-size: 10px; font-family: monospace; color: #6366f1; margin-top: 10px; opacity: .7; }
+
+  /* ── Responsive ── */
+  @media (max-width: 640px) {
+    .page { padding: 16px; }
+    header { padding: 14px 16px; }
+    header h1 { font-size: 16px; }
+    .detail-panel { width: 100%; }
+    nav { padding: 6px 12px; gap: 2px; }
+    .tab { padding: 7px 12px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">🤖</div>
+  <div>
+    <h1>Multi-AI Chat — How It Works</h1>
+    <p>Interactive guide to the architecture · click anything to explore</p>
+  </div>
+</header>
+
+<nav>
+  <button class="tab active" onclick="switchTab('journey', this)">💬 Chat Journey</button>
+  <button class="tab" onclick="switchTab('services', this)">🗂 Service Map</button>
+  <button class="tab" onclick="switchTab('graph', this)">🕸 Dependency Graph</button>
+  <button class="tab" onclick="switchTab('providers', this)">🧠 AI Providers</button>
+</nav>
+
+<!-- ══ TAB 1: JOURNEY ══ -->
+<div id="page-journey" class="page active">
+  <div class="section-title">How a chat message travels through the system</div>
+  <div class="section-sub">Follow a single message from the moment you press Enter to the AI's reply streaming back to you.</div>
+
+  <div class="journey-controls">
+    <button class="btn btn-primary" onclick="playJourney()">▶ Animate</button>
+    <button class="btn btn-secondary" onclick="resetJourney()">↺ Reset</button>
+    <span class="speed-label">Speed:</span>
+    <select class="speed-select" id="speed-select">
+      <option value="800">Slow</option>
+      <option value="450" selected>Normal</option>
+      <option value="200">Fast</option>
+    </select>
+    <span style="color:var(--muted);font-size:12px;margin-left:8px">💡 Click any step to expand it</span>
+  </div>
+
+  <div class="journey-flow" id="journey-flow"></div>
+</div>
+
+<!-- ══ TAB 2: SERVICES ══ -->
+<div id="page-services" class="page">
+  <div class="section-title">Service Map</div>
+  <div class="section-sub">All 78 backend service files, grouped by purpose. Click any card for details and connections.</div>
+
+  <input class="search-bar" placeholder="🔍 Search services..." oninput="filterServices(this.value)" />
+
+  <div class="filter-bar" id="filter-bar"></div>
+  <div class="services-grid" id="services-grid"></div>
+</div>
+
+<!-- ══ TAB 3: GRAPH ══ -->
+<div id="page-graph" class="page">
+  <div class="section-title">Dependency Graph</div>
+  <div class="section-sub">Visual map of how services connect to each other. Click a node to highlight its relationships.</div>
+
+  <div class="graph-wrap">
+    <svg id="graph-svg" viewBox="0 0 1200 680"></svg>
+    <div class="graph-hint">🖱 Drag to pan · Click node to highlight</div>
+    <div class="graph-legend" id="graph-legend"></div>
+  </div>
+</div>
+
+<!-- ══ TAB 4: PROVIDERS ══ -->
+<div id="page-providers" class="page">
+  <div class="section-title">AI Providers</div>
+  <div class="section-sub">10 AI providers wired in. The dispatcher routes your request to the right one based on which model you pick.</div>
+  <div class="providers-grid" id="providers-grid"></div>
+</div>
+
+<!-- Detail panel (services tab) -->
+<div class="detail-overlay" id="detail-overlay" onclick="closePanel()"></div>
+<div class="detail-panel" id="detail-panel">
+  <button class="panel-close" onclick="closePanel()">×</button>
+  <div id="panel-content"></div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════
+//  DATA
+// ══════════════════════════════════════════════════
+const CATEGORIES = {
+  pipeline:     { label: 'Pipeline',       color: '#3b82f6', icon: '⚡' },
+  middleware:   { label: 'Middleware',      color: '#a78bfa', icon: '🛡️' },
+  orchestration:{ label: 'Orchestration',  color: '#8b5cf6', icon: '🎭' },
+  ai:           { label: 'AI Providers',   color: '#ec4899', icon: '🧠' },
+  memory:       { label: 'Memory',         color: '#14b8a6', icon: '🧩' },
+  rag:          { label: 'RAG',            color: '#f59e0b', icon: '📚' },
+  tools:        { label: 'Tools',          color: '#10b981', icon: '🔧' },
+  generation:   { label: 'Generation',     color: '#f97316', icon: '✨' },
+  tokens:       { label: 'Tokens',         color: '#06b6d4', icon: '🪙' },
+  observability:{ label: 'Observability',  color: '#6366f1', icon: '🔭' },
+  approval:     { label: 'Approval',       color: '#ef4444', icon: '✅' },
+};
+
+const SERVICES = [
+  // PIPELINE
+  { id:'chatPipeline',  cat:'pipeline',  name:'Chat Pipeline',      file:'services/chatPipeline.service.js',
+    desc:'The master coordinator — runs every step in the right order for every message. Both the streaming (/stream) and non-streaming (/message) endpoints share this single pipeline.',
+    deps:['compress','cache','rag','context','orchestratorBrain','toolLoop','analytics','tokenAccounting','fileUpload','webSearch','urlReader'] },
+  { id:'compress',      cat:'pipeline',  name:'Query Compressor',   file:'services/compress.service.js',
+    desc:'Strips filler words and phrases from your message before sending it to the AI — saves tokens and reduces cost.',
+    deps:[] },
+  { id:'cache',         cat:'pipeline',  name:'Response Cache',     file:'services/cache.service.js',
+    desc:'Checks if a very similar question was asked before (92% similarity threshold). If yes, returns the saved answer instantly without calling the AI.',
+    deps:[] },
+  { id:'context',       cat:'pipeline',  name:'Context Builder',    file:'services/context.service.js',
+    desc:'Loads your recent chat history from the database so the AI remembers what was said earlier in the conversation.',
+    deps:['summary'] },
+  { id:'analytics',     cat:'pipeline',  name:'Analytics Logger',   file:'services/analytics.service.js',
+    desc:'Records which AI model was used, how many tokens were consumed, whether the cache was hit, and how fast the response came.',
+    deps:[] },
+
+  // MIDDLEWARE
+  { id:'authMiddleware',  cat:'middleware', name:'Auth Guard',       file:'middleware/auth.js',
+    desc:'Extracts your JWT token from the request, verifies it, then checks that your account is active and not expired before letting the request through.',
+    deps:[] },
+  { id:'tokenCheck',      cat:'middleware', name:'Token Quota Check', file:'middleware/tokenCheck.js',
+    desc:'Blocks requests if your token quota is exhausted. Anonymous users get a hard cap per request.',
+    deps:[] },
+  { id:'sanitize',        cat:'middleware', name:'Input Sanitizer',  file:'middleware/sanitize.js',
+    desc:'Cleans incoming request data to prevent injection attacks.',
+    deps:[] },
+  { id:'csrf',            cat:'middleware', name:'CSRF Protection',  file:'middleware/csrf.js',
+    desc:'Validates that requests come from the legitimate frontend, not a malicious third-party site.',
+    deps:[] },
+
+  // ORCHESTRATION
+  { id:'orchestratorBrain', cat:'orchestration', name:'Orchestrator Brain', file:'services/orchestratorBrain.service.js',
+    desc:'The routing brain — runs a fast model first to classify intent (chat / artifact / RAG). If confidence is below 72%, escalates to a smarter model. Decides whether to use agents, chains, or go straight to the AI.',
+    deps:['agentOrchestrator','agent','chain','graphWorkflow','callbacks','executionTracer','dispatcher','outputParser','promptTemplate','retriever','vectorStore'] },
+  { id:'agentOrchestrator', cat:'orchestration', name:'Agent Orchestrator', file:'services/agentOrchestrator.service.js',
+    desc:'Coordinates multiple AI agents working together on a complex task — like a project manager delegating to specialists.',
+    deps:[] },
+  { id:'agent',             cat:'orchestration', name:'ReAct Agent',       file:'services/agent.service.js',
+    desc:'A single AI agent that follows the ReAct pattern: Reason about what to do → Act (call a tool) → Observe the result → repeat until done.',
+    deps:['outputParser'] },
+  { id:'chain',             cat:'orchestration', name:'Chain Primitives',   file:'services/chain.service.js',
+    desc:'Building blocks for sequential tasks: SimpleChain (A then B), ConditionalChain (if X do A else B), ParallelChain (A and B at the same time).',
+    deps:[] },
+  { id:'graphWorkflow',     cat:'orchestration', name:'Graph Workflow',     file:'services/graphWorkflow.service.js',
+    desc:'Runs complex multi-step tasks as a flowchart with branches, loops, and checkpoints — like LangGraph but built in-house.',
+    deps:[] },
+  { id:'loopManagement',    cat:'orchestration', name:'Loop Manager',       file:'services/loopManagement.service.js',
+    desc:'Controls cycle counters and exit conditions for iterative workflows so they don\'t run forever.',
+    deps:[] },
+  { id:'toolLoop',          cat:'orchestration', name:'Tool Loop',          file:'services/toolLoop.service.js',
+    desc:'Handles the back-and-forth when the AI needs to use external tools. Runs up to 6 rounds: AI asks for tool → tool runs → result sent back → repeat.',
+    deps:['dispatcher','toolProcessor','tokenBudget'] },
+  { id:'toolProcessor',     cat:'orchestration', name:'Tool Processor',     file:'services/toolProcessor.service.js',
+    desc:'Reads the AI\'s tool request and routes it to the right handler: web search, code execution, file generation, image creation, etc.',
+    deps:['fileUpload','webSearch','codeExecute','imageGeneration','pptGeneration','pdfGeneration','excelGeneration','wordGeneration','csvGeneration','chartGeneration','htmlGeneration','jsonGeneration','markdownGeneration'] },
+
+  // AI PROVIDERS
+  { id:'dispatcher',    cat:'ai', name:'AI Dispatcher',   file:'services/ai/dispatcher.service.js',
+    desc:'The traffic controller — receives every AI request and routes it to the correct provider based on the model you selected.',
+    deps:['claude','openai','gemini','groq','mistral','cohere','deepseek','openrouter','together','anyapi'] },
+  { id:'claude',        cat:'ai', name:'Claude Client',   file:'services/ai/claude.service.js',
+    desc:'Sends messages to Anthropic\'s Claude API (Haiku, Sonnet, Opus). Supports streaming and prompt caching.',
+    deps:[] },
+  { id:'openai',        cat:'ai', name:'OpenAI Client',   file:'services/ai/openai.service.js',
+    desc:'Sends messages to OpenAI\'s GPT-4 and other models with streaming support.',
+    deps:[] },
+  { id:'gemini',        cat:'ai', name:'Gemini Client',   file:'services/ai/gemini.service.js',
+    desc:'Sends messages to Google\'s Gemini models, handling the different message format they require.',
+    deps:[] },
+  { id:'groq',          cat:'ai', name:'Groq Client',     file:'services/ai/groq.service.js',
+    desc:'Sends messages to Groq — known for extremely fast inference using custom hardware.',
+    deps:[] },
+  { id:'mistral',       cat:'ai', name:'Mistral Client',  file:'services/ai/mistral.service.js',
+    desc:'Sends messages to Mistral AI\'s models — a European AI company with strong open-source models.',
+    deps:[] },
+  { id:'cohere',        cat:'ai', name:'Cohere Client',   file:'services/ai/cohere.service.js',
+    desc:'Sends messages to Cohere\'s chat API, supporting conversation history and preambles.',
+    deps:[] },
+  { id:'deepseek',      cat:'ai', name:'DeepSeek Client', file:'services/ai/deepseek.service.js',
+    desc:'Sends messages to DeepSeek\'s models which have special reasoning/thinking capabilities.',
+    deps:[] },
+  { id:'openrouter',    cat:'ai', name:'OpenRouter Client',file:'services/ai/openrouter.service.js',
+    desc:'Connects to OpenRouter — a marketplace that provides access to 100+ AI models from one API.',
+    deps:['unified'] },
+  { id:'together',      cat:'ai', name:'Together AI Client',file:'services/ai/together.service.js',
+    desc:'Connects to Together AI — a platform specialising in open-source model hosting.',
+    deps:['unified'] },
+  { id:'anyapi',        cat:'ai', name:'AnyAPI Client',   file:'services/ai/anyapi.service.js',
+    desc:'A generic connector for any API that speaks the OpenAI format — plug in any compatible provider.',
+    deps:['unified'] },
+  { id:'unified',       cat:'ai', name:'Unified Caller',  file:'services/ai/unified.service.js',
+    desc:'Shared calling logic for OpenAI-compatible APIs, used by OpenRouter, Together, and AnyAPI.',
+    deps:[] },
+  { id:'modelCatalog',  cat:'ai', name:'Model Catalog',   file:'services/modelCatalog.service.js',
+    desc:'Fetches and caches the live list of available models from OpenRouter, Together, and AnyAPI so the UI can show up-to-date options.',
+    deps:[] },
+
+  // MEMORY
+  { id:'memory',        cat:'memory', name:'Memory Manager',  file:'services/memory.service.js',
+    desc:'Stores and retrieves conversation history using 6 strategies: Buffer (last N messages), Summary (compressed history), Entity (tracks key facts), TokenBuffer, Window, and Knowledge Graph.',
+    deps:['tokenBudget','rag'] },
+  { id:'summary',       cat:'memory', name:'Summarizer',      file:'services/summary.service.js',
+    desc:'Condenses long chat histories into short summaries to fit within the AI\'s memory limit. Uses cheap/fast models: OpenRouter → Gemini → Mistral → Cerebras.',
+    deps:[] },
+  { id:'similarity',    cat:'memory', name:'Topic Detector',  file:'services/similarity.service.js',
+    desc:'Checks whether your new message is on the same topic as the previous conversation (25% word overlap threshold) to decide whether to extend or start fresh.',
+    deps:[] },
+
+  // RAG
+  { id:'rag',           cat:'rag', name:'RAG Engine',        file:'services/rag.service.js',
+    desc:'Retrieval-Augmented Generation — searches your uploaded files for the most relevant sections and injects them into the prompt so the AI can answer questions about your documents.',
+    deps:['vectorStore','tokenBudget'] },
+  { id:'retriever',     cat:'rag', name:'Retriever',         file:'services/retriever.service.js',
+    desc:'Multiple search strategies working together: Vector (meaning-based), BM25 (keyword), Hybrid (both combined), and Metadata filtering.',
+    deps:[] },
+  { id:'vectorStore',   cat:'rag', name:'Vector Store',      file:'services/vectorStore.service.js',
+    desc:'A database of text converted to numbers (embeddings) stored in PostgreSQL with pgvector, enabling fast similarity search over your documents.',
+    deps:[] },
+  { id:'documentLoader',cat:'rag', name:'Document Loader',   file:'services/documentLoader.service.js',
+    desc:'Opens and reads 40+ file types: PDFs, Word docs, Excel spreadsheets, PowerPoints, images (via OCR), code files, CSVs, and more.',
+    deps:[] },
+  { id:'textSplitter',  cat:'rag', name:'Text Splitter',     file:'services/textSplitter.service.js',
+    desc:'Breaks large documents into smaller overlapping chunks so they fit within the AI\'s context window. 4 strategies: Recursive, Semantic, Sliding Window, Line-Based.',
+    deps:['tokenBudget'] },
+  { id:'fileUpload',    cat:'rag', name:'File Upload',        file:'services/fileUpload.service.js',
+    desc:'End-to-end file handling: receive upload → extract text → split into chunks → convert to embeddings → store for search. Also handles direct LLM pass-through for small files.',
+    deps:['documentLoader','textSplitter','dispatcher','tokenBudget'] },
+
+  // TOOLS
+  { id:'webSearch',     cat:'tools', name:'Web Search',      file:'services/tools/webSearch.service.js',
+    desc:'Searches the internet using a 5-provider fallback chain: Exa → Firecrawl → Tavily → SerpAPI → LangSearch. If one fails, automatically tries the next.',
+    deps:[] },
+  { id:'urlReader',     cat:'tools', name:'URL Reader',      file:'services/tools/urlReader.service.js',
+    desc:'Reads the content of any URL, with SSRF protection (blocks internal IPs), automatic GitHub detection, and routing to site-specific extractors.',
+    deps:['githubReader','siteReaders'] },
+  { id:'githubReader',  cat:'tools', name:'GitHub Reader',   file:'services/tools/githubReader.service.js',
+    desc:'Reads GitHub repositories through the GitHub API — files, folder trees, READMEs, and raw code content.',
+    deps:[] },
+  { id:'siteReaders',   cat:'tools', name:'Site Readers',    file:'services/tools/siteReaders.service.js',
+    desc:'Extracts clean content from 15+ specific sites that need special handling: GitLab, arXiv, PubMed, YouTube, Reddit, Notion, Confluence, Stack Overflow, and more.',
+    deps:[] },
+  { id:'codeExecute',   cat:'tools', name:'Code Runner',     file:'services/tools/codeExecute.service.js',
+    desc:'Safely runs JavaScript code in an isolated sandbox (worker thread). Hard limits: 2-second timeout, 5KB code size maximum.',
+    deps:[] },
+  { id:'rerank',        cat:'tools', name:'Reranker',        file:'services/tools/rerank.service.js',
+    desc:'Re-orders search results using BM25 scoring via the LangSearch API to surface the most relevant hits to the top.',
+    deps:[] },
+
+  // GENERATION
+  { id:'imageGeneration',    cat:'generation', name:'Image Generator',     file:'services/imageGeneration.service.js',
+    desc:'Creates AI-generated images using FLUX or Recraft via OpenRouter, or DALL-E 3 via OpenAI.',
+    deps:['fileUpload'] },
+  { id:'pdfGeneration',      cat:'generation', name:'PDF Generator',       file:'services/pdfGeneration.service.js',
+    desc:'Creates formatted PDF documents from AI-generated content using PDFKit.',
+    deps:['fileUpload'] },
+  { id:'pptGeneration',      cat:'generation', name:'PowerPoint Generator',file:'services/pptGeneration.service.js',
+    desc:'Creates polished presentations using pptxgenjs with 12 built-in themes (modern corporate, startup bold, etc.) and 15 slide layouts.',
+    deps:['fileUpload'] },
+  { id:'excelGeneration',    cat:'generation', name:'Excel Generator',     file:'services/excelGeneration.service.js',
+    desc:'Creates spreadsheets with formatted headers, auto-fit columns, and multiple sheets using ExcelJS.',
+    deps:['fileUpload'] },
+  { id:'wordGeneration',     cat:'generation', name:'Word Generator',      file:'services/wordGeneration.service.js',
+    desc:'Creates Word (.docx) documents with structured sections and formatting using the docx library.',
+    deps:['fileUpload'] },
+  { id:'csvGeneration',      cat:'generation', name:'CSV Generator',       file:'services/csvGeneration.service.js',
+    desc:'Creates properly formatted CSV files with correct escaping for special characters.',
+    deps:['fileUpload'] },
+  { id:'chartGeneration',    cat:'generation', name:'Chart Generator',     file:'services/chartGeneration.service.js',
+    desc:'Creates bar charts, pie charts, and line graphs as SVG vector images.',
+    deps:['fileUpload'] },
+  { id:'htmlGeneration',     cat:'generation', name:'HTML Generator',      file:'services/htmlGeneration.service.js',
+    desc:'Creates web pages with custom content, structure, and styling.',
+    deps:['fileUpload'] },
+  { id:'jsonGeneration',     cat:'generation', name:'JSON Generator',      file:'services/jsonGeneration.service.js',
+    desc:'Creates structured JSON data files from AI-generated content.',
+    deps:['fileUpload'] },
+  { id:'markdownGeneration', cat:'generation', name:'Markdown Generator',  file:'services/markdownGeneration.service.js',
+    desc:'Creates Markdown text files with safe filename generation.',
+    deps:['fileUpload'] },
+
+  // TOKENS
+  { id:'tokenBudget',     cat:'tokens', name:'Token Budget',      file:'services/tokenBudget.service.js',
+    desc:'Tracks how much text will fit in the AI\'s memory window using hybrid word/character estimation. Prevents overloading the context by capping RAG, history, and file content.',
+    deps:[] },
+  { id:'tokenAccounting', cat:'tokens', name:'Token Accounting',  file:'services/tokenAccounting.service.js',
+    desc:'Precisely counts every token consumed across all sources (AI call, embeddings, cache) for billing and quota enforcement.',
+    deps:['tokenBudget'] },
+
+  // OBSERVABILITY
+  { id:'callbacks',       cat:'observability', name:'Callbacks',          file:'services/callbacks.service.js',
+    desc:'EventEmitter-based hooks that fire at key moments in the pipeline — used for logging, cost tracking, and performance metrics without cluttering core logic.',
+    deps:[] },
+  { id:'executionTracer', cat:'observability', name:'Execution Tracer',   file:'services/executionTracer.service.js',
+    desc:'Records every step taken to process a message with hierarchical timing — like a flight recorder for debugging what happened and how long it took.',
+    deps:[] },
+  { id:'flowVisibility',  cat:'observability', name:'Flow Visibility',    file:'services/flowVisibility.service.js',
+    desc:'Interactive flow visualisation with dependency analysis and step-through debugging for complex workflow execution.',
+    deps:[] },
+  { id:'outputParser',    cat:'observability', name:'Output Parser',      file:'services/outputParser.service.js',
+    desc:'Reads and validates the AI\'s structured output — extracts JSON objects, Markdown tables, CSV rows, or regex-matched data from free-form text.',
+    deps:[] },
+  { id:'promptTemplate',  cat:'observability', name:'Prompt Templates',   file:'services/promptTemplate.service.js',
+    desc:'Reusable prompt blueprints with variable interpolation, few-shot examples, and conditional sections — keeps prompts consistent and editable.',
+    deps:[] },
+  { id:'chatCleanup',     cat:'observability', name:'Response Cleaner',   file:'services/chatCleanup.service.js',
+    desc:'Strips internal tool-call tags from the AI\'s final response before it is shown to the user. Also classifies error types.',
+    deps:[] },
+
+  // APPROVAL
+  { id:'humanApproval',   cat:'approval', name:'Human Approval',  file:'services/humanApproval.service.js',
+    desc:'Pauses the AI mid-task and asks a human to review and approve before continuing. Stores approval requests in Supabase with a full audit trail.',
+    deps:[] },
+  { id:'approvalManager', cat:'approval', name:'Approval Manager',file:'services/approvalManager.shared.js',
+    desc:'Shared singleton that tracks all pending approval requests across the system, used by the chat pipeline to check for paused tasks.',
+    deps:['humanApproval'] },
+];
+
+// ── Journey steps (plain-language pipeline walkthrough) ──
+const JOURNEY = [
+  {
+    icon:'📨', color:'#a78bfa', label:'Middleware', name:'Your message arrives',
+    desc:'The server receives your message and runs three guards in sequence before anything else happens.',
+    detail:'Every request first passes through Helmet (security headers), then CSRF protection, then the Auth Guard which validates your JWT token and checks your account is active.',
+    files:['middleware/auth.js','middleware/csrf.js','middleware/sanitize.js'],
+    facts:{ 'Who calls it': 'Express router, before any handler', 'What it checks': 'JWT validity, account status, CSRF token', 'If it fails': 'Request is rejected with 401 / 403' }
+  },
+  {
+    icon:'🪙', color:'#06b6d4', label:'Tokens', name:'Quota check',
+    desc:'Your token budget is checked. If you\'ve run out, the request stops here.',
+    detail:'The Token Quota middleware reads your used_tokens vs total_tokens from the database. Anonymous users get a hard cap per request. If you\'re over quota, you get a clear error message.',
+    files:['middleware/tokenCheck.js'],
+    facts:{ 'Anonymous cap': '10,000 tokens per request', 'Registered users': 'Per-account quota set by admin', 'If exceeded': 'Request rejected with 429' }
+  },
+  {
+    icon:'⚡', color:'#3b82f6', label:'Pipeline', name:'Chat Pipeline starts',
+    desc:'The Chat Pipeline takes over and coordinates all the steps below.',
+    detail:'chatPipeline.service.js is the master coordinator. It runs compress → cache → RAG → memory → tools → AI → persist in a specific order, passing results between each step.',
+    files:['services/chatPipeline.service.js'],
+    facts:{ 'Shared by': 'Both /stream and /message endpoints', 'Steps': '18 ordered steps', 'Output': 'Final reply + token counts + metadata' }
+  },
+  {
+    icon:'✂️', color:'#3b82f6', label:'Pipeline', name:'Query compression',
+    desc:'Filler words are stripped from your message to save tokens.',
+    detail:'The compressor removes low-value phrases like "can you please", "I was wondering if", "just wondering" etc. before anything is sent to the AI — cheaper and often just as effective.',
+    files:['services/compress.service.js'],
+    facts:{ 'Method': 'Rule-based filler-word removal', 'Savings': 'Varies — typically 5–15% fewer input tokens', 'Lossless?': 'Yes — meaning is preserved' }
+  },
+  {
+    icon:'⚡', color:'#3b82f6', label:'Pipeline', name:'Cache check',
+    desc:'Did someone ask something very similar before? If yes, return the saved answer instantly.',
+    detail:'First an exact hash check (SHA-256 of query+model+user+topic). If that misses, a semantic check using pgvector cosine similarity at 0.92 threshold. Cache hit means no AI call needed.',
+    files:['services/cache.service.js'],
+    facts:{ 'Exact match': 'SHA-256 hash lookup', 'Semantic match': '0.92 cosine similarity threshold', 'Cache hit': 'Returns instantly, 0 AI tokens' }
+  },
+  {
+    icon:'📚', color:'#f59e0b', label:'RAG', name:'Find relevant documents',
+    desc:'If you\'ve uploaded files, the system finds the most relevant sections and adds them to the prompt.',
+    detail:'Your query is converted to a number vector (embedding), then pgvector searches your uploaded document chunks for the closest matches. Hybrid scoring: cosine similarity + BM25 keyword + Jaccard overlap, then reranked.',
+    files:['services/rag.service.js','services/vectorStore.service.js','services/fileUpload.service.js'],
+    facts:{ 'Search type': 'Hybrid: cosine + BM25 + Jaccard', 'Database': 'PostgreSQL with pgvector extension', 'Purpose': 'Let AI answer questions about your uploads' }
+  },
+  {
+    icon:'🧩', color:'#14b8a6', label:'Memory', name:'Load chat history',
+    desc:'Recent messages from your conversation are loaded so the AI has context.',
+    detail:'The Context Builder fetches previous messages from the database and assembles them into a history window. If the history is too long, the Summarizer condenses it first.',
+    files:['services/context.service.js','services/memory.service.js','services/summary.service.js'],
+    facts:{ 'Strategies': '6 modes: Buffer, Summary, Entity, TokenBuffer, Window, KG', 'When too long': 'Summarizer condenses with a fast/cheap model', 'Budget': 'tokenBudget.service limits how much history fits' }
+  },
+  {
+    icon:'🎭', color:'#8b5cf6', label:'Orchestration', name:'Orchestrator Brain decides',
+    desc:'A fast model analyses your request and decides the best route: direct answer, agent, or tool use.',
+    detail:'Orchestrator Brain runs a flash model to classify intent (chat / artifact / RAG). Confidence below 72% escalates to a smarter model. The result tells the pipeline whether to use agents, chains, or go straight to the AI.',
+    files:['services/orchestratorBrain.service.js','services/agentOrchestrator.service.js','services/agent.service.js'],
+    facts:{ 'Fast model': 'Flash model for initial classification', 'Confidence threshold': '72% — below this it escalates', 'Outputs': 'intent, recommendedModelId, routing decision' }
+  },
+  {
+    icon:'🔧', color:'#10b981', label:'Tools', name:'Tool loop (if needed)',
+    desc:'If the AI needs to search the web, run code, or generate a file, this handles the back-and-forth.',
+    detail:'The Tool Loop runs up to 6 rounds. Each round: AI requests a tool → Tool Processor calls the right service → result is sent back to the AI → AI decides if it needs another tool or is ready to answer.',
+    files:['services/toolLoop.service.js','services/toolProcessor.service.js','services/tools/webSearch.service.js','services/tools/urlReader.service.js','services/tools/codeExecute.service.js'],
+    facts:{ 'Max rounds': '6 iterations', 'Web search': 'Exa → Firecrawl → Tavily → SerpAPI → LangSearch', 'Code execution': 'Sandboxed JS, 2s timeout, 5KB limit' }
+  },
+  {
+    icon:'🧠', color:'#ec4899', label:'AI', name:'AI call — the actual answer',
+    desc:'Your assembled prompt is sent to the AI provider you selected. The reply streams back in real time.',
+    detail:'The AI Dispatcher routes to the correct provider (Claude, GPT-4, Gemini, Groq, Mistral, etc.) and opens a streaming connection. Tokens are sent back to the frontend via Server-Sent Events as they\'re generated.',
+    files:['services/ai/dispatcher.service.js','services/ai/claude.service.js','services/ai/openai.service.js','services/ai/gemini.service.js'],
+    facts:{ 'Providers': '10 (Claude, GPT, Gemini, Groq, Mistral, Cohere, DeepSeek, OpenRouter, Together, AnyAPI)', 'Streaming': 'Server-Sent Events (SSE) — words appear as generated', 'Fallback': 'Per-provider error handling' }
+  },
+  {
+    icon:'🧹', color:'#6366f1', label:'Observability', name:'Clean & count',
+    desc:'Internal tool tags are stripped, tokens are counted, and the response is finalised.',
+    detail:'chatCleanup removes any XML-style tool tags from the AI\'s reply. tokenAccounting adds up all token sources (AI call + embeddings + cache creation) for billing and quota deduction.',
+    files:['services/chatCleanup.service.js','services/tokenAccounting.service.js'],
+    facts:{ 'Cleans': 'Tool tags, internal markers', 'Counts': 'AI tokens + embedding tokens + cache tokens', 'Result': 'Clean text + total billable token count' }
+  },
+  {
+    icon:'💾', color:'#3b82f6', label:'Pipeline', name:'Save & reply',
+    desc:'The message is saved to the database, tokens are deducted from your quota, and analytics are logged.',
+    detail:'Topic is created or updated, user message and AI reply are both persisted to Supabase. Message embeddings are stored for future memory search. Usage is incremented via a Supabase RPC call. Analytics row is written.',
+    files:['services/analytics.service.js','services/tokenBudget.service.js'],
+    facts:{ 'Saves to': 'Supabase (PostgreSQL) — messages, topics, embeddings', 'Quota update': 'Atomic RPC increment_user_tokens', 'Analytics': 'model, tokens, latency, cache hit, topic' }
+  },
+];
+
+// ══════════════════════════════════════════════════
+//  TAB SWITCHING
+// ══════════════════════════════════════════════════
+function switchTab(id, btn) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('page-' + id).classList.add('active');
+  btn.classList.add('active');
+  if (id === 'graph') renderGraph();
+}
+
+// ══════════════════════════════════════════════════
+//  TAB 1 – JOURNEY
+// ══════════════════════════════════════════════════
+let journeyTimer = null;
+let journeyStep = -1;
+
+function buildJourney() {
+  const flow = document.getElementById('journey-flow');
+  flow.innerHTML = JOURNEY.map((s, i) => {
+    const isLast = i === JOURNEY.length - 1;
+    const cat = CATEGORIES[s.label.toLowerCase()] || { color: '#3b82f6' };
+    return `
+    <div class="journey-step" id="jstep-${i}" onclick="toggleStep(${i})" style="--step-color:${s.color}">
+      <div class="step-connector">
+        <div class="step-dot" style="border-color:${s.color}20;background:${s.color}15;color:${s.color}">${s.icon}</div>
+        <div class="step-line ${isLast ? 'last' : ''}"></div>
+      </div>
+      <div class="step-card">
+        <div class="step-header">
+          <span class="step-badge" style="background:${s.color}20;color:${s.color}">${s.label}</span>
+          <span class="step-name">${s.name}</span>
+        </div>
+        <div class="step-desc">${s.desc}</div>
+        <div class="step-detail" id="jdetail-${i}">
+          <h4>What's happening</h4>
+          <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:12px">${s.detail}</p>
+          <h4>Files involved</h4>
+          <div style="margin-bottom:12px">${s.files.map(f => `<span class="file-pill">${f}</span>`).join('')}</div>
+          <h4>Key facts</h4>
+          <div class="detail-grid">
+            ${Object.entries(s.facts).map(([k,v]) => `<div class="detail-item"><strong>${k}</strong><span>${v}</span></div>`).join('')}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleStep(i) {
+  const d = document.getElementById('jdetail-' + i);
+  d.classList.toggle('open');
+}
+
+function playJourney() {
+  resetJourney();
+  const speed = parseInt(document.getElementById('speed-select').value);
+  let i = 0;
+  function next() {
+    if (i > 0) {
+      document.getElementById('jstep-' + (i-1)).classList.remove('active','pulsing');
+      document.getElementById('jstep-' + (i-1)).classList.add('done');
+    }
+    if (i >= JOURNEY.length) return;
+    const el = document.getElementById('jstep-' + i);
+    el.classList.add('active','pulsing');
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    i++;
+    journeyTimer = setTimeout(next, speed);
+  }
+  next();
+}
+
+function resetJourney() {
+  clearTimeout(journeyTimer);
+  document.querySelectorAll('.journey-step').forEach(el => el.classList.remove('active','pulsing','done'));
+  document.querySelectorAll('.step-detail').forEach(el => el.classList.remove('open'));
+}
+
+// ══════════════════════════════════════════════════
+//  TAB 2 – SERVICES
+// ══════════════════════════════════════════════════
+let activeFilter = 'all';
+
+function buildServices() {
+  // filter bar
+  const fb = document.getElementById('filter-bar');
+  fb.innerHTML = `<button class="filter-btn active" onclick="setFilter('all',this)" style="border-color:#3b82f6;color:#3b82f6">All (${SERVICES.length})</button>` +
+    Object.entries(CATEGORIES).map(([k, v]) => {
+      const count = SERVICES.filter(s => s.cat === k).length;
+      return `<button class="filter-btn" onclick="setFilter('${k}',this)" style="--c:${v.color}">${v.icon} ${v.label} <span style="opacity:.6">(${count})</span></button>`;
+    }).join('');
+
+  renderServiceCards(SERVICES);
+}
+
+function setFilter(cat, btn) {
+  activeFilter = cat;
+  document.querySelectorAll('.filter-btn').forEach(b => {
+    b.classList.remove('active');
+    b.style.background = '';
+    b.style.color = '';
+    b.style.borderColor = '';
+  });
+  const c = cat === 'all' ? '#3b82f6' : CATEGORIES[cat].color;
+  btn.classList.add('active');
+  btn.style.background = c;
+  btn.style.color = '#fff';
+  btn.style.borderColor = c;
+  const q = document.querySelector('.search-bar').value;
+  filterServices(q);
+}
+
+function filterServices(q) {
+  const lower = q.toLowerCase();
+  const filtered = SERVICES.filter(s =>
+    (activeFilter === 'all' || s.cat === activeFilter) &&
+    (s.name.toLowerCase().includes(lower) || s.desc.toLowerCase().includes(lower) || s.file.toLowerCase().includes(lower))
+  );
+  renderServiceCards(filtered);
+}
+
+function renderServiceCards(list) {
+  const grid = document.getElementById('services-grid');
+  grid.innerHTML = list.map(s => {
+    const c = CATEGORIES[s.cat];
+    return `
+    <div class="svc-card" onclick="openPanel('${s.id}')" style="border-top:3px solid ${c.color}">
+      <div class="svc-top">
+        <div class="svc-name">${c.icon} ${s.name}</div>
+        <span class="step-badge" style="background:${c.color}20;color:${c.color};white-space:nowrap">${c.label}</span>
+      </div>
+      <div class="svc-desc">${s.desc.substring(0, 120)}${s.desc.length > 120 ? '…' : ''}</div>
+      <div class="svc-file">${s.file}</div>
+      ${s.deps.length ? `<div class="svc-deps">${s.deps.slice(0,4).map(d => `<span class="dep-chip">${d}</span>`).join('')}${s.deps.length > 4 ? `<span class="dep-chip">+${s.deps.length-4} more</span>` : ''}</div>` : ''}
+    </div>`;
+  }).join('') || '<div style="color:var(--muted);grid-column:1/-1;text-align:center;padding:40px">No services match your search.</div>';
+}
+
+// ── Panel ──
+function openPanel(id) {
+  const s = SERVICES.find(x => x.id === id);
+  if (!s) return;
+  const c = CATEGORIES[s.cat];
+
+  // who depends on this?
+  const usedBy = SERVICES.filter(x => x.deps.includes(id));
+
+  document.getElementById('panel-content').innerHTML = `
+    <div class="panel-badge"><span class="step-badge" style="background:${c.color}20;color:${c.color};font-size:12px">${c.icon} ${c.label}</span></div>
+    <div class="panel-name">${s.name}</div>
+    <div class="panel-file">${s.file}</div>
+    <div class="panel-desc">${s.desc}</div>
+
+    ${s.deps.length ? `
+    <div class="panel-section">
+      <h4>Depends on (calls these services)</h4>
+      <div class="dep-list">
+        ${s.deps.map(d => {
+          const ds = SERVICES.find(x => x.id === d);
+          const dc = ds ? CATEGORIES[ds.cat] : { color: '#888' };
+          return `<span class="dep-tag" style="background:${dc.color}20;color:${dc.color}" onclick="openPanel('${d}')">${ds ? ds.name : d}</span>`;
+        }).join('')}
+      </div>
+    </div>` : ''}
+
+    ${usedBy.length ? `
+    <div class="panel-section">
+      <h4>Used by (these services call it)</h4>
+      <div class="dep-list">
+        ${usedBy.map(u => {
+          const uc = CATEGORIES[u.cat];
+          return `<span class="dep-tag" style="background:${uc.color}20;color:${uc.color}" onclick="openPanel('${u.id}')">${u.name}</span>`;
+        }).join('')}
+      </div>
+    </div>` : ''}
+  `;
+
+  document.getElementById('detail-overlay').classList.add('open');
+  document.getElementById('detail-panel').classList.add('open');
+}
+
+function closePanel() {
+  document.getElementById('detail-overlay').classList.remove('open');
+  document.getElementById('detail-panel').classList.remove('open');
+}
+
+// ══════════════════════════════════════════════════
+//  TAB 3 – DEPENDENCY GRAPH
+// ══════════════════════════════════════════════════
+let graphRendered = false;
+let selectedNode = null;
+
+// Pre-computed layout positions (x, y) in 1200×680 viewport
+const GRAPH_POSITIONS = {
+  // TOP — Middleware
+  authMiddleware: [140, 40], tokenCheck: [300, 40], sanitize: [460, 40], csrf: [620, 40],
+  // ROW 2 — Pipeline entry
+  chatPipeline: [380, 130],
+  // ROW 3 — Pipeline steps
+  compress: [100, 230], cache: [250, 230], rag: [400, 230], context: [560, 230], analytics: [720, 230],
+  // ROW 4 — Orchestration
+  orchestratorBrain: [380, 330],
+  // ROW 5 — Orch components
+  agentOrchestrator: [100, 430], agent: [240, 430], chain: [380, 430], graphWorkflow: [520, 430], toolLoop: [680, 430], toolProcessor: [850, 430],
+  // ROW 6 — AI Layer
+  dispatcher: [380, 540],
+  // ROW 7 — Providers
+  claude: [60, 640], openai: [160, 640], gemini: [260, 640], groq: [360, 640], mistral: [460, 640], cohere: [560, 640], deepseek: [660, 640], openrouter: [760, 640], together: [880, 640], anyapi: [980, 640], unified: [1100, 580],
+  // RIGHT COLUMN — support services
+  memory: [1000, 130], summary: [1100, 180], similarity: [1100, 90],
+  vectorStore: [1000, 280], retriever: [1100, 330], documentLoader: [1000, 380], textSplitter: [1100, 430], fileUpload: [1000, 480],
+  webSearch: [900, 230], urlReader: [1000, 55], githubReader: [1100, 5], siteReaders: [1100, 55],
+  codeExecute: [900, 130],
+  tokenBudget: [180, 540], tokenAccounting: [180, 630],
+  callbacks: [700, 130], executionTracer: [820, 130], outputParser: [700, 55], promptTemplate: [820, 55], chatCleanup: [560, 540], flowVisibility: [940, 55],
+  humanApproval: [520, 630], approvalManager: [400, 630],
+  modelCatalog: [60, 540],
+  // Generation (collapsed into one node area)
+  imageGeneration: [760, 280], pdfGeneration: [820, 330], pptGeneration: [760, 380],
+  excelGeneration: [820, 430], wordGeneration: [760, 480], csvGeneration: [820, 530],
+  chartGeneration: [940, 280], htmlGeneration: [940, 330], jsonGeneration: [940, 380], markdownGeneration: [940, 430],
+  loopManagement: [520, 330], rerank: [1100, 240],
+};
+
+function renderGraph() {
+  if (graphRendered) return;
+  graphRendered = true;
+
+  const svg = document.getElementById('graph-svg');
+
+  // Build edge set
+  const edges = [];
+  SERVICES.forEach(s => {
+    if (!GRAPH_POSITIONS[s.id]) return;
+    s.deps.forEach(d => {
+      if (GRAPH_POSITIONS[d]) edges.push([s.id, d]);
+    });
+  });
+
+  // Draw edges first (behind nodes)
+  const edgeGroup = document.createElementNS('http://www.w3.org/2000/svg','g');
+  edgeGroup.id = 'edge-group';
+  edges.forEach(([a, b]) => {
+    const [ax, ay] = GRAPH_POSITIONS[a];
+    const [bx, by] = GRAPH_POSITIONS[b];
+    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1', ax + 36); line.setAttribute('y1', ay + 12);
+    line.setAttribute('x2', bx + 36); line.setAttribute('y2', by + 12);
+    line.setAttribute('stroke', '#2a2f4a'); line.setAttribute('stroke-width', '1.2');
+    line.setAttribute('class', `edge edge-${a} edge-to-${b}`);
+    edgeGroup.appendChild(line);
+  });
+  svg.appendChild(edgeGroup);
+
+  // Draw nodes
+  const nodeGroup = document.createElementNS('http://www.w3.org/2000/svg','g');
+  nodeGroup.id = 'node-group';
+  SERVICES.forEach(s => {
+    const pos = GRAPH_POSITIONS[s.id];
+    if (!pos) return;
+    const c = CATEGORIES[s.cat];
+    const [x, y] = pos;
+
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('transform', `translate(${x},${y})`);
+    g.setAttribute('class', 'graph-node');
+    g.setAttribute('data-id', s.id);
+    g.style.cursor = 'pointer';
+
+    const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    rect.setAttribute('width', '72'); rect.setAttribute('height', '24');
+    rect.setAttribute('rx', '6'); rect.setAttribute('ry', '6');
+    rect.setAttribute('fill', c.color + '22');
+    rect.setAttribute('stroke', c.color + '66');
+    rect.setAttribute('stroke-width', '1');
+    rect.setAttribute('class', `node-rect node-rect-${s.id}`);
+
+    const text = document.createElementNS('http://www.w3.org/2000/svg','text');
+    text.setAttribute('x', '36'); text.setAttribute('y', '15');
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('fill', c.color);
+    text.setAttribute('font-size', '8');
+    text.setAttribute('font-weight', '600');
+    text.setAttribute('font-family', 'system-ui,sans-serif');
+    text.textContent = s.name.length > 14 ? s.name.substring(0, 13) + '…' : s.name;
+
+    g.appendChild(rect); g.appendChild(text);
+    g.addEventListener('click', () => highlightNode(s.id));
+    nodeGroup.appendChild(g);
+  });
+  svg.appendChild(nodeGroup);
+
+  // Legend
+  const legend = document.getElementById('graph-legend');
+  legend.innerHTML = Object.entries(CATEGORIES).map(([k, v]) => `
+    <div class="legend-item"><div class="legend-dot" style="background:${v.color}"></div>${v.label}</div>
+  `).join('');
+
+  // Pan support
+  let dragging = false, startX, startY, vx = 0, vy = 0;
+  svg.addEventListener('mousedown', e => { dragging = true; startX = e.clientX - vx; startY = e.clientY - vy; });
+  svg.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    vx = e.clientX - startX; vy = e.clientY - startY;
+    nodeGroup.setAttribute('transform', `translate(${vx},${vy})`);
+    edgeGroup.setAttribute('transform', `translate(${vx},${vy})`);
+  });
+  svg.addEventListener('mouseup', () => dragging = false);
+  svg.addEventListener('mouseleave', () => dragging = false);
+}
+
+function highlightNode(id) {
+  const svg = document.getElementById('graph-svg');
+  // Reset
+  svg.querySelectorAll('.node-rect').forEach(r => { r.setAttribute('opacity','0.3'); r.setAttribute('stroke-width','1'); });
+  svg.querySelectorAll('.edge').forEach(e => { e.setAttribute('stroke','#2a2f4a'); e.setAttribute('stroke-width','1.2'); e.setAttribute('opacity','0.2'); });
+
+  if (selectedNode === id) { // deselect
+    svg.querySelectorAll('.node-rect').forEach(r => { r.setAttribute('opacity','1'); r.setAttribute('stroke-width','1'); });
+    svg.querySelectorAll('.edge').forEach(e => { e.setAttribute('stroke','#2a2f4a'); e.setAttribute('stroke-width','1.2'); e.setAttribute('opacity','1'); });
+    selectedNode = null; return;
+  }
+  selectedNode = id;
+
+  const s = SERVICES.find(x => x.id === id);
+  const usedBy = SERVICES.filter(x => x.deps.includes(id)).map(x => x.id);
+
+  // Highlight self
+  const selfRect = svg.querySelector(`.node-rect-${id}`);
+  if (selfRect) { selfRect.setAttribute('opacity','1'); selfRect.setAttribute('stroke-width','2.5'); }
+
+  // Highlight deps (outgoing)
+  s.deps.forEach(d => {
+    const dr = svg.querySelector(`.node-rect-${d}`);
+    if (dr) { dr.setAttribute('opacity','1'); }
+    svg.querySelectorAll(`.edge-${id}.edge-to-${d}, .edge-${id}`).forEach(e => {
+      e.setAttribute('stroke', CATEGORIES[s.cat]?.color || '#3b82f6');
+      e.setAttribute('stroke-width','2'); e.setAttribute('opacity','1');
+    });
+  });
+
+  // Highlight usedBy (incoming)
+  usedBy.forEach(u => {
+    const ur = svg.querySelector(`.node-rect-${u}`);
+    if (ur) { ur.setAttribute('opacity','1'); }
+    svg.querySelectorAll(`.edge-${u}.edge-to-${id}`).forEach(e => {
+      e.setAttribute('stroke','#14b8a6');
+      e.setAttribute('stroke-width','2'); e.setAttribute('opacity','1');
+    });
+  });
+}
+
+// ══════════════════════════════════════════════════
+//  TAB 4 – PROVIDERS
+// ══════════════════════════════════════════════════
+const PROVIDERS = [
+  { icon:'🟣', name:'Claude', company:'Anthropic', models:['claude-haiku','claude-sonnet','claude-opus'], feature:'Prompt caching · Best for long docs', file:'services/ai/claude.service.js' },
+  { icon:'🟢', name:'OpenAI / GPT', company:'OpenAI', models:['gpt-4o','gpt-4-turbo','gpt-3.5-turbo'], feature:'Widest tooling ecosystem', file:'services/ai/openai.service.js' },
+  { icon:'🔵', name:'Gemini', company:'Google', models:['gemini-flash','gemini-pro'], feature:'Huge context window · Multimodal', file:'services/ai/gemini.service.js' },
+  { icon:'⚡', name:'Groq', company:'Groq Inc.', models:['groq-mixtral','groq-llama'], feature:'Fastest inference (LPU hardware)', file:'services/ai/groq.service.js' },
+  { icon:'🇪🇺', name:'Mistral', company:'Mistral AI', models:['mistral-small','mistral-medium'], feature:'European · Strong multilingual', file:'services/ai/mistral.service.js' },
+  { icon:'🔶', name:'Cohere', company:'Cohere', models:['command-r','command-r+'], feature:'Enterprise RAG · Reranking', file:'services/ai/cohere.service.js' },
+  { icon:'🐋', name:'DeepSeek', company:'DeepSeek', models:['deepseek-v4-flash','deepseek-v4-pro','deepseek-v4-pro-reasoning'], feature:'Built-in reasoning / thinking mode', file:'services/ai/deepseek.service.js' },
+  { icon:'🌐', name:'OpenRouter', company:'OpenRouter', models:['100+ models via one API'], feature:'Model marketplace · Automatic fallback', file:'services/ai/openrouter.service.js' },
+  { icon:'🤝', name:'Together AI', company:'Together', models:['Llama, Mistral, Qwen…'], feature:'Open-source model specialists', file:'services/ai/together.service.js' },
+  { icon:'🔌', name:'AnyAPI', company:'Custom', models:['Any OpenAI-compatible API'], feature:'Plug in any compatible endpoint', file:'services/ai/anyapi.service.js' },
+];
+
+function buildProviders() {
+  document.getElementById('providers-grid').innerHTML = PROVIDERS.map(p => `
+    <div class="provider-card">
+      <div class="provider-icon">${p.icon}</div>
+      <div class="provider-name">${p.name}</div>
+      <div class="provider-company">${p.company}</div>
+      <div class="provider-models">${p.models.map(m => `<span class="model-chip">${m}</span>`).join('')}</div>
+      <div class="provider-feature">✦ ${p.feature}</div>
+      <div class="provider-file">${p.file}</div>
+    </div>
+  `).join('');
+}
+
+// ══════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════
+buildJourney();
+buildServices();
+buildProviders();
+</script>
+</body>
+</html>

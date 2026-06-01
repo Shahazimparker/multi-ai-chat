@@ -258,9 +258,7 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
         if (payloadError) {
           console.error(`[RAG] OpenRouter Embedding payload.error: ${payloadError}`);
           if (isMaxContextError(payloadError)) {
-            const tooLongErr = new Error('Embedding input exceeds provider context limit');
-            tooLongErr.code = 'EMBED_INPUT_TOO_LONG';
-            throw tooLongErr;
+            throw Object.assign(new Error('Embedding input exceeds provider context limit'), { code: 'EMBED_INPUT_TOO_LONG' });
           }
         }
         console.error(`[RAG] OpenRouter Embedding invalid payload shape. keys=${keys || 'none'}`);
@@ -282,9 +280,7 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
         const details = typeof apiError === 'string' ? apiError : JSON.stringify(apiError);
         console.error(`[RAG] OpenRouter Embedding API error details: ${details}`);
         if (isMaxContextError(details)) {
-          const tooLongErr = new Error('Embedding input exceeds provider context limit');
-          tooLongErr.code = 'EMBED_INPUT_TOO_LONG';
-          throw tooLongErr;
+          throw Object.assign(new Error('Embedding input exceeds provider context limit'), { code: 'EMBED_INPUT_TOO_LONG' });
         }
       }
       console.error('[RAG] OpenRouter Embedding failed:', err.message);
