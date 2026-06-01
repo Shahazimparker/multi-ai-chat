@@ -72,15 +72,13 @@ const FileCard = ({ file, onDownload }) => {
   React.useEffect(() => {
     if (!expanded || !file.file_id) return;
     if (isImage && !imageUrl) {
-      fetch(`/api/upload/download/${file.file_id}`, { credentials: 'include' })
-        .then(res => res.ok ? res.blob() : Promise.reject())
-        .then(blob => setImageUrl(URL.createObjectURL(blob)))
+      api.get(`/upload/download/${file.file_id}`, { responseType: 'blob' })
+        .then(res => setImageUrl(URL.createObjectURL(res.data)))
         .catch(() => setImageUrl(null));
     }
     if (!isImage && !file.content && !fetchedContent) {
-      fetch(`/api/upload/preview/${file.file_id}`, { credentials: 'include' })
-        .then(res => res.ok ? res.json() : Promise.reject())
-        .then(data => setFetchedContent(data.content || ''))
+      api.get(`/upload/preview/${file.file_id}`)
+        .then(res => setFetchedContent(res.data?.content || ''))
         .catch(() => setFetchedContent('[Preview unavailable]'));
     }
   }, [expanded, file.file_id, file.content, fetchedContent, isImage, imageUrl]);
@@ -280,16 +278,15 @@ const MessageBubble = ({ message, onSidebarRefresh }) => {
   // Download helper for generated files
   const handleFileDownload = async (f) => {
     try {
-      const res = await fetch(`/api/upload/download/${f.file_id}`, {
-        credentials: 'include',
+      const res = await api.get(`/upload/download/${f.file_id}`, {
+        responseType: 'blob',
       });
-      if (!res.ok) return alert('Download failed');
-      const blob = await res.blob();
+      const blob = res.data;
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       // Use the Content-Disposition filename from server if available
-      const cd = res.headers.get('Content-Disposition');
+      const cd = res.headers?.['content-disposition'] || res.headers?.['Content-Disposition'];
       const match = cd && cd.match(/filename="?(.+?)"?$/);
       a.download = match ? match[1] : (f.file_name || 'file');
       a.click();
