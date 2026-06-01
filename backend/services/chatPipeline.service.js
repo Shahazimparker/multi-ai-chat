@@ -617,7 +617,7 @@ ${page.text}`)
           embedAndStoreMessage({
             userId: user.id, topicId: resolvedTopicId,
             messageId: savedUserMessageId, role: 'user',
-            content: message, provider: modelConfig.provider,
+            content: message, provider: 'openrouter',
           }).catch(err => { console.warn('[Memory] User msg embed failed:', err.message); return 0; })
         );
       }
@@ -626,7 +626,7 @@ ${page.text}`)
           embedAndStoreMessage({
             userId: user.id, topicId: resolvedTopicId,
             messageId: savedAssistantMessageId, role: 'assistant',
-            content: finalReply, provider: modelConfig.provider,
+            content: finalReply, provider: 'openrouter',
           }).catch(err => { console.warn('[Memory] Asst msg embed failed:', err.message); return 0; })
         );
       }
