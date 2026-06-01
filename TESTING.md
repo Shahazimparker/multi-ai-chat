@@ -61,6 +61,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 - Unknown or unsupported files are handled by the fallback extractor path.
 - Uploaded content can be searched from chat when RAG is enabled.
 - Abort and error paths clean up temp files.
+- Large upload embedding resilience: if provider returns max-context errors, adaptive chunk fallback still produces non-zero embedding tokens for supported content.
 
 ### Artifact Lifecycle and Chat Deletion
 
@@ -87,6 +88,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 - Theme toggle persists across reloads.
 - Login, chat, and sidebar styles render correctly in both themes.
 - Mobile navigation does not break the chat layout.
+- Generated-file downloads from chat message cards work on real mobile devices (should not download frontend `index.html` fallback).
 
 ## AI Framework Testing Checklist
 

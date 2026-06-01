@@ -59,6 +59,7 @@ This document is the technical reference for the current codebase state.
   - Memory context trimmed with token-budget-aware `trimTextByTokens` (600 token fixed budget, split evenly across results)
 - RAG and embeddings: `backend/services/rag.service.js` (hybrid reranking: cosine+BM25+Jaccard with numeric critical miss protection)
 - File pipeline: `backend/services/fileUpload.service.js`
+  - Upload embeddings include max-context recovery: `EMBED_INPUT_TOO_LONG` from `rag.service.js` triggers smaller chunk retries and adaptive hard split fallback in `fileUpload.service.js`.
 - Cache: `backend/services/cache.service.js`
   - Exact cache reads are disabled for live chat to avoid stale answers; successful responses can still be stored for semantic/RAG-aware reuse.
   - Semantic cache (`getSemanticCachedResponse`, pgvector cosine ≥ 0.92) remains active when RAG provides embeddings.
@@ -167,6 +168,7 @@ This document is the technical reference for the current codebase state.
 ### Key UI components
 
 - Chat UI: `frontend/src/components/chat/*`
+  - Generated-file preview/download in `MessageBubble.jsx` uses `api` client endpoints (`/upload/download/:id`, `/upload/preview/:id`) for baseURL-safe behavior on real mobile.
 - Chat messages panel: `frontend/src/components/chat/ChatMessagesPanel.jsx`
 - Chat input panel: `frontend/src/components/chat/ChatInputPanel.jsx`
 - Memory controls: `frontend/src/components/chat/ChatMemoryControls.jsx`

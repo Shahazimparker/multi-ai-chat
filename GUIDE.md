@@ -20,6 +20,8 @@ This is the main setup and maintenance guide for the current repo state.
 - Human approval checkpoints are persisted in Supabase (`human_approvals`) and controlled through `/api/approvals`, so Vercel/serverless invocations do not wait in memory for a human response.
 - RAG with hybrid reranking (cosine+BM25+Jaccard), semantic cache, token accounting, context summarization, and cross-chat memory with hybrid reranking
 - File upload, search, and abort cleanup
+- Upload embedding retry safety: when embedding provider returns max-context errors, chunks are retried with smaller adaptive splits.
+- Generated-file preview/download in chat uses API client endpoints, avoiding mobile route fallback to `index.html`.
 - URL intelligence (auto-triggered by links in chat text; no tool-tag needed):
   - Dedicated repo/thread readers: GitHub, GitLab, Bitbucket, StackOverflow
   - Dedicated page readers: Notion, Confluence

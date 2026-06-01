@@ -21,6 +21,8 @@ Unified AI chat platform with authentication, anonymous mode, file-aware chat (R
 - Authenticated and anonymous chat flows
 - Semantic query cache, RAG context with hybrid reranking (cosine+BM25+Jaccard), history summarization, cross-chat memory with hybrid reranking
 - File upload/search integration
+- Upload embedding fallback for large inputs: on provider max-context errors, upload embedding retries with smaller adaptive splits to avoid zero-vector saves.
+- Generated file download/preview uses API-client routes (baseURL-aware), preventing mobile SPA fallback downloads (`index.html`).
 - Web search fallback chain: `Exa -> Tavily -> Firecrawl -> SerpAPI -> LangSearch` (fallback on errors/timeouts/rate limits/empty results)
 - URL intelligence (auto-triggered by links in chat text):
   - Dedicated deep readers: GitHub, GitLab, Bitbucket, StackOverflow, Notion, Confluence
