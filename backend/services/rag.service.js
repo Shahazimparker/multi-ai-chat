@@ -196,6 +196,8 @@ const setCachedEmbedding = (key, vector) => {
 const clearEmbeddingCache = () => {
   embeddingCache.clear();
 };
+
+const isMaxContextError = (message = '') => /maximum context length|context length|too many tokens|invalid 'input'/i.test(String(message));
 /**
  * embedText — creates vector embedding using the selected provider
  * NOW RETURNS { vector, tokensUsed } instead of just the vector array
@@ -243,17 +245,48 @@ const embedText = async (text, provider = 'openrouter', retries = 3, signal = nu
         }
       );
 
-      let vector = response.data.data[0].embedding;
+      const payload = response?.data;
+      const vector = payload?.data?.[0]?.embedding
+        || payload?.embeddings?.[0]?.embedding
+        || payload?.embeddings?.[0]
+        || null;
+      if (!Array.isArray(vector) || vector.length === 0) {
+        const keys = payload && typeof payload === 'object' ? Object.keys(payload).join(',') : typeof payload;
+        const payloadError = payload?.error
+          ? (typeof payload.error === 'string' ? payload.error : JSON.stringify(payload.error))
+          : null;
+        if (payloadError) {
+          console.error(`[RAG] OpenRouter Embedding payload.error: ${payloadError}`);
+          if (isMaxContextError(payloadError)) {
+            const tooLongErr = new Error('Embedding input exceeds provider context limit');
+            tooLongErr.code = 'EMBED_INPUT_TOO_LONG';
+            throw tooLongErr;
+          }
+        }
+        console.error(`[RAG] OpenRouter Embedding invalid payload shape. keys=${keys || 'none'}`);
+        return null;
+      }
       // Try to get actual tokens from API response, fall back to estimate
-      const actualTokens = response.data.usage?.prompt_tokens || estimatedTokens;
+      const actualTokens = payload?.usage?.prompt_tokens || estimatedTokens;
 
       if (vector.length < 1536) {
-        vector = [...vector, ...new Array(1536 - vector.length).fill(0)];
+        vector.push(...new Array(1536 - vector.length).fill(0));
       }
       setCachedEmbedding(cacheKey, vector);
       return { vector, tokensUsed: actualTokens };
     } catch (err) {
       if (err.name === 'AbortError' || err.name === 'CanceledError') throw err;
+      if (err?.code === 'EMBED_INPUT_TOO_LONG') throw err;
+      const apiError = err?.response?.data?.error;
+      if (apiError) {
+        const details = typeof apiError === 'string' ? apiError : JSON.stringify(apiError);
+        console.error(`[RAG] OpenRouter Embedding API error details: ${details}`);
+        if (isMaxContextError(details)) {
+          const tooLongErr = new Error('Embedding input exceeds provider context limit');
+          tooLongErr.code = 'EMBED_INPUT_TOO_LONG';
+          throw tooLongErr;
+        }
+      }
       console.error('[RAG] OpenRouter Embedding failed:', err.message);
       return null;
     }

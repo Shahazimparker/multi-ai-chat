@@ -41,6 +41,63 @@ const chunkContent = (text, maxTokens = 500, fileType = 'text') => {
   return chunks.map((chunk) => chunk.content);
 };
 
+const hardSplitText = (text, parts = 2) => {
+  const source = String(text || '');
+  if (!source) return [];
+  const safeParts = Math.max(2, Math.min(8, Number(parts) || 2));
+  const size = Math.ceil(source.length / safeParts);
+  const out = [];
+  for (let i = 0; i < safeParts; i++) {
+    const piece = source.slice(i * size, (i + 1) * size).trim();
+    if (piece) out.push(piece);
+  }
+  return out;
+};
+
+const tryEmbedWithAdaptiveSplit = async ({
+  text,
+  fileType,
+  signal,
+  userId,
+  embedText,
+  maxParts = 32,
+  minChars = 300,
+}) => {
+  let parts = 4;
+  while (parts <= maxParts) {
+    const pieces = hardSplitText(text, parts);
+    if (!pieces.length) return null;
+
+    let sawTooLong = false;
+    for (let i = 0; i < pieces.length; i++) {
+      if (signal?.aborted) throw new Error('Upload cancelled by user');
+      const piece = pieces[i];
+      if (!piece || piece.length < minChars) continue;
+      try {
+        const res = await embedText(piece, 'openrouter', 3, signal, userId);
+        if (res?.vector) return res;
+      } catch (err) {
+        if (err?.code === 'EMBED_INPUT_TOO_LONG') {
+          sawTooLong = true;
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    // If all pieces were still too long, increase split depth and retry
+    if (sawTooLong) {
+      parts *= 2;
+      continue;
+    }
+
+    // No success and no "too long" errors => stop retries
+    return null;
+  }
+
+  return null;
+};
+
 const detectLanguage = (fileName) => {
   const ext = fileName.split('.').pop().toLowerCase();
   const langMap = { js: 'javascript', py: 'python', ts: 'typescript', java: 'java', cpp: 'cpp' };
@@ -236,13 +293,53 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
       const chunks = chunkContent(sanitizedContent, 2000, fileType);
       const chunkVectors = [];
 
+      const embedChunkWithRetry = async (text, chunkIndex, totalChunks) => {
+        try {
+          return await embedText(text, 'openrouter', 3, signal, userId);
+        } catch (err) {
+          if (err?.code === 'EMBED_INPUT_TOO_LONG') {
+            let fallbackChunks = chunkContent(text, 1000, fileType);
+            if (fallbackChunks.length <= 1) {
+              console.warn(`[FileUpload] Chunk ${chunkIndex + 1}/${totalChunks} still oversized after token split; forcing hard split.`);
+              const adaptiveResult = await tryEmbedWithAdaptiveSplit({
+                text,
+                fileType,
+                signal,
+                userId,
+                embedText,
+              });
+              if (adaptiveResult?.vector) return adaptiveResult;
+              return null;
+            }
+
+            console.warn(`[FileUpload] Chunk ${chunkIndex + 1}/${totalChunks} exceeded embedding context; retrying with ${fallbackChunks.length} smaller chunk(s).`);
+            for (let j = 0; j < fallbackChunks.length; j++) {
+              if (signal?.aborted) throw new Error('Upload cancelled by user');
+              try {
+                const fallbackResult = await embedText(fallbackChunks[j], 'openrouter', 3, signal, userId);
+                if (fallbackResult?.vector) {
+                  return fallbackResult;
+                }
+              } catch (subErr) {
+                if (subErr?.code === 'EMBED_INPUT_TOO_LONG') {
+                  continue;
+                }
+                throw subErr;
+              }
+            }
+            return null;
+          }
+          throw err;
+        }
+      };
+
       for (let i = 0; i < chunks.length; i++) {
         if (signal?.aborted) throw new Error('Upload cancelled by user');
         if (onProgress) {
           const pct = Math.round(((i) / Math.max(chunks.length, 1)) * 100);
           onProgress({ type: 'progress', phase: 'embedding', percent: pct, message: `Embedding chunk ${i + 1}/${chunks.length} for ${fileName}` });
         }
-        const result = await embedText(chunks[i], 'openrouter', 3, signal, userId);
+        const result = await embedChunkWithRetry(chunks[i], i, chunks.length);
         if (signal?.aborted) throw new Error('Upload cancelled by user');
         if (result) {
           chunkVectors.push(result.vector);
