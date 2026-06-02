@@ -4,6 +4,7 @@ const pptxgen = require('pptxgenjs');
 const { saveGeneratedBinaryFile } = require('./fileUpload.service');
 
 const THEMES = {
+  // ── Original 12 ──────────────────────────────────────────────
   modern_corporate:    { headerBg: '0F172A', accent: '0EA5E9', accentLight: 'E0F2FE', textDark: '0B1220', textLight: 'FFFFFF', textMuted: '64748B' },
   startup_bold:        { headerBg: '111827', accent: 'F97316', accentLight: 'FFEDD5', textDark: '111827', textLight: 'FFFFFF', textMuted: '6B7280' },
   clean_minimal:       { headerBg: '1E3A5F', accent: '2563EB', accentLight: 'DBEAFE', textDark: '1F2937', textLight: 'FFFFFF', textMuted: '6B7280' },
@@ -16,12 +17,22 @@ const THEMES = {
   ocean_depth:         { headerBg: '0C4A6E', accent: '06B6D4', accentLight: 'CFFAFE', textDark: '082F49', textLight: 'FFFFFF', textMuted: '0E7490' },
   rose_creative:       { headerBg: '831843', accent: 'F43F5E', accentLight: 'FFE4E6', textDark: '4C0519', textLight: 'FFFFFF', textMuted: '9F1239' },
   mono_editorial:      { headerBg: '262626', accent: '737373', accentLight: 'F5F5F5', textDark: '171717', textLight: 'FFFFFF', textMuted: '525252' },
+  // ── New modern 8 ─────────────────────────────────────────────
+  arctic_blue:         { headerBg: '0A1628', accent: '38BDF8', accentLight: 'E0F7FF', textDark: '0A1628', textLight: 'FFFFFF', textMuted: '64748B' },
+  forest_night:        { headerBg: '0D2B1F', accent: '4ADE80', accentLight: 'DCFCE7', textDark: '0D2B1F', textLight: 'FFFFFF', textMuted: '4B5563' },
+  golden_age:          { headerBg: '1A1006', accent: 'D97706', accentLight: 'FEF3C7', textDark: '1A1006', textLight: 'FFFFFF', textMuted: '92400E' },
+  midnight_plum:       { headerBg: '1E0A2E', accent: 'C084FC', accentLight: 'F3E8FF', textDark: '1E0A2E', textLight: 'FFFFFF', textMuted: '7C3AED' },
+  slate_coral:         { headerBg: '1E293B', accent: 'F87171', accentLight: 'FEE2E2', textDark: '1E293B', textLight: 'FFFFFF', textMuted: '94A3B8' },
+  graphite_gold:       { headerBg: '18181B', accent: 'FBBF24', accentLight: 'FEF9C3', textDark: '18181B', textLight: 'FFFFFF', textMuted: '71717A' },
+  teal_glass:          { headerBg: '0F3C3C', accent: '2DD4BF', accentLight: 'CCFBF1', textDark: '0F3C3C', textLight: 'FFFFFF', textMuted: '0D9488' },
+  cobalt_bold:         { headerBg: '1E3A8A', accent: '93C5FD', accentLight: 'DBEAFE', textDark: '1E1B4B', textLight: 'FFFFFF', textMuted: '6366F1' },
 };
 
 const KNOWN_LAYOUTS = new Set([
   'title_bullets', 'two_column', 'cards', 'quote', 'data_story',
   'timeline', 'process_steps', 'comparison_split', 'swot_grid',
   'kpi_dashboard', 'checklist', 'section_break', 'statistics_strip', 'faq', 'table_like',
+  'hero_statement', 'agenda',
 ]);
 
 // Slide canvas: 13.33 × 7.5 inches (LAYOUT_WIDE)
@@ -156,6 +167,41 @@ const renderLayout = (prs, s, slide, i, slideCount, t) => {
     }
     // Slide number
     s.addText(`${i + 1} / ${slideCount}`, { x: 11.5, y: 7.1, w: 1.5, h: 0.3, fontSize: 11, color: t.accent, align: 'right' });
+    return;
+  }
+
+  // ── hero_statement: dramatic full-dark centered statement ─────
+  if (layout === 'hero_statement') {
+    s.background = { color: t.headerBg };
+    // Decorative ellipses
+    s.addShape(prs.ShapeType.ellipse, { x: 8.0, y: -2.5, w: 9.0, h: 9.0, fill: { color: t.accent, transparency: 88 }, line: { type: 'none' } });
+    s.addShape(prs.ShapeType.ellipse, { x: -2.5, y: 3.5, w: 7.0, h: 7.0, fill: { color: t.accent, transparency: 88 }, line: { type: 'none' } });
+    // Left accent strip
+    s.addShape(prs.ShapeType.rect, { x: 0, y: 0, w: 0.28, h: MH, fill: { color: t.accent }, line: { type: 'none' } });
+    // Slide label (title as small uppercase tag)
+    s.addText((slide.title || 'Statement').toUpperCase(), {
+      x: 0.5, y: 0.32, w: 12.3, h: 0.4,
+      fontSize: 11, bold: true, color: t.accent, charSpacing: 2.5,
+    });
+    // Main statement — big centered bold text
+    const statement = content || (bullets.length > 0 ? String(bullets[0]) : 'Your powerful statement goes here.');
+    s.addText(statement, {
+      x: 0.55, y: 1.4, w: 12.2, h: 4.2,
+      fontSize: 36, bold: true, color: t.textLight,
+      align: 'center', valign: 'middle', wrap: true,
+    });
+    // Supporting tagline below divider line
+    const tagline = slide.subtitle || (bullets.length > 1 ? String(bullets[1]) : '');
+    if (tagline) {
+      s.addShape(prs.ShapeType.rect, { x: 3.5, y: 5.7, w: 6.33, h: 0.06, fill: { color: t.accent }, line: { type: 'none' } });
+      s.addText(tagline, {
+        x: 1.0, y: 5.85, w: 11.3, h: 0.52,
+        fontSize: 16, color: t.accent, align: 'center', italic: true, wrap: true,
+      });
+    }
+    // Subtle bottom band + slide number
+    s.addShape(prs.ShapeType.rect, { x: 0, y: 7.12, w: MW, h: 0.26, fill: { color: t.accent, transparency: 80 }, line: { type: 'none' } });
+    s.addText(`${i + 1} / ${slideCount}`, { x: 11.5, y: 7.15, w: 1.5, h: 0.22, fontSize: 10, color: t.accent, align: 'right' });
     return;
   }
 
@@ -544,6 +590,42 @@ const renderLayout = (prs, s, slide, i, slideCount, t) => {
       const val = (parts[1] || '').trim();
       s.addText(cat, { x: 0.7, y: y + 0.04, w: 6.35, h: rowH2 - 0.1, fontSize: 12, color: t.textDark, valign: 'middle', wrap: true });
       s.addText(val, { x: 7.3, y: y + 0.04, w: 5.6, h: rowH2 - 0.1, fontSize: 12, color: t.textDark, valign: 'middle', align: 'right', wrap: true });
+    });
+
+  // ── agenda ────────────────────────────────────────────────────
+  } else if (layout === 'agenda') {
+    const items = bullets.length > 0 ? bullets.slice(0, 7) : ['Introduction', 'Key Points', 'Discussion', 'Q&A', 'Next Steps'];
+    const gap = 0.09;
+    const availH = BT - CY - 0.1;
+    const rowH = Math.min(0.74, (availH - gap * (items.length - 1)) / items.length);
+    items.forEach((item, idx) => {
+      const y = CY + 0.05 + idx * (rowH + gap);
+      // Row background
+      s.addShape(prs.ShapeType.roundRect, {
+        x: 1.05, y, w: MW - 1.45, h: rowH,
+        fill: { color: idx % 2 ? t.accentLight : 'F8FAFC' }, line: { color: t.accentLight, pt: 0.6 },
+      });
+      // Left accent bar on row
+      s.addShape(prs.ShapeType.rect, { x: 1.05, y, w: 0.18, h: rowH, fill: { color: idx === 0 ? t.accent : t.textMuted }, line: { type: 'none' } });
+      // Number circle badge
+      s.addShape(prs.ShapeType.ellipse, {
+        x: 0.35, y: y + (rowH - 0.6) / 2, w: 0.6, h: 0.6,
+        fill: { color: idx === 0 ? t.accent : t.headerBg }, line: { type: 'none' },
+      });
+      s.addText(String(idx + 1).padStart(2, '0'), {
+        x: 0.35, y: y + (rowH - 0.6) / 2, w: 0.6, h: 0.6,
+        fontSize: 13, bold: true, color: t.textLight, align: 'center', valign: 'middle',
+      });
+      // Item text
+      s.addText(String(item), {
+        x: 1.32, y: y + 0.06, w: MW - 1.78, h: rowH - 0.12,
+        fontSize: 14, bold: idx === 0, color: t.textDark, valign: 'middle', wrap: true,
+      });
+      // Right dot indicator
+      s.addShape(prs.ShapeType.ellipse, {
+        x: MW - 0.54, y: y + (rowH - 0.26) / 2, w: 0.26, h: 0.26,
+        fill: { color: idx === 0 ? t.accent : t.accentLight }, line: { type: 'none' },
+      });
     });
 
   // ── title_bullets fallback ────────────────────────────────────
