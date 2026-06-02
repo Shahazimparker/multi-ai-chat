@@ -3,6 +3,17 @@
 // These tests verify processToolCall logic paths
 
 const { processToolCall } = require('../../services/toolProcessor.service');
+const { approvalManager } = require('../../services/approvalManager.shared');
+
+// Auto-approves any approval_request event so GENERATE_* tests don't wait for human input.
+// Uses the real approvalManager — not a mock — matching production behavior.
+const autoApprove = (event) => {
+  if (event?.type === 'approval_request' && event.approvalId) {
+    approvalManager.getHandler('default')
+      .approve(event.approvalId, null, 'test-runner', '')
+      .catch(() => {});
+  }
+};
 
 describe('processToolCall', () => {
   const baseArgs = {
@@ -72,6 +83,7 @@ describe('processToolCall', () => {
       const result = await processToolCall({
         ...baseArgs,
         user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' },
+        onStatus: autoApprove,
         reply: `[GENERATE_PPT]${pptJson}[/GENERATE_PPT]`,
       });
       expect(result.handled).toBe(true);
@@ -94,6 +106,7 @@ describe('processToolCall', () => {
     it('text tag: handles empty slides array', async () => {
       const result = await processToolCall({
         ...baseArgs,
+        onStatus: autoApprove,
         reply: '[GENERATE_PPT]{"title":"Empty","slides":[]}[/GENERATE_PPT]',
       });
       expect(result.handled).toBe(true);
@@ -107,6 +120,7 @@ describe('processToolCall', () => {
       const result = await processToolCall({
         ...baseArgs,
         user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' },
+        onStatus: autoApprove,
         reply: '',
         aiResponse: {
           toolCalls: [{
@@ -148,6 +162,7 @@ describe('processToolCall', () => {
     it('function-call path: empty slides array includes "No slides provided" in error', async () => {
       const result = await processToolCall({
         ...baseArgs,
+        onStatus: autoApprove,
         reply: '',
         aiResponse: {
           toolCalls: [{
@@ -165,7 +180,7 @@ describe('processToolCall', () => {
   describe('GENERATE_PDF handler', () => {
     it('generates PDF and returns generatedMedia', async () => {
       const pdfJson = JSON.stringify({ title: 'Test Report', sections: [{ heading: 'Intro', content: 'Test content.' }] });
-      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_PDF]${pdfJson}[/GENERATE_PDF]` });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, onStatus: autoApprove, reply: `[GENERATE_PDF]${pdfJson}[/GENERATE_PDF]` });
       expect(result.handled).toBe(true);
       expect(result.generatedMedia.length).toBeGreaterThan(0);
       expect(result.generatedMedia[0].file_type).toBe('pdf');
@@ -175,7 +190,7 @@ describe('processToolCall', () => {
   describe('GENERATE_EXCEL handler', () => {
     it('generates Excel and returns generatedMedia', async () => {
       const xlJson = JSON.stringify({ title: 'Data', sheets: [{ name: 'Sheet1', headers: ['A', 'B'], rows: [['1', '2']] }] });
-      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_EXCEL]${xlJson}[/GENERATE_EXCEL]` });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, onStatus: autoApprove, reply: `[GENERATE_EXCEL]${xlJson}[/GENERATE_EXCEL]` });
       expect(result.handled).toBe(true);
       expect(result.generatedMedia.length).toBeGreaterThan(0);
       expect(result.generatedMedia[0].file_type).toBe('xlsx');
@@ -185,7 +200,7 @@ describe('processToolCall', () => {
   describe('GENERATE_DOCX handler', () => {
     it('generates DOCX and returns generatedMedia', async () => {
       const docxJson = JSON.stringify({ title: 'Test Doc', sections: [{ heading: 'Intro', content: 'Test content.' }] });
-      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_DOCX]${docxJson}[/GENERATE_DOCX]` });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, onStatus: autoApprove, reply: `[GENERATE_DOCX]${docxJson}[/GENERATE_DOCX]` });
       expect(result.handled).toBe(true);
       expect(result.generatedMedia.length).toBeGreaterThan(0);
       expect(result.generatedMedia[0].file_type).toBe('docx');
@@ -195,7 +210,7 @@ describe('processToolCall', () => {
   describe('GENERATE_CSV handler', () => {
     it('generates CSV and returns generatedMedia', async () => {
       const csvJson = JSON.stringify({ headers: ['Name', 'Age'], rows: [['John', '30'], ['Jane', '25']] });
-      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_CSV]${csvJson}[/GENERATE_CSV]` });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, onStatus: autoApprove, reply: `[GENERATE_CSV]${csvJson}[/GENERATE_CSV]` });
       expect(result.handled).toBe(true);
       expect(result.generatedMedia.length).toBeGreaterThan(0);
       expect(result.generatedMedia[0].file_type).toBe('csv');
@@ -205,7 +220,7 @@ describe('processToolCall', () => {
   describe('GENERATE_CHART handler', () => {
     it('generates Chart SVG and returns generatedMedia', async () => {
       const chartJson = JSON.stringify({ type: 'bar', title: 'Sales', labels: ['Q1', 'Q2'], data: [10, 20] });
-      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_CHART]${chartJson}[/GENERATE_CHART]` });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, onStatus: autoApprove, reply: `[GENERATE_CHART]${chartJson}[/GENERATE_CHART]` });
       expect(result.handled).toBe(true);
       expect(result.generatedMedia.length).toBeGreaterThan(0);
       expect(result.generatedMedia[0].file_type).toBe('svg');
@@ -215,7 +230,7 @@ describe('processToolCall', () => {
   describe('GENERATE_HTML handler', () => {
     it('generates HTML and returns generatedMedia', async () => {
       const htmlJson = JSON.stringify({ title: 'Test Page', body: '<h1>Hello</h1>' });
-      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_HTML]${htmlJson}[/GENERATE_HTML]` });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, onStatus: autoApprove, reply: `[GENERATE_HTML]${htmlJson}[/GENERATE_HTML]` });
       expect(result.handled).toBe(true);
       expect(result.generatedMedia.length).toBeGreaterThan(0);
       expect(result.generatedMedia[0].file_type).toBe('html');
@@ -225,7 +240,7 @@ describe('processToolCall', () => {
   describe('GENERATE_JSON handler', () => {
     it('generates JSON file and returns generatedMedia', async () => {
       const jsonJson = JSON.stringify({ data: { key: 'value', list: [1, 2, 3] } });
-      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_JSON]${jsonJson}[/GENERATE_JSON]` });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, onStatus: autoApprove, reply: `[GENERATE_JSON]${jsonJson}[/GENERATE_JSON]` });
       expect(result.handled).toBe(true);
       expect(result.generatedMedia.length).toBeGreaterThan(0);
       expect(result.generatedMedia[0].file_type).toBe('json');
@@ -235,7 +250,7 @@ describe('processToolCall', () => {
   describe('GENERATE_MD handler', () => {
     it('generates Markdown and returns generatedMedia', async () => {
       const mdJson = JSON.stringify({ title: 'Readme', content: '# Hello\n\nThis is a test.' });
-      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, reply: `[GENERATE_MD]${mdJson}[/GENERATE_MD]` });
+      const result = await processToolCall({ ...baseArgs, user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' }, onStatus: autoApprove, reply: `[GENERATE_MD]${mdJson}[/GENERATE_MD]` });
       expect(result.handled).toBe(true);
       expect(result.generatedMedia.length).toBeGreaterThan(0);
       expect(result.generatedMedia[0].file_type).toBe('md');

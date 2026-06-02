@@ -567,10 +567,10 @@ const SERVICES = [
 
   // APPROVAL
   { id:'humanApproval',   cat:'approval', name:'Human Approval',  file:'services/humanApproval.service.js',
-    desc:'Pauses the AI mid-task and asks a human to review and approve before continuing. Stores approval requests in Supabase with a full audit trail.',
+    desc:'Pauses the AI before any GENERATE_* tool executes. Stores approval requests in Supabase with a full audit trail. Three response options: Yes (proceed), Other (instructions loop — AI revises plan and emits a fresh approval_request with updated summary), No (cancel). Abort signal propagation stops polling immediately on stream cancel.',
     deps:[] },
   { id:'approvalManager', cat:'approval', name:'Approval Manager',file:'services/approvalManager.shared.js',
-    desc:'Shared singleton that tracks all pending approval requests across the system, used by the chat pipeline to check for paused tasks.',
+    desc:'Shared singleton that tracks all pending approval requests across the system. Emits approval_request SSE events with summary field (human-readable plan) and options: [\'yes\', \'other\', \'no\']. Used by toolProcessor to gate all 10 GENERATE_* tools.',
     deps:['humanApproval'] },
 ];
 
@@ -638,6 +638,13 @@ const JOURNEY = [
     detail:'The Tool Loop runs up to 6 rounds. Each round: AI requests a tool → Tool Processor calls the right service → result is sent back to the AI → AI decides if it needs another tool or is ready to answer.',
     files:['services/toolLoop.service.js','services/toolProcessor.service.js','services/tools/webSearch.service.js','services/tools/urlReader.service.js','services/tools/codeExecute.service.js'],
     facts:{ 'Max rounds': '6 iterations', 'Web search': 'Exa → Firecrawl → Tavily → SerpAPI → LangSearch', 'Code execution': 'Sandboxed JS, 2s timeout, 5KB limit' }
+  },
+  {
+    icon:'✅', color:'#ef4444', label:'Approval', name:'Human approval gate',
+    desc:'All 10 GENERATE_* tools (PPT, Image, PDF, Excel, DOCX, CSV, Chart, HTML, JSON, Markdown) pause here for the user to review before generation starts.',
+    detail:'Before any file-generation tool executes, the backend creates an approval record in Supabase and emits an approval_request SSE event containing a human-readable summary of what the AI plans to generate. The frontend shows three buttons: ✅ Yes, generate / ✎ Other / ❌ No. The backend polls every 500ms (2 min timeout) and stops immediately if the stream is aborted.\n\nYes path: POST /api/approval/:id/respond { response: true } → generation proceeds.\n\nNo path: POST /api/approval/:id/respond { response: false } → cancellation message returned.\n\nOther (instructions) path: user types instructions (max 500 chars) → respond { response: true, reason: "instructions" } → backend detects non-default reason → returns [USER MODIFICATION REQUEST] to the AI → AI revises its plan → emits a fresh approval_request SSE event with updated summary → cycle repeats until Yes or No.',
+    files:['services/toolProcessor.service.js','services/approvalManager.shared.js','services/humanApproval.service.js','controllers/approval.controller.js','routes/approval.routes.js'],
+    facts:{ 'Gated tools': 'All 10: PPT, Image, PDF, Excel, DOCX, CSV, Chart, HTML, JSON, Markdown', 'Three options': 'Yes / Other (instructions loop) / No', 'Summary field': 'Newline-delimited plan: title, theme, slides, sections, columns, etc.', 'Abort propagation': 'Polling stops immediately when the SSE stream is cancelled' }
   },
   {
     icon:'🧠', color:'#ec4899', label:'AI', name:'AI call — the actual answer',

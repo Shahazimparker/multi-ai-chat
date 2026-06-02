@@ -442,6 +442,7 @@ ${page.text}`)
     // ── 8. Build AI messages ──────────────────────────────────
     const aiMessages = [];
     const allowExecuteCode = EXECUTE_CODE_ENABLED && Boolean(user?.id);
+    const askClarifyingDirective = `\n\n## IMPORTANT: Ask Clarifying Questions First\nBefore using any GENERATE_* tool (GENERATE_PPT, GENERATE_IMAGE, GENERATE_HTML, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CHART, GENERATE_CSV):\n- If the user's request lacks critical details (title, theme, structure, layout, purpose, content), ask clarifying questions FIRST\n- Do NOT immediately jump to generation with vague or insufficient information\n- Ask 2-4 specific, targeted questions to get the details you need\n- Only use the GENERATE_* tool AFTER the user has provided sufficient context\n- This ensures the output matches what the user actually wants\n- Wait for the user's response before proceeding with generation`;
     const toolLines = [
       '1. Web Search: [WEB_SEARCH:query="your search query"]',
       ...(allowExecuteCode ? ['2. Execute JS Code: [EXECUTE_CODE]console.log("hello");[/EXECUTE_CODE]'] : []),
@@ -457,7 +458,7 @@ ${page.text}`)
       '   - Every slide needs a "title" plus either "bullets" (array) or "content" (string)',
       'Wait for the tool result before continuing your response.',
     ];
-    const generalToolsDirective = `\n\n## General Tools\nYou have access to the following tools. Output EXACTLY the tags shown — no extra text inside the tags:\n${toolLines.join('\n')}`;
+    const generalToolsDirective = `${askClarifyingDirective}\n\n## General Tools\nYou have access to the following tools. Output EXACTLY the tags shown — no extra text inside the tags:\n${toolLines.join('\n')}`;
 
     const runtimeIdentity = `MODEL_IDENTITY: ${modelConfig.label} | provider=${effectiveModelConfig.provider} | model=${effectiveModelConfig.model}`;
     const identityDirective = identityCheckEnabled && isIdentityQuestion

@@ -5,11 +5,16 @@
 const { runToolLoop } = require('../../services/toolLoop.service');
 const { MODELS } = require('../../config/models');
 
-const HAS_GEMINI = !!process.env.GEMINI_API_KEY;
-const describeReal = HAS_GEMINI ? describe : describe.skip;
+const HAS_DEEPSEEK = !!process.env.DEEPSEEK_API_KEY;
+const HAS_GROQ     = !!process.env.GROQ_API_KEY;
+const HAS_GEMINI   = !!process.env.GEMINI_API_KEY;
+const describeReal = (HAS_DEEPSEEK || HAS_GROQ || HAS_GEMINI) ? describe : describe.skip;
+
+// Prefer DeepSeek V4 Flash (paid, no free-tier quota cap) → Groq → Gemini Flash
+const REAL_MODEL_ID = HAS_DEEPSEEK ? 'deepseek-v4-flash' : HAS_GROQ ? 'groq-llama' : 'gemini-flash';
 
 describeReal('runToolLoop (real)', () => {
-  const modelConfig = MODELS['gemini-flash'];
+  const modelConfig = MODELS[REAL_MODEL_ID];
   const abortController = new AbortController();
 
   it('completes a single round with no tool calls', async () => {
@@ -46,7 +51,7 @@ describeReal('runToolLoop (real)', () => {
       { role: 'user', content: 'Write a very long essay about AI safety.' },
     ];
 
-    // Abort after a short delay (Gemini takes >1s, so this aborts during dispatch)
+    // Abort after a short delay — fires before the first token arrives
     setTimeout(() => localAbort.abort(), 100);
 
     await expect(runToolLoop({
@@ -62,6 +67,7 @@ describeReal('runToolLoop (real)', () => {
       promptBudget: { maxPromptTokens: 32000 },
       maxToolRounds: 3,
       loggerPrefix: 'TestToolLoop',
-    })).rejects.toMatchObject({ name: 'AbortError' });
+    // Different SDKs surface abort differently: "aborted", "canceled", "Request was aborted."
+    })).rejects.toThrow(/abort|cancel/i);
   }, 30000);
 });

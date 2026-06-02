@@ -1,0 +1,227 @@
+/* ── ApprovalPrompt ──────────────────────────────────────────── */
+
+.ap {
+  background: rgba(124, 58, 237, 0.07);
+  border: 1px solid rgba(124, 58, 237, 0.22);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Terminal states ─────────────────────────────────────────── */
+
+.ap--approved,
+.ap--modified,
+.ap--rejected {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+}
+
+.ap--approved  { background: rgba(16, 185, 129, 0.09); border-color: rgba(16, 185, 129, 0.28); }
+.ap--modified  { background: rgba(245, 158, 11, 0.09); border-color: rgba(245, 158, 11, 0.28); }
+.ap--rejected  { background: rgba(239, 68,  68, 0.07); border-color: rgba(239, 68,  68, 0.20); }
+
+.ap__icon { font-size: 15px; line-height: 1; }
+.ap--approved .ap__icon { color: #10b981; }
+.ap--modified .ap__icon { color: #f59e0b; }
+.ap--rejected .ap__icon { color: #ef4444; }
+
+.ap__state-text { font-size: 13px; color: rgba(255,255,255,0.72); }
+
+/* ── Header ──────────────────────────────────────────────────── */
+
+.ap__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ap__badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #a78bfa;
+  background: rgba(124, 58, 237, 0.15);
+  border: 1px solid rgba(124, 58, 237, 0.25);
+  border-radius: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
+.ap__title {
+  font-size: 13px;
+  color: rgba(255,255,255,0.80);
+  line-height: 1.4;
+}
+
+/* ── Summary block ───────────────────────────────────────────── */
+
+.ap__summary {
+  background: rgba(0,0,0,0.18);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: rgba(255,255,255,0.78);
+  font-family: ui-monospace, 'Cascadia Code', 'Fira Mono', monospace;
+}
+
+.ap__summary-line {
+  white-space: pre;
+}
+
+.ap__summary-indent {
+  white-space: pre;
+  color: rgba(255,255,255,0.55);
+}
+
+/* ── Action buttons row ──────────────────────────────────────── */
+
+.ap__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ap__btn {
+  padding: 7px 15px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.14s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.ap__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ap__btn--approve {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  border-color: #059669;
+}
+.ap__btn--approve:hover:not(:disabled) {
+  background: linear-gradient(135deg, #34d399, #10b981);
+  transform: translateY(-1px);
+}
+
+.ap__btn--other {
+  background: rgba(245, 158, 11, 0.12);
+  color: #fcd34d;
+  border-color: rgba(245, 158, 11, 0.30);
+}
+.ap__btn--other:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.22);
+  border-color: #f59e0b;
+}
+
+.ap__btn--reject {
+  background: rgba(239, 68, 68, 0.10);
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.28);
+}
+.ap__btn--reject:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.20);
+  border-color: #ef4444;
+}
+
+.ap__btn--primary {
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  color: #fff;
+  border-color: #6d28d9;
+}
+.ap__btn--primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+  transform: translateY(-1px);
+}
+.ap__btn--primary:disabled {
+  opacity: 0.35;
+}
+
+.ap__btn--ghost {
+  background: transparent;
+  color: rgba(255,255,255,0.55);
+  border-color: rgba(255,255,255,0.12);
+}
+.ap__btn--ghost:hover:not(:disabled) {
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.80);
+}
+
+/* ── Instructions textarea area ──────────────────────────────── */
+
+.ap__instructions-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ap__instructions-label {
+  font-size: 12px;
+  color: rgba(255,255,255,0.60);
+  font-weight: 500;
+}
+
+.ap__textarea {
+  width: 100%;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(124, 58, 237, 0.30);
+  border-radius: 8px;
+  color: rgba(255,255,255,0.88);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 9px 11px;
+  resize: vertical;
+  outline: none;
+  font-family: inherit;
+  box-sizing: border-box;
+  transition: border-color 0.14s ease;
+}
+.ap__textarea:focus {
+  border-color: rgba(124, 58, 237, 0.65);
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.12);
+}
+.ap__textarea::placeholder {
+  color: rgba(255,255,255,0.28);
+}
+
+.ap__instructions-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ap__char-count {
+  font-size: 11px;
+  color: rgba(255,255,255,0.35);
+}
+
+.ap__instructions-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ── Error ───────────────────────────────────────────────────── */
+
+.ap__error {
+  font-size: 12px;
+  color: #ef4444;
+  padding: 4px 0 0;
+}

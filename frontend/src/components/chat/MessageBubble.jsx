@@ -12,6 +12,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Bot, User, Copy, Check, Zap, Download, Clock, FileText, Image, ChevronDown, ChevronUp } from 'lucide-react';
 import api from '../../config/api';
+import ApprovalPrompt from './ApprovalPrompt';
 import './MessageBubble.css';
 
 // ── File languages that trigger file-card UI ─────────────────
@@ -178,7 +179,7 @@ const CodeBlock = ({ code, language, csvContent, onDownloadCSV }) => {
 
 // ── Component ────────────────────────────────────────────────
 
-const MessageBubble = ({ message, onSidebarRefresh }) => {
+const MessageBubble = ({ message, onSidebarRefresh, onApprovalComplete }) => {
   const [copied, setCopied] = React.useState(false);
 
   // Pre-parse — extract all markdown tables → CSV
@@ -317,6 +318,19 @@ const MessageBubble = ({ message, onSidebarRefresh }) => {
           </ReactMarkdown>
         ) : (
           message.content
+        )}
+
+        {/* Approval prompt section */}
+        {message.approvalRequest && (
+          <ApprovalPrompt
+            key={message.approvalRequest.id}
+            approvalId={message.approvalRequest.id}
+            toolType={message.approvalRequest.toolType}
+            toolLabel={message.approvalRequest.toolLabel}
+            message={message.approvalRequest.message}
+            summary={message.approvalRequest.summary}
+            onComplete={(result) => onApprovalComplete?.(message.approvalRequest.id, result)}
+          />
         )}
 
         {/* Generated files section */}

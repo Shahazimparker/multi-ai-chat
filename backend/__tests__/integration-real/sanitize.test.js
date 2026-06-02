@@ -52,7 +52,7 @@ describe('sanitizeBody middleware', () => {
     const req = {
       body: {
         message: '<script>alert("xss")</script>',
-        modelId: 'gemini-flash',
+        modelId: 'deepseek-v4-flash',
         untouched: '<b>keep</b>',
       },
     };
@@ -63,7 +63,7 @@ describe('sanitizeBody middleware', () => {
     middleware(req, res, next);
 
     expect(req.body.message).toBe('alert("xss")');
-    expect(req.body.modelId).toBe('gemini-flash'); // no HTML, unchanged
+    expect(req.body.modelId).toBe('deepseek-v4-flash'); // no HTML, unchanged
     expect(req.body.untouched).toBe('<b>keep</b>'); // not in the list
   });
 

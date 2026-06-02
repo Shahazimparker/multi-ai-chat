@@ -45,6 +45,10 @@ const ChatPage = () => {
     await session.requestSend(payload);
   }, [composer, session]);
 
+  const handleApprovalComplete = useCallback((approvalId, result) => {
+    console.log(`[Approval] ${approvalId} completed: ${result}`);
+  }, []);
+
   const handleKeyDown = useCallback((event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
@@ -111,6 +115,7 @@ const ChatPage = () => {
           messagesAreaRef={messagesAreaRef}
           handleScroll={handleScroll}
           setSuggestionInput={composer.setInput}
+          onApprovalComplete={handleApprovalComplete}
         />
 
         <ChatInputPanel

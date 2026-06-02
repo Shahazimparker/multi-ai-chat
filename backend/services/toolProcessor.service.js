@@ -11,6 +11,175 @@ const { generateChart } = require('./chartGeneration.service');
 const { generateHTML } = require('./htmlGeneration.service');
 const { generateJSON } = require('./jsonGeneration.service');
 const { generateMarkdown } = require('./markdownGeneration.service');
+const { approvalManager } = require('./approvalManager.shared');
+
+/**
+ * Wait for approval with polling (non-blocking runtime compatibility)
+ */
+const POLL_INTERVAL_MS = 500;
+const APPROVAL_TIMEOUT_MS = 120000; // 2 minutes
+
+const waitForUserApproval = async (requestId, abortSignal) => {
+  const handler = approvalManager.getHandler('default');
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < APPROVAL_TIMEOUT_MS) {
+    if (abortSignal?.aborted) return { approved: false, reason: 'aborted' };
+
+    try {
+      const request = await handler.getRequest(requestId);
+      if (!request) {
+        // Try loading from DB
+        const loaded = await handler._loadRequest(requestId);
+        if (!loaded) {
+          await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+          continue;
+        }
+      }
+
+      if (request?.status === 'approved') {
+        const instructions = (request.reason && request.reason !== 'Approved from chat') ? request.reason : '';
+        return { approved: true, reason: '', instructions };
+      }
+      if (request?.status === 'rejected') return { approved: false, reason: request.reason || 'Rejected by user' };
+      if (request?.status === 'expired') return { approved: false, reason: 'Approval timed out' };
+    } catch (err) {
+      console.warn('[ToolProcessor] Approval poll error:', err.message);
+    }
+
+    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+  }
+
+  return { approved: false, reason: 'Approval timed out' };
+};
+
+const buildSummary = (toolName, context) => {
+  const lines = [];
+  switch (toolName) {
+    case 'GENERATE_IMAGE':
+      if (context.prompt) lines.push(`Prompt: "${context.prompt}"`);
+      break;
+    case 'GENERATE_PPT':
+      lines.push(`Title: "${context.title || 'Untitled'}"`);
+      if (context.theme) lines.push(`Theme: ${context.theme}`);
+      if (Array.isArray(context.slides) && context.slides.length > 0) {
+        lines.push(`Slides (${context.slides.length}):`);
+        context.slides.slice(0, 8).forEach((s, i) => lines.push(`  ${i + 1}. ${s.title || s}`));
+        if (context.slides.length > 8) lines.push(`  … and ${context.slides.length - 8} more`);
+      }
+      break;
+    case 'GENERATE_PDF':
+      lines.push(`Title: "${context.title || 'Document'}"`);
+      if (Array.isArray(context.sections) && context.sections.length > 0) {
+        lines.push(`Sections (${context.sections.length}):`);
+        context.sections.slice(0, 6).forEach((s, i) => lines.push(`  ${i + 1}. ${s.heading || s.title || s.name || `Section ${i + 1}`}`));
+        if (context.sections.length > 6) lines.push(`  … and ${context.sections.length - 6} more`);
+      }
+      break;
+    case 'GENERATE_EXCEL':
+      lines.push(`Title: "${context.title || 'Spreadsheet'}"`);
+      if (Array.isArray(context.sheets) && context.sheets.length > 0) {
+        lines.push(`Sheets (${context.sheets.length}): ${context.sheets.map(s => s.name || s.title || 'Sheet').join(', ')}`);
+      }
+      break;
+    case 'GENERATE_DOCX':
+      lines.push(`Title: "${context.title || 'Document'}"`);
+      if (Array.isArray(context.sections) && context.sections.length > 0) {
+        lines.push(`Sections (${context.sections.length}):`);
+        context.sections.slice(0, 6).forEach((s, i) => lines.push(`  ${i + 1}. ${s.heading || s.title || s.name || `Section ${i + 1}`}`));
+        if (context.sections.length > 6) lines.push(`  … and ${context.sections.length - 6} more`);
+      }
+      break;
+    case 'GENERATE_CSV':
+      if (Array.isArray(context.headers) && context.headers.length > 0)
+        lines.push(`Columns (${context.headers.length}): ${context.headers.join(', ')}`);
+      if (context.rowCount !== undefined) lines.push(`Rows: ${context.rowCount}`);
+      break;
+    case 'GENERATE_CHART':
+      if (context.type) lines.push(`Type: ${context.type}`);
+      if (context.title) lines.push(`Title: "${context.title}"`);
+      if (Array.isArray(context.labels) && context.labels.length > 0)
+        lines.push(`Data points: ${context.labels.slice(0, 6).join(', ')}${context.labels.length > 6 ? '…' : ''}`);
+      break;
+    case 'GENERATE_HTML':
+      if (context.title) lines.push(`Title: "${context.title}"`);
+      break;
+    case 'GENERATE_JSON':
+      lines.push('JSON data file');
+      break;
+    case 'GENERATE_MD':
+      if (context.title) lines.push(`Title: "${context.title}"`);
+      lines.push('Markdown document');
+      break;
+    default:
+      break;
+  }
+  return lines.join('\n');
+};
+
+const makeInstructionsResult = (matchStr, reply, toolName, instructions) => ({
+  handled: true,
+  newMessages: [
+    { role: 'assistant', content: (matchStr ? reply.replace(matchStr, '').trim() : reply.trim()) || `[${toolName} generation paused for revision]` },
+    { role: 'user', content: `[USER MODIFICATION REQUEST]\nUser approved but requested these changes before generating:\n"${instructions}"\nPlease revise your plan to incorporate these changes and regenerate.\n[END USER MODIFICATION REQUEST]` },
+  ],
+  embedTokens: 0,
+});
+
+/**
+ * Request human approval before executing a generation tool
+ */
+const requestToolApproval = async (toolName, context, onStatus, abortSignal = null) => {
+  const toolLabels = {
+    GENERATE_PPT: 'PowerPoint presentation',
+    GENERATE_IMAGE: 'image',
+    GENERATE_HTML: 'HTML page',
+    GENERATE_PDF: 'PDF document',
+    GENERATE_EXCEL: 'Excel spreadsheet',
+    GENERATE_DOCX: 'Word document',
+    GENERATE_CHART: 'chart',
+    GENERATE_CSV: 'CSV file',
+    GENERATE_JSON: 'JSON file',
+    GENERATE_MD: 'Markdown file',
+  };
+
+  const toolLabel = toolLabels[toolName] || toolName;
+
+  try {
+    const request = await approvalManager.getHandler('default').requestApproval({
+      type: 'approval',
+      title: `Generate ${toolLabel}`,
+      description: `The AI wants to generate a ${toolLabel}. Click approve to continue or cancel to stop.`,
+      context: { tool: toolName, ...context },
+      timeout: APPROVAL_TIMEOUT_MS,
+      requiredBy: 'chat-user',
+    });
+
+    // Emit SSE event for frontend to show approval prompt
+    if (onStatus) {
+      onStatus({
+        type: 'approval_request',
+        approvalId: request.id,
+        toolType: toolName,
+        toolLabel,
+        message: `I want to generate a ${toolLabel}. Review the plan below and approve, cancel, or request changes.`,
+        summary: buildSummary(toolName, context),
+        options: ['yes', 'other', 'no'],
+      });
+    }
+
+    const result = await waitForUserApproval(request.id, abortSignal);
+
+    if (!result.approved) {
+      console.log(`[ToolProcessor] Tool ${toolName} ${result.reason || 'not approved'}`);
+    }
+
+    return result;
+  } catch (err) {
+    console.error(`[ToolProcessor] Approval request failed for ${toolName}:`, err.message);
+    return { approved: true, reason: '' }; // Fall through on error
+  }
+};
 
 const buildFileContext = (fileResults, totalFileCount) => {
   const fileCountNote = totalFileCount > fileResults.length
@@ -186,6 +355,14 @@ const processToolCall = async ({
   const generateImageMatch = findGenerateImageMatch(reply);
   if (generateImageMatch) {
     const prompt = generateImageMatch[1].trim();
+
+    // Request human approval before executing
+    const approval = await requestToolApproval('GENERATE_IMAGE', { prompt }, onStatus, abortController?.signal);
+    if (!approval.approved) {
+      return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateImageMatch[0], '').trim() || '[Image generation]' }, { role: 'user', content: `[IMAGE GENERATION RESULT]\nImage generation was ${approval.reason || 'cancelled'}.\n[END IMAGE GENERATION RESULT]` }], embedTokens: 0 };
+    }
+    if (approval.instructions) return makeInstructionsResult(generateImageMatch[0], reply, 'GENERATE_IMAGE', approval.instructions);
+
     onStatus?.({ type: 'status', tool: 'image_gen', message: `Generating image: "${prompt.slice(0, 60)}..."` });
     console.log(`[Tool] Image generation requested: "${prompt.slice(0, 80)}"`);
     try {
@@ -221,6 +398,11 @@ const processToolCall = async ({
   if (pptToolCall) {
     try {
       const parsed = JSON.parse(String(pptToolCall.function.arguments || '{}'));
+      const pptApproval = await requestToolApproval('GENERATE_PPT', { title: parsed?.title, theme: parsed?.theme || parsed?.style, slides: parsed?.slides }, onStatus, abortController?.signal);
+      if (!pptApproval.approved) {
+        return { handled: true, newMessages: [{ role: 'assistant', content: reply.trim() || '[PPT generation]' }, { role: 'user', content: `[PPT GENERATION RESULT]\nPresentation generation was ${pptApproval.reason || 'cancelled'}.\n[END PPT GENERATION RESULT]` }], embedTokens: 0 };
+      }
+      if (pptApproval.instructions) return makeInstructionsResult(null, reply, 'GENERATE_PPT', pptApproval.instructions);
       return await runPPTGeneration({ parsed, reply, user, topicId, onStatus });
     } catch (err) {
       console.error('[Tool] PPT generation failed:', err.message);
@@ -240,13 +422,28 @@ const processToolCall = async ({
   const generatePPTMatch = findGeneratePPTMatch(reply);
   if (generatePPTMatch) {
     const jsonBody = generatePPTMatch[1].trim();
+    let parsed;
     try {
-      let parsed;
-      try {
-        parsed = JSON.parse(jsonBody);
-      } catch {
-        throw new Error('Invalid PPT JSON structure - could not parse slides.');
-      }
+      parsed = JSON.parse(jsonBody);
+    } catch {
+      return {
+        handled: true,
+        newMessages: [
+          { role: 'assistant', content: reply.trim() || '[Generating PPT]' },
+          { role: 'user', content: `[PPT GENERATION RESULT]\nFailed to generate presentation: Invalid JSON structure.\n[END PPT GENERATION RESULT]` },
+        ],
+        embedTokens: 0,
+      };
+    }
+
+    // Request human approval before executing
+    const approval = await requestToolApproval('GENERATE_PPT', { title: parsed?.title, theme: parsed?.theme || parsed?.style, slides: parsed?.slides }, onStatus, abortController?.signal);
+    if (!approval.approved) {
+      return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generatePPTMatch[0], '').trim() || '[PPT generation]' }, { role: 'user', content: `[PPT GENERATION RESULT]\nPresentation generation was ${approval.reason || 'cancelled'}.\n[END PPT GENERATION RESULT]` }], embedTokens: 0 };
+    }
+    if (approval.instructions) return makeInstructionsResult(generatePPTMatch[0], reply, 'GENERATE_PPT', approval.instructions);
+
+    try {
       return await runPPTGeneration({
         parsed,
         reply,
@@ -282,6 +479,12 @@ const processToolCall = async ({
       const sections = Array.isArray(parsed.sections) ? parsed.sections : [];
       if (sections.length === 0) throw new Error('No sections provided in PDF request.');
 
+      const pdfApproval = await requestToolApproval('GENERATE_PDF', { title, sections }, onStatus, abortController?.signal);
+      if (!pdfApproval.approved) {
+        return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generatePDFMatch[0], '').trim() || '[PDF generation]' }, { role: 'user', content: `[PDF GENERATION RESULT]\nPDF generation was ${pdfApproval.reason || 'cancelled'}.\n[END PDF GENERATION RESULT]` }], embedTokens: 0 };
+      }
+      if (pdfApproval.instructions) return makeInstructionsResult(generatePDFMatch[0], reply, 'GENERATE_PDF', pdfApproval.instructions);
+
       const fileResult = await generatePDF(title, sections, user?.id, topicId);
       const resultBlock = `[PDF GENERATION RESULT]\nPDF successfully created.\nTitle: ${title}\nSections: ${sections.length}\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END PDF GENERATION RESULT]\n\nTell the user the PDF is ready to download.`;
       return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'pdf' }], newMessages: [{ role: 'assistant', content: reply.replace(generatePDFMatch[0], '').trim() || '[Generating PDF]' }, { role: 'user', content: resultBlock }], embedTokens: 0 };
@@ -304,6 +507,12 @@ const processToolCall = async ({
       const title = parsed.title || 'Spreadsheet';
       const sheets = Array.isArray(parsed.sheets) ? parsed.sheets : [];
       if (sheets.length === 0) throw new Error('No sheets provided in Excel request.');
+
+      const excelApproval = await requestToolApproval('GENERATE_EXCEL', { title, sheets }, onStatus, abortController?.signal);
+      if (!excelApproval.approved) {
+        return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateExcelMatch[0], '').trim() || '[Excel generation]' }, { role: 'user', content: `[EXCEL GENERATION RESULT]\nSpreadsheet generation was ${excelApproval.reason || 'cancelled'}.\n[END EXCEL GENERATION RESULT]` }], embedTokens: 0 };
+      }
+      if (excelApproval.instructions) return makeInstructionsResult(generateExcelMatch[0], reply, 'GENERATE_EXCEL', excelApproval.instructions);
 
       const fileResult = await generateExcel(title, sheets, user?.id, topicId);
       const resultBlock = `[EXCEL GENERATION RESULT]\nSpreadsheet successfully created.\nTitle: ${title}\nSheets: ${sheets.length}\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END EXCEL GENERATION RESULT]\n\nTell the user the spreadsheet is ready to download.`;
@@ -328,6 +537,12 @@ const processToolCall = async ({
       const sections = Array.isArray(parsed.sections) ? parsed.sections : [];
       if (sections.length === 0) throw new Error('No sections provided in DOCX request.');
 
+      const docxApproval = await requestToolApproval('GENERATE_DOCX', { title, sections }, onStatus, abortController?.signal);
+      if (!docxApproval.approved) {
+        return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateDocxMatch[0], '').trim() || '[DOCX generation]' }, { role: 'user', content: `[DOCX GENERATION RESULT]\nDocument generation was ${docxApproval.reason || 'cancelled'}.\n[END DOCX GENERATION RESULT]` }], embedTokens: 0 };
+      }
+      if (docxApproval.instructions) return makeInstructionsResult(generateDocxMatch[0], reply, 'GENERATE_DOCX', docxApproval.instructions);
+
       const fileResult = await generateDocx(title, sections, user?.id, topicId);
       const resultBlock = `[DOCX GENERATION RESULT]\nWord document successfully created.\nTitle: ${title}\nSections: ${sections.length}\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END DOCX GENERATION RESULT]\n\nTell the user the document is ready to download.`;
       return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'docx' }], newMessages: [{ role: 'assistant', content: reply.replace(generateDocxMatch[0], '').trim() || '[Generating DOCX]' }, { role: 'user', content: resultBlock }], embedTokens: 0 };
@@ -350,6 +565,12 @@ const processToolCall = async ({
       const headers = Array.isArray(parsed.headers) ? parsed.headers : [];
       const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
       if (headers.length === 0) throw new Error('No headers provided in CSV request.');
+
+      const csvApproval = await requestToolApproval('GENERATE_CSV', { headers, rowCount: rows.length }, onStatus, abortController?.signal);
+      if (!csvApproval.approved) {
+        return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateCSVMatch[0], '').trim() || '[CSV generation]' }, { role: 'user', content: `[CSV GENERATION RESULT]\nCSV generation was ${csvApproval.reason || 'cancelled'}.\n[END CSV GENERATION RESULT]` }], embedTokens: 0 };
+      }
+      if (csvApproval.instructions) return makeInstructionsResult(generateCSVMatch[0], reply, 'GENERATE_CSV', csvApproval.instructions);
 
       const fileResult = await generateCSV(headers, rows, user?.id, topicId);
       const resultBlock = `[CSV GENERATION RESULT]\nCSV successfully created.\nRows: ${rows.length}\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END CSV GENERATION RESULT]\n\nTell the user the CSV is ready to download.`;
@@ -376,6 +597,12 @@ const processToolCall = async ({
       const data = Array.isArray(parsed.data) ? parsed.data : [];
       if (labels.length === 0 || data.length === 0) throw new Error('Labels and data are required for chart.');
 
+      const chartApproval = await requestToolApproval('GENERATE_CHART', { type, title, labels }, onStatus, abortController?.signal);
+      if (!chartApproval.approved) {
+        return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateChartMatch[0], '').trim() || '[Chart generation]' }, { role: 'user', content: `[CHART GENERATION RESULT]\nChart generation was ${chartApproval.reason || 'cancelled'}.\n[END CHART GENERATION RESULT]` }], embedTokens: 0 };
+      }
+      if (chartApproval.instructions) return makeInstructionsResult(generateChartMatch[0], reply, 'GENERATE_CHART', chartApproval.instructions);
+
       const fileResult = await generateChart(type, title, labels, data, user?.id, topicId);
       const resultBlock = `[CHART GENERATION RESULT]\nChart successfully created.\nType: ${type}\nTitle: ${title}\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END CHART GENERATION RESULT]\n\nTell the user the chart is ready to download.`;
       return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'svg' }], newMessages: [{ role: 'assistant', content: reply.replace(generateChartMatch[0], '').trim() || '[Generating Chart]' }, { role: 'user', content: resultBlock }], embedTokens: 0 };
@@ -399,6 +626,12 @@ const processToolCall = async ({
       const body = parsed.body || '';
       const css = parsed.css || '';
 
+      const htmlApproval = await requestToolApproval('GENERATE_HTML', { title }, onStatus, abortController?.signal);
+      if (!htmlApproval.approved) {
+        return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateHTMLMatch[0], '').trim() || '[HTML generation]' }, { role: 'user', content: `[HTML GENERATION RESULT]\nHTML generation was ${htmlApproval.reason || 'cancelled'}.\n[END HTML GENERATION RESULT]` }], embedTokens: 0 };
+      }
+      if (htmlApproval.instructions) return makeInstructionsResult(generateHTMLMatch[0], reply, 'GENERATE_HTML', htmlApproval.instructions);
+
       const fileResult = await generateHTML(title, body, css, user?.id, topicId);
       const resultBlock = `[HTML GENERATION RESULT]\nHTML page successfully created.\nTitle: ${title}\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END HTML GENERATION RESULT]\n\nTell the user the HTML page is ready to download.`;
       return { handled: true, generatedMedia: [{ file_id: fileResult.file_id, file_name: fileResult.file_name, file_type: 'html' }], newMessages: [{ role: 'assistant', content: reply.replace(generateHTMLMatch[0], '').trim() || '[Generating HTML]' }, { role: 'user', content: resultBlock }], embedTokens: 0 };
@@ -419,6 +652,12 @@ const processToolCall = async ({
       let parsed;
       try { parsed = JSON.parse(jsonBody); } catch { throw new Error('Invalid JSON structure.'); }
       const data = parsed.data || parsed;
+
+      const jsonApproval = await requestToolApproval('GENERATE_JSON', {}, onStatus, abortController?.signal);
+      if (!jsonApproval.approved) {
+        return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateJSONMatch[0], '').trim() || '[JSON generation]' }, { role: 'user', content: `[JSON GENERATION RESULT]\nJSON generation was ${jsonApproval.reason || 'cancelled'}.\n[END JSON GENERATION RESULT]` }], embedTokens: 0 };
+      }
+      if (jsonApproval.instructions) return makeInstructionsResult(generateJSONMatch[0], reply, 'GENERATE_JSON', jsonApproval.instructions);
 
       const fileResult = await generateJSON(data, user?.id, topicId);
       const resultBlock = `[JSON GENERATION RESULT]\nJSON file successfully created.\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END JSON GENERATION RESULT]\n\nTell the user the JSON file is ready to download.`;
@@ -441,6 +680,12 @@ const processToolCall = async ({
       try { parsed = JSON.parse(jsonBody); } catch { throw new Error('Invalid Markdown JSON structure.'); }
       const content = parsed.content || '';
       const title = parsed.title || '';
+
+      const mdApproval = await requestToolApproval('GENERATE_MD', { title }, onStatus, abortController?.signal);
+      if (!mdApproval.approved) {
+        return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateMDMatch[0], '').trim() || '[Markdown generation]' }, { role: 'user', content: `[MD GENERATION RESULT]\nMarkdown generation was ${mdApproval.reason || 'cancelled'}.\n[END MD GENERATION RESULT]` }], embedTokens: 0 };
+      }
+      if (mdApproval.instructions) return makeInstructionsResult(generateMDMatch[0], reply, 'GENERATE_MD', mdApproval.instructions);
 
       const fileResult = await generateMarkdown(content, title, user?.id, topicId);
       const resultBlock = `[MD GENERATION RESULT]\nMarkdown file successfully created.\nFile: ${fileResult.file_name}\nFile ID: ${fileResult.file_id}\n[END MD GENERATION RESULT]\n\nTell the user the Markdown file is ready to download.`;

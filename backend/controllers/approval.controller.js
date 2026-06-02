@@ -27,4 +27,43 @@ const rejectRequest = async (req, res) => {
   }
 };
 
-module.exports = { listPendingApprovals, approveRequest, rejectRequest };
+/**
+ * POST /api/approval/:id/respond
+ * Public route (authenticated users) — used from the chat UI to approve/reject/cancel
+ * Body: { response: true|false|null, reason?: string }
+ *   - true = approve
+ *   - false = reject
+ *   - null = cancel
+ */
+const respondFromChat = async (req, res) => {
+  try {
+    const { response, reason } = req.body;
+    const approver = req.user?.email || req.user?.username || 'user';
+
+    if (response === true) {
+      const approval = await approvalManager.approve(req.params.id, null, approver, reason || 'Approved from chat');
+      return res.json({ success: true, status: 'approved', approval: approval.toJSON() });
+    }
+
+    const rejectReason = reason || (response === null ? 'Cancelled by user' : 'Rejected from chat');
+    const approval = await approvalManager.reject(req.params.id, rejectReason, approver);
+    res.json({ success: true, status: response === null ? 'cancelled' : 'rejected', approval: approval.toJSON() });
+  } catch (err) {
+    res.status(404).json({ error: err.message || 'Approval request not found' });
+  }
+};
+
+const checkApprovalStatus = async (req, res) => {
+  try {
+    const handler = approvalManager.getHandler('default');
+    const request = await handler.getRequest(req.params.id);
+    if (!request) {
+      return res.status(404).json({ error: 'Approval request not found' });
+    }
+    res.json({ status: request.status, approval: request.toJSON() });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Failed to check approval status' });
+  }
+};
+
+module.exports = { listPendingApprovals, approveRequest, rejectRequest, respondFromChat, checkApprovalStatus };

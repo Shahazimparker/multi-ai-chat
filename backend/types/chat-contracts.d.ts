@@ -1,4 +1,5 @@
 export type ChatRole = 'system' | 'user' | 'assistant';
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled';
 
 export interface ChatMessage {
   role: ChatRole;
@@ -32,6 +33,89 @@ export interface BillableTokenInput {
   estimatedInputTokens?: number;
   compressTokens?: number;
   historySummaryTokens?: number;
+}
+
+// ── Approval / Human-in-the-Loop types ───────────────────────
+
+export interface ApprovalRequest {
+  id: string;
+  type: 'approval' | 'input' | 'selection' | 'feedback';
+  title: string;
+  description: string;
+  context: Record<string, unknown>;
+  options: string[];
+  timeout: number | null;
+  requiredBy: string | null;
+  createdAt: string;
+  expiresAt: string | null;
+  status: ApprovalStatus;
+  response: unknown;
+  reason: string;
+  approver: string | null;
+  approvedAt: string | null;
+}
+
+export interface ApprovalSSEEvent {
+  type: 'approval_request';
+  approvalId: string;
+  toolType: string;
+  toolLabel: string;
+  message: string;
+  /** Human-readable plan summary (newline-delimited). Present for all 10 GENERATE_* tools. */
+  summary?: string;
+  /** Three-option approval: yes = proceed, other = provide instructions, no = cancel. */
+  options: ('yes' | 'other' | 'no')[];
+}
+
+/**
+ * Result returned by waitForUserApproval when the user picks "Yes" with optional instructions.
+ * `instructions` is non-empty only when the user chose the "Other" path (response === true but
+ * reason differs from the default 'Approved from chat').
+ */
+export interface ToolApprovalResultWithInstructions {
+  approved: boolean;
+  reason: string;
+  instructions: string; // non-empty = user wants modifications before generation
+}
+
+/**
+ * Context object passed to buildSummary() — all fields are optional because different
+ * GENERATE_* tools populate different subsets.
+ */
+export interface BuildSummaryContext {
+  title?: string;
+  prompt?: string;
+  theme?: string;
+  slides?: Array<{ title?: string; [key: string]: unknown }>;
+  sections?: Array<{ heading?: string; title?: string; name?: string; [key: string]: unknown }>;
+  sheets?: Array<{ name?: string; title?: string; [key: string]: unknown }>;
+  headers?: string[];
+  rowCount?: number;
+  labels?: string[];
+  type?: string;
+}
+
+export interface ApprovalResponse {
+  success: boolean;
+  status: ApprovalStatus;
+  approval: ApprovalRequest;
+}
+
+export interface ApprovalStatusResponse {
+  status: ApprovalStatus;
+  approval: ApprovalRequest;
+}
+
+export interface ApprovalManagerConfig {
+  store: unknown;
+  waitForApproval: boolean;
+}
+
+export interface ToolApprovalResult {
+  approved: boolean;
+  reason: string;
+  /** Non-empty when the user chose the "Other" path and typed modification instructions. */
+  instructions?: string;
 }
 
 // ── Streaming types ──────────────────────────────────────────
@@ -151,7 +235,18 @@ export interface ChatPipelineOptions {
   onToolStatus?: (event: any) => void;
 }
 
-// ── Model Config ─────────────────────────────────────────────
+// ── SSE Event Types ──────────────────────────────────────────
+
+export type SSEEvent =
+  | { type: 'connected'; status: string }
+  | { type: 'chunk'; text: string }
+  | { type: 'done'; tokensUsed: number; cacheHit?: boolean; model?: string; topicId?: string; generatedFiles?: Array<{ file_id: string; file_name: string; file_type: string }> }
+  | { type: 'error'; error: string; errorType?: string }
+  | { type: 'cached'; reply: string }
+  | { type: 'status'; tool: string; message: string }
+  | ApprovalSSEEvent;
+
+// ── Model Config placeholder ─────────────────────────────────
 
 // ── PPT Generation ───────────────────────────────────────────
 
@@ -214,6 +309,32 @@ export interface PPTGenerationResult {
   file_type: 'pptx';
   created_at?: string;
 }
+
+// ── Tool Processor types ─────────────────────────────────────
+
+export interface ProcessToolCallArgs {
+  reply: string;
+  aiResponse?: unknown;
+  aiMessages?: Array<{ role: ChatRole; content: unknown }>;
+  user?: { id?: string } | null;
+  topicId?: string | null;
+  abortController: AbortController;
+  onStatus?: (event: unknown) => void;
+}
+
+export type ToolName =
+  | 'GENERATE_PPT'
+  | 'GENERATE_IMAGE'
+  | 'GENERATE_HTML'
+  | 'GENERATE_PDF'
+  | 'GENERATE_EXCEL'
+  | 'GENERATE_DOCX'
+  | 'GENERATE_CHART'
+  | 'GENERATE_CSV'
+  | 'GENERATE_JSON'
+  | 'GENERATE_MD';
+
+// ── Model Config ─────────────────────────────────────────────
 
 export interface ModelConfig {
   label: string;

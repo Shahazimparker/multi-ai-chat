@@ -86,7 +86,7 @@ app.use(cors({
     // Allow requests with no origin (server-to-server, curl, health checks, etc.)
     if (!origin) return cb(null, true);
     if (allowedOrigins.includes(origin)) return cb(null, true);
-    cb(new Error(`Origin ${origin} not allowed by CORS`));
+    cb(null, false); // no CORS headers — request continues to CSRF middleware
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -106,7 +106,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth',    authRoutes);     // login, logout, verify
 app.use('/api/chat',    chatRoutes);     // send message, stream
 app.use('/api/admin',   adminRoutes);    // user management, analytics
-app.use('/api/approvals', approvalRoutes); // persistent human approvals
+app.use('/api/approval',  approvalRoutes); // persistent human approvals
 app.use('/api/history', historyRoutes);  // chat history, topics
 app.use('/api/upload',  uploadRoutes);   // file upload, search, delete
 

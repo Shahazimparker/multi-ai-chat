@@ -327,6 +327,30 @@ export const useChatSession = ({ refreshTokenStats }) => {
               }
               break;
             }
+            if (data.type === 'approval_request') {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last && last.role === 'assistant') {
+                  updated[updated.length - 1] = {
+                    ...last,
+                    approvalRequest: {
+                      id: data.approvalId,
+                      toolType: data.toolType,
+                      toolLabel: data.toolLabel,
+                      message: data.message,
+                      summary: data.summary || '',
+                      options: data.options || ['yes', 'other', 'no'],
+                    },
+                    streaming: false,
+                    statusMessage: null,
+                  };
+                }
+                return updated;
+              });
+              continue;
+            }
+
             if (data.type === 'status') {
               setMessages((prev) => {
                 const updated = [...prev];

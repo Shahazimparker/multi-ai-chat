@@ -64,10 +64,36 @@ This is the main setup and maintenance guide for the current repo state.
 - Pipeline loops for multi-step processing
 
 ### Human-in-the-Loop & Control
-- Approval checkpoints with state snapshots
+- Approval checkpoints with state snapshots, persisted to Supabase (`human_approvals` table)
 - Interrupt points before/after specific operations
+- **Chat inline approval** — all 10 GENERATE_* tools (PPT, Image, PDF, Excel, DOCX, CSV, Chart, HTML, JSON, Markdown) are gated by an approval step:
+  1. Asks clarifying questions first if the request lacks details (via system prompt directive)
+  2. Creates an approval request in Supabase before executing any generation tool
+  3. Sends an `approval_request` SSE event to the frontend — includes a human-readable `summary` of what will be generated
+  4. Frontend shows an inline approval prompt with three buttons: `✅ Yes, generate` / `✎ Other` / `❌ No`
+  5. Backend polls (every 500ms, 2 min timeout) for the user's response; polling stops immediately if the stream is aborted
+  6. **Yes path**: `POST /api/approval/:id/respond { response: true }` → generation proceeds
+  7. **No path**: `POST /api/approval/:id/respond { response: false }` → returns cancellation message
+  8. **Other (instructions) path**: user types instructions in a textarea (max 500 chars), then `POST /api/approval/:id/respond { response: true, reason: "user instructions" }` → backend detects non-default reason as instructions → returns a `[USER MODIFICATION REQUEST]` message to the AI → AI revises its plan → emits a fresh `approval_request` SSE event with updated summary → cycle repeats until the user picks Yes or No
+- `waitForUserApproval` returns `{ approved, reason, instructions }` — `instructions` is non-empty only when the user typed modifications
+- `buildSummary(toolName, context)` builds the per-tool human-readable plan shown in the approval prompt:
+  - **Image**: `Prompt: "..."`
+  - **PPT**: `Title: "..."`, `Theme: ...`, `Slides (N):`, numbered slide titles
+  - **PDF / DOCX**: `Title: "..."`, `Sections (N):`, section headings
+  - **Excel**: `Title: "..."`, `Sheets (N): Sheet1, Sheet2`
+  - **CSV**: `Columns (N): col1, col2`, `Rows: N`
+  - **Chart**: `Type: bar`, `Title: "..."`, `Data points: a, b, c`
+  - **HTML / JSON / Markdown**: title and type
+- Public routes: `POST /api/approval/:id/respond` (any authenticated user) and `GET /api/approval/:id/status`
+- Admin routes: `GET /api/approval/`, `POST /api/approval/:id/approve`, `POST /api/approval/:id/reject`
 - Audit trails for compliance
 - Cost and token tracking per operation
+
+### SSE Event Types
+- **`approval_request`**: Sent before any GENERATE_* tool executes. Fields: `approvalId`, `toolType`, `toolLabel`, `message`, `summary` (newline-delimited plan string), `options: ['yes', 'other', 'no']`. When the "Other" path is used, a second `approval_request` arrives on the same stream with an updated `summary` after the AI revises its plan.
+- **`status`**: Sent during processing (e.g., "searching on web", "Generating image...")
+- **`chunk`**: Streamed response text tokens
+- **`done`**: Final event with `tokensUsed`, `topicId`, `generatedFiles`, etc.
 
 ### Observability & Debugging
 - Complete execution tracing with step hierarchies

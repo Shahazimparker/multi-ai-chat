@@ -50,7 +50,7 @@ describe('Chat API (real)', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        modelId: 'gemini-flash',
+        modelId: 'deepseek-v4-flash',
         message: 'Reply with exactly: HELLO',
       }),
     });
@@ -96,7 +96,7 @@ describe('Chat API (real)', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        modelId: 'gemini-flash',
+        modelId: 'deepseek-v4-flash',
         message: 'Say hello in one word',
       }),
     });
