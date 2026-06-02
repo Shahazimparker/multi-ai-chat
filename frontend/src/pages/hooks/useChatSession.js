@@ -350,6 +350,27 @@ export const useChatSession = ({ refreshTokenStats }) => {
               });
               continue;
             }
+            if (data.type === 'clarification_request') {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last && last.role === 'assistant') {
+                  updated[updated.length - 1] = {
+                    ...last,
+                    clarificationRequest: {
+                      intent: data.intent,
+                      formId: data.formId,
+                      message: data.message,
+                      questions: Array.isArray(data.questions) ? data.questions : [],
+                    },
+                    streaming: false,
+                    statusMessage: null,
+                  };
+                }
+                return updated;
+              });
+              continue;
+            }
 
             if (data.type === 'status') {
               setMessages((prev) => {

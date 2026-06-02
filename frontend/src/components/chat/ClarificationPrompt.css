@@ -1,0 +1,81 @@
+.cp {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.cp__header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.cp__badge {
+  width: fit-content;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(84, 176, 255, 0.14);
+  color: #8dc5ff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.cp__title {
+  font-size: 14px;
+  color: #f5f7fb;
+}
+
+.cp__fields {
+  display: grid;
+  gap: 10px;
+}
+
+.cp__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cp__label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.cp__input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(10, 14, 24, 0.8);
+  color: #f5f7fb;
+}
+
+.cp__actions {
+  margin-top: 14px;
+}
+
+.cp__btn {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: #54b0ff;
+  color: #08111d;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cp__btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.cp__error {
+  margin-top: 10px;
+  color: #ff9f9f;
+  font-size: 12px;
+}

@@ -67,6 +67,29 @@ export interface ApprovalSSEEvent {
   options: ('yes' | 'other' | 'no')[];
 }
 
+export interface ClarificationFieldOption {
+  value: string;
+  label: string;
+}
+
+export interface ClarificationField {
+  id: string;
+  label: string;
+  kind: 'text' | 'select';
+  required?: boolean;
+  placeholder?: string;
+  value?: string;
+  options?: ClarificationFieldOption[];
+}
+
+export interface ClarificationSSEEvent {
+  type: 'clarification_request';
+  intent: string;
+  message: string;
+  formId: string;
+  questions: ClarificationField[];
+}
+
 /**
  * Result returned by waitForUserApproval when the user picks "Yes" with optional instructions.
  * `instructions` is non-empty only when the user chose the "Other" path (response === true but
@@ -244,7 +267,8 @@ export type SSEEvent =
   | { type: 'error'; error: string; errorType?: string }
   | { type: 'cached'; reply: string }
   | { type: 'status'; tool: string; message: string }
-  | ApprovalSSEEvent;
+  | ApprovalSSEEvent
+  | ClarificationSSEEvent;
 
 // ── Model Config placeholder ─────────────────────────────────
 

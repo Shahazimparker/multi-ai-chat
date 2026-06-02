@@ -17,6 +17,7 @@ const ChatMessagesPanel = ({
   handleScroll,
   setSuggestionInput,
   onApprovalComplete,
+  onClarificationSubmit,
 }) => (
   <div className="messages-area" ref={messagesAreaRef} onScroll={handleScroll}>
     {messages.length === 0 ? (
@@ -31,7 +32,14 @@ const ChatMessagesPanel = ({
         </div>
       </div>
     ) : (
-      messages.map((msg, index) => <MessageBubble key={index} message={msg} onApprovalComplete={onApprovalComplete} />)
+      messages.map((msg, index) => (
+        <MessageBubble
+          key={index}
+          message={msg}
+          onApprovalComplete={onApprovalComplete}
+          onClarificationSubmit={onClarificationSubmit}
+        />
+      ))
     )}
 
     <ChatUploadProgress

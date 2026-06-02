@@ -117,6 +117,189 @@ const CANONICAL_CHAT_PIPELINE_FLAGS = Object.freeze({
 });
 const EXECUTE_CODE_ENABLED = String(process.env.ENABLE_EXECUTE_CODE || '').toLowerCase() === 'true';
 
+const PPT_THEME_OPTIONS = [
+  { value: 'modern_corporate', label: 'Modern corporate' },
+  { value: 'startup_bold', label: 'Startup bold' },
+  { value: 'clean_minimal', label: 'Clean minimal' },
+  { value: 'emerald_glass', label: 'Emerald glass' },
+];
+
+const PPT_SLIDE_COUNT_OPTIONS = [
+  { value: '4', label: '4 slides' },
+  { value: '6', label: '6 slides' },
+  { value: '8', label: '8 slides' },
+];
+
+const PPT_AUDIENCE_OPTIONS = [
+  { value: 'executives', label: 'Executives' },
+  { value: 'team members', label: 'Team members' },
+  { value: 'clients', label: 'Clients' },
+];
+
+const ARTIFACT_INTENTS = [
+  {
+    intent: 'generate_ppt',
+    label: 'presentation',
+    keywords: /\b(ppt|pptx|powerpoint|slide deck|slides|presentation)\b/,
+    verbs: /\b(generate|create|make|build|prepare|draft)\b/,
+    hasEnoughDetails: (text) => /\b(on|about|for)\s+.+/i.test(text),
+    questions: (topicHint) => [
+      { id: 'topic', label: 'Topic', kind: 'text', required: true, placeholder: 'Quarterly business review', value: topicHint },
+      { id: 'title', label: 'Title', kind: 'text', required: false, placeholder: 'Q2 Business Review', value: '' },
+      { id: 'slideCount', label: 'Slides', kind: 'select', required: true, value: '6', options: PPT_SLIDE_COUNT_OPTIONS },
+      { id: 'theme', label: 'Theme', kind: 'select', required: true, value: 'modern_corporate', options: PPT_THEME_OPTIONS },
+      { id: 'audience', label: 'Audience', kind: 'select', required: true, value: 'team members', options: PPT_AUDIENCE_OPTIONS },
+    ],
+  },
+  {
+    intent: 'generate_image',
+    label: 'image',
+    keywords: /\b(image|picture|photo|illustration|artwork|poster|logo|banner)\b/,
+    verbs: /\b(generate|create|make|draw|design)\b/,
+    hasEnoughDetails: (text) => /\b(of|for|showing|with)\s+.+/i.test(text),
+    questions: (topicHint) => [
+      { id: 'subject', label: 'Subject', kind: 'text', required: true, placeholder: 'Product launch hero image', value: topicHint },
+      { id: 'style', label: 'Style', kind: 'text', required: true, placeholder: 'Modern 3D marketing illustration', value: '' },
+      { id: 'usage', label: 'Usage', kind: 'text', required: false, placeholder: 'Website banner, social post, thumbnail', value: '' },
+    ],
+  },
+  {
+    intent: 'generate_pdf',
+    label: 'PDF',
+    keywords: /\bpdf\b/,
+    verbs: /\b(generate|create|make|build|prepare|draft)\b/,
+    hasEnoughDetails: (text) => /\b(on|about|for)\s+.+/i.test(text) && /\b(section|report|summary|proposal|invoice|resume)\b/i.test(text),
+    questions: (topicHint) => [
+      { id: 'documentType', label: 'Document type', kind: 'text', required: true, placeholder: 'Status report, proposal, invoice, handbook', value: '' },
+      { id: 'topic', label: 'Topic', kind: 'text', required: true, placeholder: 'Project status report', value: topicHint },
+      { id: 'sections', label: 'Sections', kind: 'text', required: true, placeholder: 'Summary, progress, risks, next steps', value: '' },
+      { id: 'audience', label: 'Audience', kind: 'text', required: false, placeholder: 'Leadership team', value: '' },
+    ],
+  },
+  {
+    intent: 'generate_excel',
+    label: 'Excel spreadsheet',
+    keywords: /\b(excel|xlsx|spreadsheet|workbook)\b/,
+    verbs: /\b(generate|create|make|build|prepare)\b/,
+    hasEnoughDetails: (text) => /\b(tracker|sheet|workbook|table|budget|report)\b/i.test(text) && /\b(for|with|on)\s+.+/i.test(text),
+    questions: (topicHint) => [
+      { id: 'topic', label: 'Purpose', kind: 'text', required: true, placeholder: 'Sales tracker', value: topicHint },
+      { id: 'sheets', label: 'Sheets', kind: 'text', required: true, placeholder: 'Overview, monthly sales, pipeline', value: '' },
+      { id: 'columns', label: 'Columns', kind: 'text', required: true, placeholder: 'Date, region, revenue, owner', value: '' },
+    ],
+  },
+  {
+    intent: 'generate_docx',
+    label: 'Word document',
+    keywords: /\b(docx|word document|word file|document)\b/,
+    verbs: /\b(generate|create|make|build|prepare|draft|write)\b/,
+    hasEnoughDetails: (text) => /\b(on|about|for)\s+.+/i.test(text) && /\b(letter|proposal|report|contract|document|agreement)\b/i.test(text),
+    questions: (topicHint) => [
+      { id: 'topic', label: 'Topic', kind: 'text', required: true, placeholder: 'Proposal for new client onboarding', value: topicHint },
+      { id: 'title', label: 'Title', kind: 'text', required: false, placeholder: 'Client Onboarding Proposal', value: '' },
+      { id: 'sections', label: 'Sections', kind: 'text', required: true, placeholder: 'Introduction, scope, pricing, timeline', value: '' },
+    ],
+  },
+  {
+    intent: 'generate_csv',
+    label: 'CSV file',
+    keywords: /\b(csv)\b/,
+    verbs: /\b(generate|create|make|build|prepare)\b/,
+    hasEnoughDetails: (text) => /\b(with|columns|headers|data)\b/i.test(text),
+    questions: (topicHint) => [
+      { id: 'topic', label: 'Dataset', kind: 'text', required: true, placeholder: 'Monthly expenses', value: topicHint },
+      { id: 'columns', label: 'Columns', kind: 'text', required: true, placeholder: 'Date, category, amount, note', value: '' },
+      { id: 'sampleRows', label: 'Sample rows', kind: 'text', required: false, placeholder: '3-5 example rows or row style', value: '' },
+    ],
+  },
+  {
+    intent: 'generate_chart',
+    label: 'chart',
+    keywords: /\b(chart|graph|plot|dashboard)\b/,
+    verbs: /\b(generate|create|make|build|prepare|draw)\b/,
+    hasEnoughDetails: (text) => /\b(bar|line|pie|area|scatter)\b/i.test(text) || /\b(data|from|using)\s+.+/i.test(text),
+    questions: (topicHint) => [
+      { id: 'topic', label: 'Topic', kind: 'text', required: true, placeholder: 'Quarterly revenue growth', value: topicHint },
+      { id: 'chartType', label: 'Chart type', kind: 'text', required: true, placeholder: 'Bar, line, pie, area', value: '' },
+      { id: 'dataPoints', label: 'Data points', kind: 'text', required: true, placeholder: 'Q1 120, Q2 150, Q3 170', value: '' },
+    ],
+  },
+  {
+    intent: 'generate_html',
+    label: 'HTML page',
+    keywords: /\b(html|web page|landing page|site)\b/,
+    verbs: /\b(generate|create|make|build|design)\b/,
+    hasEnoughDetails: (text) => /\b(page|site|landing)\b/i.test(text) && /\b(for|with|about)\s+.+/i.test(text),
+    questions: (topicHint) => [
+      { id: 'topic', label: 'Page purpose', kind: 'text', required: true, placeholder: 'Product landing page', value: topicHint },
+      { id: 'title', label: 'Title', kind: 'text', required: false, placeholder: 'Launch your team workspace', value: '' },
+      { id: 'sections', label: 'Sections', kind: 'text', required: true, placeholder: 'Hero, features, pricing, CTA', value: '' },
+      { id: 'style', label: 'Style', kind: 'text', required: false, placeholder: 'Clean startup, editorial, bold marketing', value: '' },
+    ],
+  },
+  {
+    intent: 'generate_json',
+    label: 'JSON file',
+    keywords: /\b(json)\b/,
+    verbs: /\b(generate|create|make|build|prepare)\b/,
+    hasEnoughDetails: (text) => /\b(schema|fields|array|object|sample|data)\b/i.test(text),
+    questions: (topicHint) => [
+      { id: 'topic', label: 'Purpose', kind: 'text', required: true, placeholder: 'Product catalog data', value: topicHint },
+      { id: 'schema', label: 'Fields', kind: 'text', required: true, placeholder: 'id, name, price, category', value: '' },
+      { id: 'sampleCount', label: 'Items', kind: 'text', required: false, placeholder: '5 sample items', value: '' },
+    ],
+  },
+  {
+    intent: 'generate_md',
+    label: 'Markdown document',
+    keywords: /\b(markdown|md file|readme|README)\b/,
+    verbs: /\b(generate|create|make|build|prepare|draft|write)\b/,
+    hasEnoughDetails: (text) => /\b(readme|guide|notes|documentation|markdown)\b/i.test(text) && /\b(for|about|with)\s+.+/i.test(text),
+    questions: (topicHint) => [
+      { id: 'topic', label: 'Topic', kind: 'text', required: true, placeholder: 'Project setup guide', value: topicHint },
+      { id: 'title', label: 'Title', kind: 'text', required: false, placeholder: 'Getting Started', value: '' },
+      { id: 'sections', label: 'Sections', kind: 'text', required: true, placeholder: 'Overview, install, usage, troubleshooting', value: '' },
+    ],
+  },
+];
+
+const detectArtifactIntent = (text = '') => {
+  const normalized = String(text).toLowerCase();
+  return ARTIFACT_INTENTS.find((entry) => entry.keywords.test(normalized) && (entry.verbs.test(normalized) || normalized.trim().split(/\s+/).length <= 8)) || null;
+};
+
+const looksLikeClarificationResponse = (text = '') =>
+  /\[ARTIFACT DETAILS\]/i.test(String(text));
+
+const extractArtifactTopic = (text = '') => {
+  const normalized = String(text).trim();
+  if (!normalized) return '';
+
+  const patterns = [
+    /\b(?:on|about|for)\s+(.+?)(?:\s+(?:for|to)\s+(?:executives|clients|students|team members|investors))?$/i,
+    /\btopic\s*[:=-]\s*(.+)$/i,
+    /\btitle\s*[:=-]\s*(.+)$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (match?.[1]) return match[1].trim().replace(/[.?!]+$/, '');
+  }
+
+  return '';
+};
+
+const buildArtifactClarificationEvent = (artifact, rawMessage = '') => {
+  const topicHint = extractArtifactTopic(rawMessage);
+  return {
+    type: 'clarification_request',
+    intent: artifact.intent,
+    message: `Select the ${artifact.label} details, then continue.`,
+    formId: `${artifact.intent}-clarification`,
+    questions: artifact.questions(topicHint),
+  };
+};
+
 const makePipelineResult = (overrides = {}) => ({
   finalReply: '',
   billableTokens: 0,
@@ -489,6 +672,31 @@ ${page.text}`)
         ]
       : trimTextByTokens(finalQuery, promptBudget.queryTokens);
     aiMessages.push({ role: 'user', content: userContent });
+
+    const artifactIntent = !image ? detectArtifactIntent(finalQuery) : null;
+    if (artifactIntent && !looksLikeClarificationResponse(finalQuery) && !artifactIntent.hasEnoughDetails(finalQuery)) {
+      onToolStatus?.(buildArtifactClarificationEvent(artifactIntent, finalQuery));
+      return makePipelineResult({
+        finalReply: '',
+        billableTokens: 0,
+        totalAITokens: 0,
+        totalEmbeddingTokens,
+        orchestratorBrain,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        cacheHit: false,
+        generatedMediaFiles: [],
+        resolvedTopicId,
+        persistError: null,
+        estimatedInputTokens,
+        compressTokens,
+        historySummaryTokens,
+        modelConfig,
+        effectiveModelConfig,
+        isIdentityQuestion,
+        promptTokens: 0,
+      });
+    }
 
     const promptTokens = estimateMessagesTokens(aiMessages);
 

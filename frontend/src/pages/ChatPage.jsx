@@ -49,6 +49,10 @@ const ChatPage = () => {
     console.log(`[Approval] ${approvalId} completed: ${result}`);
   }, []);
 
+  const handleClarificationSubmit = useCallback(async (text) => {
+    await session.requestSend({ text, files: [], image: null, forceWebSearch: false });
+  }, [session]);
+
   const handleKeyDown = useCallback((event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
@@ -116,6 +120,7 @@ const ChatPage = () => {
           handleScroll={handleScroll}
           setSuggestionInput={composer.setInput}
           onApprovalComplete={handleApprovalComplete}
+          onClarificationSubmit={handleClarificationSubmit}
         />
 
         <ChatInputPanel
