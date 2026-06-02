@@ -11,9 +11,13 @@ const axios = require('axios');
  * @param {string} query
  * @returns {Promise<Array>} Array of { title, snippet, url }
  */
+const isNonProd = process.env.NODE_ENV !== 'production';
+const debugLog = (...args) => { if (isNonProd) console.log(...args); };
+
 const searchWeb = async (query) => {
   const timeout = Number(process.env.WEB_SEARCH_TIMEOUT_MS || 8000);
   const userAgent = 'MultiAIChatBot/1.0 (https://github.com/Azim/multi-ai-chat) axios/1.7.9';
+  debugLog(`[WebSearch] Called with query: "${query.substring(0, 100)}${query.length > 100 ? '...' : ''}"`);
 
   const normalize = (raw = []) => raw
     .map((item) => ({
@@ -232,6 +236,7 @@ const searchWeb = async (query) => {
   const base = primaryResults || [];
   const extra = langResults || [];
   const finalResults = aggregateResults(base, extra);
+  debugLog(`[WebSearch] Final aggregated: ${finalResults.length} results (primary: ${primaryProvider || 'none'}, base: ${base.length}, extra: ${extra.length})`);
 
   if (finalResults.length > 0) {
     return finalResults;

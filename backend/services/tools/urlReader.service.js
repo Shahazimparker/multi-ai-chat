@@ -135,6 +135,9 @@ const readWithFirecrawl = async (urls, timeout) => {
   return output;
 };
 
+const isNonProd = process.env.NODE_ENV !== 'production';
+const debugLog = (...args) => { if (isNonProd) console.log(...args); };
+
 const readUrls = async (rawUrls = []) => {
   const timeout = Number(process.env.WEB_SEARCH_TIMEOUT_MS || 8000);
   const urls = [...new Set(rawUrls.map(validatePublicHttpUrl))];
@@ -163,7 +166,10 @@ const readUrls = async (rawUrls = []) => {
     }
   }
 
-  if (genericUrls.length === 0) return output;
+  if (genericUrls.length === 0) {
+    debugLog('[UrlReader] No generic URLs to read — all handled by GitHub/site readers');
+    return output;
+  }
 
   const providers = [
     { name: 'FirecrawlScrape', fn: readWithFirecrawl },
@@ -175,6 +181,7 @@ const readUrls = async (rawUrls = []) => {
     try {
       const results = await provider.fn(genericUrls, timeout);
       if (results.some((r) => r.text.length > 200)) {
+        debugLog(`[UrlReader] Fallback: ${results.length} results from ${provider.name}`);
         return [...output, ...results];
       }
     } catch (err) {
