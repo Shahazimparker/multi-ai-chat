@@ -67,12 +67,12 @@ This document is the technical reference for the current codebase state.
 - Analytics: `backend/services/analytics.service.js`
 - Similarity and compression: `backend/services/similarity.service.js`, `backend/services/compress.service.js`
 - Tool execution helpers: `backend/services/tools/webSearch.service.js`, `backend/services/tools/codeExecute.service.js`
-  - `webSearch.service.js` uses provider fallback in this order: `Exa -> Firecrawl -> Tavily -> SerpAPI -> LangSearch` and falls back on errors, timeouts, rate limits, or empty results.
+  - `webSearch.service.js` uses primary fallback in this order: `Exa -> Firecrawl -> Tavily -> SerpAPI`, then always aggregates LangSearch and Jina Search.
 - URL reading helpers:
   - `backend/services/tools/urlReader.service.js` — extracts/validates URLs from user query and injects URL context
   - `backend/services/tools/githubReader.service.js` — GitHub repo deep-read (tree + raw file content with limits)
   - `backend/services/tools/siteReaders.service.js` — site-specific readers for GitLab, Bitbucket, StackOverflow, Notion, Confluence, arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, API docs, Gov/Legal
-  - Runtime order: site-specific reader first, then generic provider fallback (Firecrawl/Tavily/Exa)
+  - Runtime order: site-specific reader first, then generic provider fallback (Firecrawl/Tavily/Exa), plus Jina Reader and Jina DeepSearch as additive renderers
   - `backend/services/tools/rerank.service.js` exists but is currently not wired in runtime paths.
 - File generation: `backend/services/imageGeneration.service.js` (Recraft/FLUX via OpenRouter), `backend/services/pptGeneration.service.js` (pptxgenjs), `backend/services/pdfGeneration.service.js` (pdfkit), `backend/services/excelGeneration.service.js` (exceljs), `backend/services/wordGeneration.service.js` (docx), `backend/services/csvGeneration.service.js`, `backend/services/chartGeneration.service.js` (SVG), `backend/services/htmlGeneration.service.js`, `backend/services/jsonGeneration.service.js`, `backend/services/markdownGeneration.service.js`
 
@@ -272,8 +272,9 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
 - `SENTRY_DSN`
 - `ANONYMOUS_TOKEN_LIMIT` — token cap for anonymous users (default: 10000)
 - Provider API keys used by configured or optional provider modules
-- Web search provider keys: `EXA_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY`, `SERPAPI_API_KEY`, `LANGSEARCH_API_KEY`
-- Web search optional tuning: `WEB_SEARCH_TIMEOUT_MS`, `LANGSEARCH_FRESHNESS`, `LANGSEARCH_SUMMARY`
+- Web search provider keys: `EXA_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY`, `SERPAPI_API_KEY`, `LANGSEARCH_API_KEY`, `JINA_API_KEY`
+- Web search optional tuning: `WEB_SEARCH_TIMEOUT_MS`, `JINA_SEARCH_TIMEOUT_MS` (default 60000 ms), `WEB_SEARCH_MAX_RESULTS`, `LANGSEARCH_FRESHNESS`, `LANGSEARCH_SUMMARY`
+- URL deep-read optional tuning: `JINA_DEEPSEARCH_MODEL`, `JINA_DEEPSEARCH_TIMEOUT_MS` (default 300000 ms)
 - URL deep-read optional tuning:
   - `GITHUB_TOKEN`
   - `GITHUB_READER_MAX_FILES`, `GITHUB_READER_MAX_FILE_BYTES`, `GITHUB_READER_MAX_TOTAL_CHARS`

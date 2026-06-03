@@ -23,11 +23,11 @@ Unified AI chat platform with authentication, file-aware chat (RAG), **real prov
 - File upload/search integration
 - Upload embedding fallback for large inputs: on provider max-context errors, upload embedding retries with smaller adaptive splits to avoid zero-vector saves.
 - Generated file download/preview uses API-client routes (baseURL-aware), preventing mobile SPA fallback downloads (`index.html`).
-- Web search fallback chain: `Exa -> Firecrawl -> Tavily -> SerpAPI -> LangSearch` (fallback on errors/timeouts/rate limits/empty results)
+- Web search aggregation: primary fallback `Exa -> Firecrawl -> Tavily -> SerpAPI`, plus always-attempted LangSearch and Jina Search.
 - URL intelligence (auto-triggered by links in chat text):
   - Dedicated deep readers: GitHub, GitLab, Bitbucket, StackOverflow, Notion, Confluence
   - Additional domain readers: arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, API docs (Swagger/OpenAPI-like), Gov/Legal
-  - Generic fallback: Firecrawl/Tavily/Exa extraction when site-specific readers do not return usable content
+  - Generic aggregation: Firecrawl/Tavily/Exa extraction plus Jina Reader and Jina DeepSearch; Jina is also attempted for site-specific URLs
 - Admin panel (users, quotas, analytics)
 - Theme toggle in frontend
 - Sentry integration (frontend + backend)

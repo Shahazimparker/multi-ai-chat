@@ -129,9 +129,100 @@ const readWithFirecrawl = async (urls, timeout) => {
         source: 'firecrawl',
       });
     } catch {
-      // continue with the next URL
+      // Continue with the next URL.
     }
   }
+  return output;
+};
+
+const readWithJinaReader = async (urls, timeout) => {
+  const apiKey = process.env.JINA_API_KEY;
+  if (!apiKey) return [];
+
+  const output = [];
+  for (const url of urls) {
+    try {
+      debugLog(`[UrlReader] JinaReader: attempting ${url}`);
+      const response = await axios.get(`https://r.jina.ai/${url}`, {
+        timeout,
+        responseType: 'text',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'User-Agent': 'multi-ai-chat-url-reader',
+        },
+      });
+
+      const text = String(response?.data || '').trim();
+      if (!text) continue;
+      const title = text.match(/^Title:\s*(.+)$/im)?.[1]?.trim()
+        || text.match(/^#\s+(.+)$/m)?.[1]?.trim()
+        || url;
+
+      output.push({
+        url,
+        title,
+        text,
+        source: 'jina-reader',
+      });
+      debugLog(`[UrlReader] JinaReader: success ${url} (${text.length} chars)`);
+    } catch {
+      debugLog(`[UrlReader] JinaReader: failed ${url}`);
+      // Jina Reader is additive; other readers should still complete.
+    }
+  }
+  return output;
+};
+
+const readWithJinaDeepSearch = async (urls) => {
+  const apiKey = process.env.JINA_API_KEY;
+  if (!apiKey) return [];
+
+  const deepSearchTimeout = Number(process.env.JINA_DEEPSEARCH_TIMEOUT_MS || 300000);
+  const output = [];
+
+  for (const url of urls) {
+    try {
+      debugLog(`[UrlReader] JinaDeepSearch: attempting ${url}`);
+      const response = await axios.post(
+        'https://deepsearch.jina.ai/v1/chat/completions',
+        {
+          model: process.env.JINA_DEEPSEARCH_MODEL || 'jina-deepsearch-v1',
+          messages: [
+            {
+              role: 'user',
+              content: `Render the content of this URL in concise markdown. Preserve the title and key facts.\nURL: ${url}`,
+            },
+          ],
+        },
+        {
+          timeout: deepSearchTimeout,
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'User-Agent': 'multi-ai-chat-url-reader',
+          },
+        }
+      );
+
+      const text = String(response?.data?.choices?.[0]?.message?.content || '').trim();
+      if (!text) continue;
+
+      output.push({
+        url,
+        title: text.match(/^Title:\s*(.+)$/im)?.[1]?.trim()
+          || text.match(/^#\s+(.+)$/m)?.[1]?.trim()
+          || url,
+        text,
+        source: 'jina-deepsearch',
+      });
+      debugLog(`[UrlReader] JinaDeepSearch: success ${url} (${text.length} chars)`);
+    } catch (err) {
+      const status = err?.response?.status;
+      const label = status ? `${err.message} (HTTP ${status})` : err?.message || 'unknown';
+      debugLog(`[UrlReader] JinaDeepSearch: failed ${url} - ${label}`);
+    }
+  }
+
   return output;
 };
 
@@ -147,28 +238,27 @@ const readUrls = async (rawUrls = []) => {
   const genericUrls = [];
   for (const url of urls) {
     try {
+      debugLog(`[UrlReader] Site-specific phase: trying ${url}`);
       if (parseGitHubRepoUrl(url)) {
         const repoResult = await readGitHubRepo(url, { timeout });
         if (Array.isArray(repoResult) && repoResult.length > 0) {
           output.push(...repoResult);
+          debugLog(`[UrlReader] GitHub reader: ${repoResult.length} result(s) for ${url}`);
           continue;
         }
       }
       const siteResult = await readSiteSpecificUrl(url, { timeout });
       if (Array.isArray(siteResult) && siteResult.length > 0) {
         output.push(...siteResult);
+        debugLog(`[UrlReader] Site-specific reader: ${siteResult.length} result(s) for ${url}`);
         continue;
       }
+      debugLog(`[UrlReader] Generic phase queued: ${url}`);
       genericUrls.push(url);
     } catch (err) {
       console.warn('[UrlReader] Site-specific read failed:', err?.message || 'unknown');
       genericUrls.push(url);
     }
-  }
-
-  if (genericUrls.length === 0) {
-    debugLog('[UrlReader] No generic URLs to read — all handled by GitHub/site readers');
-    return output;
   }
 
   const providers = [
@@ -177,19 +267,27 @@ const readUrls = async (rawUrls = []) => {
     { name: 'ExaContents', fn: readWithExa },
   ];
 
-  for (const provider of providers) {
-    try {
-      const results = await provider.fn(genericUrls, timeout);
-      if (results.some((r) => r.text.length > 200)) {
-        debugLog(`[UrlReader] Fallback: ${results.length} results from ${provider.name}`);
-        return [...output, ...results];
-      }
-    } catch (err) {
-      console.warn(`[UrlReader] ${provider.name} failed:`, err?.message || 'unknown');
-    }
-  }
+  const providerResults = genericUrls.length > 0
+    ? await Promise.all(providers.map(async (provider) => {
+        try {
+          debugLog(`[UrlReader] ${provider.name}: attempting ${genericUrls.length} generic URL(s)`);
+          const results = await provider.fn(genericUrls, timeout);
+          debugLog(`[UrlReader] Aggregated: ${results.length} results from ${provider.name}`);
+          return results;
+        } catch (err) {
+          console.warn(`[UrlReader] ${provider.name} failed:`, err?.message || 'unknown');
+          return [];
+        }
+      }))
+    : [];
 
-  return output;
+  const jinaResults = await readWithJinaReader(urls, timeout);
+  const deepSearchResults = await readWithJinaDeepSearch(urls);
+  const merged = [...output, ...providerResults.flat(), ...jinaResults, ...deepSearchResults]
+    .filter((item) => item?.url && item?.text);
+
+  debugLog(`[UrlReader] Final aggregated: ${merged.length} result(s)`);
+  return merged;
 };
 
 module.exports = {

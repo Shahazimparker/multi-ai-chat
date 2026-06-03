@@ -162,7 +162,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 - Flow analysis cycle detection in `flowVisibility.service.js`
 - Cross-chat memory embedding token cost in accurate mode (each message triggers `embedText` call; mitigated by LRU embedding cache)
 - `search_memory` RPC and `message_embeddings` table must be deployed via `migration_add_message_embeddings.sql` for accurate mode to work
-- Site-specific URL readers may return partial content on protected/paywalled/private pages; fallback coverage depends on external provider response quality.
+- Site-specific URL readers may return partial content on protected/paywalled/private pages; generic rendering aggregates Firecrawl, Tavily, Exa, Jina Reader, and Jina DeepSearch when configured.
 - Artifact cleanup on topic deletion — `delete_topic_cascade` may not be deployed in all environments; the controller now does an explicit pre-delete as a safety net (`backend/controllers/history.controller.js`)
 - AI-generated file `topic_id` association — files must be saved after the stream `done` event so the backend-assigned `topic_id` is available (`frontend/src/pages/hooks/useChatSession.js`)
 
@@ -301,7 +301,7 @@ backend/__tests__/integration-real/
 | `chat-api.test.js` | 4 | GET /health, GET /models, anonymous POST /stream, POST /stream (SSE) |
 | `sanitize.test.js` | 11 | `sanitizeInput` HTML stripping, entities, whitespace, edge cases + `sanitizeBody` middleware |
 | `toolLoop.test.js` | 2 | Real Gemini single-round dispatch, abort error propagation |
-| `webSearch.test.js` | 1 | Real provider-backed web search with normalized result shape (`title/snippet/url`) |
+| `webSearch.test.js` | 1 | Real provider-backed web search with normalized result shape (`title/snippet/url`), including Jina Search when `JINA_API_KEY` is configured |
 
 
 

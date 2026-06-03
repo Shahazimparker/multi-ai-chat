@@ -6,7 +6,7 @@ const axios = require('axios');
  * 2) Firecrawl
  * 3) Exa
  * 4) SerpAPI
- * LangSearch is always queried for aggregation enhancement.
+ * LangSearch and Jina Search are always queried for aggregation enhancement.
  * Falls back on error, timeout, rate-limit, or empty results.
  * @param {string} query
  * @returns {Promise<Array>} Array of { title, snippet, url }
@@ -16,6 +16,8 @@ const debugLog = (...args) => { if (isNonProd) console.log(...args); };
 
 const searchWeb = async (query) => {
   const timeout = Number(process.env.WEB_SEARCH_TIMEOUT_MS || 8000);
+  const jinaSearchTimeout = Number(process.env.JINA_SEARCH_TIMEOUT_MS || 60000);
+  const maxResults = Number(process.env.WEB_SEARCH_MAX_RESULTS || 8);
   const userAgent = 'MultiAIChatBot/1.0 (https://github.com/Azim/multi-ai-chat) axios/1.7.9';
   debugLog(`[WebSearch] Called with query: "${query.substring(0, 100)}${query.length > 100 ? '...' : ''}"`);
 
@@ -26,7 +28,7 @@ const searchWeb = async (query) => {
       url: String(item?.url || '').trim(),
     }))
     .filter((item) => item.title && item.url)
-    .slice(0, 5);
+    .slice(0, maxResults);
 
   const toCanonicalUrl = (value = '') => {
     try {
@@ -37,27 +39,33 @@ const searchWeb = async (query) => {
     }
   };
 
-  const aggregateResults = (base = [], extra = []) => {
-    const merged = [...base, ...extra];
+  const aggregateResults = (...groups) => {
     const seen = new Set();
     const output = [];
-    for (const item of merged) {
-      const key = toCanonicalUrl(item.url);
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      output.push(item);
-      if (output.length >= 5) break;
+    const maxGroupLength = Math.max(0, ...groups.map((group) => group.length));
+    for (let index = 0; index < maxGroupLength; index += 1) {
+      for (const group of groups) {
+        const item = group[index];
+        if (!item) continue;
+        const key = toCanonicalUrl(item.url);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        output.push(item);
+        if (output.length >= maxResults) return output;
+      }
     }
     return output;
   };
 
   const safeProviderCall = async (name, fn) => {
     try {
+      debugLog(`[WebSearch] ${name}: attempting`);
       const results = normalize(await fn());
       if (results.length === 0) {
         console.warn(`[WebSearch] ${name} returned empty results, falling back...`);
         return null;
       }
+      debugLog(`[WebSearch] ${name}: ${results.length} normalized result(s)`);
       return results;
     } catch (err) {
       const status = err?.response?.status;
@@ -214,6 +222,84 @@ const searchWeb = async (query) => {
     }));
   };
 
+  const parseJinaSearchText = (text = '') => {
+    const normalizedText = String(text || '').trim();
+    if (!normalizedText) return [];
+
+    const blocks = normalizedText
+      .split(/\n(?=Title:\s*)/i)
+      .map((block) => block.trim())
+      .filter(Boolean);
+
+    const items = [];
+    for (const block of blocks) {
+      const title = block.match(/^Title:\s*(.+)$/im)?.[1]?.trim();
+      const url = block.match(/^URL Source:\s*(https?:\/\/\S+)/im)?.[1]?.trim()
+        || block.match(/^URL:\s*(https?:\/\/\S+)/im)?.[1]?.trim();
+      const snippet = block
+        .replace(/^Title:\s*.+$/gim, '')
+        .replace(/^URL Source:\s*https?:\/\/\S+$/gim, '')
+        .replace(/^URL:\s*https?:\/\/\S+$/gim, '')
+        .replace(/^(Description|Snippet|Content):\s*/gim, '')
+        .trim();
+
+      if (title && url) {
+        items.push({ title, snippet, url });
+      }
+    }
+
+    if (items.length > 0) return items;
+
+    return extractMarkdownLinks(normalizedText).map((link) => ({
+      title: link.title || link.url || query,
+      snippet: normalizedText.slice(0, 700),
+      url: link.url,
+    }));
+  };
+
+  const extractMarkdownLinks = (text = '') => {
+    const links = [];
+    const seen = new Set();
+    const markdownRe = /\[([^\]]{1,160})\]\((https?:\/\/[^)\s]+)\)/g;
+    const plainRe = /https?:\/\/[^\s<>"')]+/g;
+    let match;
+
+    while ((match = markdownRe.exec(text)) !== null) {
+      const title = String(match[1] || '').trim();
+      const url = String(match[2] || '').trim();
+      const key = toCanonicalUrl(url);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      links.push({ title, url });
+    }
+
+    while ((match = plainRe.exec(text)) !== null) {
+      const url = String(match[0] || '').replace(/[),.;!?]+$/g, '').trim();
+      const key = toCanonicalUrl(url);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      links.push({ title: url, url });
+    }
+
+    return links;
+  };
+
+  const jinaSearch = async () => {
+    const apiKey = process.env.JINA_API_KEY;
+    if (!apiKey) return [];
+
+    const response = await axios.get(`https://s.jina.ai/${encodeURIComponent(query)}`, {
+      timeout: jinaSearchTimeout,
+      responseType: 'text',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'User-Agent': userAgent,
+      },
+    });
+
+    return parseJinaSearchText(response?.data || '');
+  };
+
   const providers = [
     { name: 'Exa', fn: exaSearch },
     { name: 'Firecrawl', fn: firecrawlSearch },
@@ -224,19 +310,27 @@ const searchWeb = async (query) => {
   let primaryResults = null;
   let primaryProvider = null;
   for (const provider of providers) {
+    debugLog(`[WebSearch] Primary fallback: trying ${provider.name}`);
     const results = await safeProviderCall(provider.name, provider.fn);
     if (results) {
       primaryResults = results;
       primaryProvider = provider.name;
+      debugLog(`[WebSearch] Primary selected: ${provider.name}`);
       break;
     }
   }
 
-  const langResults = await safeProviderCall('LangSearch', langSearch);
+  debugLog('[WebSearch] Aggregate providers: trying LangSearch + JinaSearch');
+  const [langResults, jinaResults] = await Promise.all([
+    safeProviderCall('LangSearch', langSearch),
+    safeProviderCall('JinaSearch', jinaSearch),
+  ]);
+
   const base = primaryResults || [];
-  const extra = langResults || [];
-  const finalResults = aggregateResults(base, extra);
-  debugLog(`[WebSearch] Final aggregated: ${finalResults.length} results (primary: ${primaryProvider || 'none'}, base: ${base.length}, extra: ${extra.length})`);
+  const langExtra = langResults || [];
+  const jinaExtra = jinaResults || [];
+  const finalResults = aggregateResults(base, langExtra, jinaExtra);
+  debugLog(`[WebSearch] Final aggregated: ${finalResults.length} results (primary: ${primaryProvider || 'none'}, base: ${base.length}, lang: ${langExtra.length}, jina: ${jinaExtra.length})`);
 
   if (finalResults.length > 0) {
     return finalResults;
