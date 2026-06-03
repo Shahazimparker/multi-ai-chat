@@ -162,7 +162,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 - Flow analysis cycle detection in `flowVisibility.service.js`
 - Cross-chat memory embedding token cost in accurate mode (each message triggers `embedText` call; mitigated by LRU embedding cache)
 - `search_memory` RPC and `message_embeddings` table must be deployed via `migration_add_message_embeddings.sql` for accurate mode to work
-- Site-specific URL readers may return partial content on protected/paywalled/private pages; generic rendering aggregates Firecrawl, Tavily, Exa, Jina Reader, and Jina DeepSearch when configured.
+- Site-specific URL readers may return partial content on protected/paywalled/private pages; generic rendering aggregates Firecrawl, Tavily, and Exa when configured.
 - Artifact cleanup on topic deletion — `delete_topic_cascade` may not be deployed in all environments; the controller now does an explicit pre-delete as a safety net (`backend/controllers/history.controller.js`)
 - AI-generated file `topic_id` association — files must be saved after the stream `done` event so the backend-assigned `topic_id` is available (`frontend/src/pages/hooks/useChatSession.js`)
 
@@ -225,8 +225,9 @@ backend/
 | `imageGeneration.service.js` | 5 | Model list validation (Recraft, FLUX.2) — 4 active, 1 skipped |
 | `pptGeneration.service.js` | 23 | Real PPTX generation with DB save; all 15 layouts in one pass; timeline single-item fix; statistics_strip label:value parsing; faq 5-item cap; comparison_split leftTitle/rightTitle; all 12 themes; unknown theme fallback; unknown layout fallback; filename edge cases |
 | `orchestratorBrain.service.js` | 2 | Module load check + degraded result on null config |
-| `ragHybrid.test.js` | 10 | `rerankDocsHybrid` — cosine+BM25+Jaccard hybrid reranking, numeric critical miss, lexical gate, topK |
+| `ragHybrid.test.js` | 10 | `rerankDocsHybrid` — cosine+BM25+Jaccard+RRF hybrid reranking, numeric critical miss, lexical gate, topK |
 | `memoryHybrid.test.js` | 11 | `rerankMemoryRowsHybrid` — same hybrid scoring for cross-chat memory, role preservation |
+| `retrieverHybrid.test.js` | 2 | `HybridRetriever` — vector+BM25+Jaccard+RRF score fusion and empty-result handling |
 
 #### Tier 2: Integration with Real Backends — 18 tests
 | Service | Tests | What's covered |
@@ -301,7 +302,7 @@ backend/__tests__/integration-real/
 | `chat-api.test.js` | 4 | GET /health, GET /models, anonymous POST /stream, POST /stream (SSE) |
 | `sanitize.test.js` | 11 | `sanitizeInput` HTML stripping, entities, whitespace, edge cases + `sanitizeBody` middleware |
 | `toolLoop.test.js` | 2 | Real Gemini single-round dispatch, abort error propagation |
-| `webSearch.test.js` | 1 | Real provider-backed web search with normalized result shape (`title/snippet/url`), including Jina Search when `JINA_API_KEY` is configured |
+| `webSearch.test.js` | 1 | Real provider-backed web search with normalized result shape (`title/snippet/url`) |
 
 
 

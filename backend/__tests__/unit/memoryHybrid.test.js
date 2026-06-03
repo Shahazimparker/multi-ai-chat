@@ -25,6 +25,8 @@ describe('rerankMemoryRowsHybrid', () => {
     const result = rerankMemoryRowsHybrid(rows, 'database schema migration', 5, 0.5);
     expect(result.length).toBeGreaterThanOrEqual(1);
     expect(result[0].hybridScore).toBeDefined();
+    expect(result[0].jaccardScore).toBeDefined();
+    expect(result[0].rrfScore).toBeDefined();
     expect(result[0].accepted).toBe(true);
   });
 

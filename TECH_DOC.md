@@ -54,10 +54,10 @@ This document is the technical reference for the current codebase state.
 
 - Chat orchestration: `backend/services/chat.service.js`
 - Context and memory: `backend/services/context.service.js`, `backend/services/memory.service.js`, `backend/services/summary.service.js`
-  - `memory.service.js` now exports `embedAndStoreMessage` and `searchMemory` for RAG-based cross-chat memory (accurate mode only)
+- `memory.service.js` now exports `embedAndStoreMessage` and `searchMemory` for RAG-based cross-chat memory (accurate mode only)
   - Cross-chat memory persisted in `message_embeddings` table; searched via `search_memory` Supabase RPC
   - Memory context trimmed with token-budget-aware `trimTextByTokens` (600 token fixed budget, split evenly across results)
-- RAG and embeddings: `backend/services/rag.service.js` (hybrid reranking: cosine+BM25+Jaccard with numeric critical miss protection)
+- RAG and embeddings: `backend/services/rag.service.js` (hybrid reranking: cosine+BM25+Jaccard+RRF with numeric critical miss protection)
 - File pipeline: `backend/services/fileUpload.service.js`
   - Upload embeddings include max-context recovery: `EMBED_INPUT_TOO_LONG` from `rag.service.js` triggers smaller chunk retries and adaptive hard split fallback in `fileUpload.service.js`.
 - Cache: `backend/services/cache.service.js`
@@ -67,12 +67,12 @@ This document is the technical reference for the current codebase state.
 - Analytics: `backend/services/analytics.service.js`
 - Similarity and compression: `backend/services/similarity.service.js`, `backend/services/compress.service.js`
 - Tool execution helpers: `backend/services/tools/webSearch.service.js`, `backend/services/tools/codeExecute.service.js`
-  - `webSearch.service.js` uses primary fallback in this order: `Exa -> Firecrawl -> Tavily -> SerpAPI`, then always aggregates LangSearch and Jina Search.
+  - `webSearch.service.js` uses primary fallback in this order: `Exa -> Firecrawl -> Tavily -> SerpAPI`, then always aggregates LangSearch.
 - URL reading helpers:
   - `backend/services/tools/urlReader.service.js` — extracts/validates URLs from user query and injects URL context
   - `backend/services/tools/githubReader.service.js` — GitHub repo deep-read (tree + raw file content with limits)
   - `backend/services/tools/siteReaders.service.js` — site-specific readers for GitLab, Bitbucket, StackOverflow, Notion, Confluence, arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, API docs, Gov/Legal
-  - Runtime order: site-specific reader first, then generic provider fallback (Firecrawl/Tavily/Exa), plus Jina Reader and Jina DeepSearch as additive renderers
+  - Runtime order: site-specific reader first, then generic provider fallback (Firecrawl/Tavily/Exa)
   - `backend/services/tools/rerank.service.js` exists but is currently not wired in runtime paths.
 - File generation: `backend/services/imageGeneration.service.js` (Recraft/FLUX via OpenRouter), `backend/services/pptGeneration.service.js` (pptxgenjs), `backend/services/pdfGeneration.service.js` (pdfkit), `backend/services/excelGeneration.service.js` (exceljs), `backend/services/wordGeneration.service.js` (docx), `backend/services/csvGeneration.service.js`, `backend/services/chartGeneration.service.js` (SVG), `backend/services/htmlGeneration.service.js`, `backend/services/jsonGeneration.service.js`, `backend/services/markdownGeneration.service.js`
 
@@ -97,7 +97,7 @@ This document is the technical reference for the current codebase state.
 - `agentOrchestrator.service.js` — SmartAgent with intelligent orchestration
 
 **Memory & State:**
-- `memory.service.js` — 6 in-process memory strategies (Buffer, Summary, Entity, TokenBuffer, Window, Combined) + `embedAndStoreMessage` + `searchMemory` with hybrid reranking (cosine+BM25+Jaccard) for cross-chat RAG memory
+- `memory.service.js` — 6 in-process memory strategies (Buffer, Summary, Entity, TokenBuffer, Window, Combined) + `embedAndStoreMessage` + `searchMemory` with hybrid reranking (cosine+BM25+Jaccard+RRF) for cross-chat RAG memory
 - `loopManagement.service.js` — 4 loop patterns (RefinementLoop, QueryLoop, ValidationLoop, PipelineLoop)
 
 **Observability & Control:**
@@ -272,9 +272,8 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
 - `SENTRY_DSN`
 - `ANONYMOUS_TOKEN_LIMIT` — token cap for anonymous users (default: 10000)
 - Provider API keys used by configured or optional provider modules
-- Web search provider keys: `EXA_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY`, `SERPAPI_API_KEY`, `LANGSEARCH_API_KEY`, `JINA_API_KEY`
-- Web search optional tuning: `WEB_SEARCH_TIMEOUT_MS`, `JINA_SEARCH_TIMEOUT_MS` (default 60000 ms), `WEB_SEARCH_MAX_RESULTS`, `LANGSEARCH_FRESHNESS`, `LANGSEARCH_SUMMARY`
-- URL deep-read optional tuning: `JINA_DEEPSEARCH_MODEL`, `JINA_DEEPSEARCH_TIMEOUT_MS` (default 300000 ms)
+- Web search provider keys: `EXA_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY`, `SERPAPI_API_KEY`, `LANGSEARCH_API_KEY`
+- Web search optional tuning: `WEB_SEARCH_TIMEOUT_MS`, `WEB_SEARCH_MAX_RESULTS`, `LANGSEARCH_FRESHNESS`, `LANGSEARCH_SUMMARY`
 - URL deep-read optional tuning:
   - `GITHUB_TOKEN`
   - `GITHUB_READER_MAX_FILES`, `GITHUB_READER_MAX_FILE_BYTES`, `GITHUB_READER_MAX_TOTAL_CHARS`

@@ -8,8 +8,7 @@ const hasAnyWebSearchKey = Boolean(
   process.env.TAVILY_API_KEY ||
   process.env.FIRECRAWL_API_KEY ||
   process.env.SERPAPI_API_KEY ||
-  process.env.LANGSEARCH_API_KEY ||
-  process.env.JINA_API_KEY
+  process.env.LANGSEARCH_API_KEY
 );
 
 const describeReal = hasAnyWebSearchKey ? describe : describe.skip;

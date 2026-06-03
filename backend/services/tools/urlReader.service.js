@@ -135,97 +135,6 @@ const readWithFirecrawl = async (urls, timeout) => {
   return output;
 };
 
-const readWithJinaReader = async (urls, timeout) => {
-  const apiKey = process.env.JINA_API_KEY;
-  if (!apiKey) return [];
-
-  const output = [];
-  for (const url of urls) {
-    try {
-      debugLog(`[UrlReader] JinaReader: attempting ${url}`);
-      const response = await axios.get(`https://r.jina.ai/${url}`, {
-        timeout,
-        responseType: 'text',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'User-Agent': 'multi-ai-chat-url-reader',
-        },
-      });
-
-      const text = String(response?.data || '').trim();
-      if (!text) continue;
-      const title = text.match(/^Title:\s*(.+)$/im)?.[1]?.trim()
-        || text.match(/^#\s+(.+)$/m)?.[1]?.trim()
-        || url;
-
-      output.push({
-        url,
-        title,
-        text,
-        source: 'jina-reader',
-      });
-      debugLog(`[UrlReader] JinaReader: success ${url} (${text.length} chars)`);
-    } catch {
-      debugLog(`[UrlReader] JinaReader: failed ${url}`);
-      // Jina Reader is additive; other readers should still complete.
-    }
-  }
-  return output;
-};
-
-const readWithJinaDeepSearch = async (urls) => {
-  const apiKey = process.env.JINA_API_KEY;
-  if (!apiKey) return [];
-
-  const deepSearchTimeout = Number(process.env.JINA_DEEPSEARCH_TIMEOUT_MS || 300000);
-  const output = [];
-
-  for (const url of urls) {
-    try {
-      debugLog(`[UrlReader] JinaDeepSearch: attempting ${url}`);
-      const response = await axios.post(
-        'https://deepsearch.jina.ai/v1/chat/completions',
-        {
-          model: process.env.JINA_DEEPSEARCH_MODEL || 'jina-deepsearch-v1',
-          messages: [
-            {
-              role: 'user',
-              content: `Render the content of this URL in concise markdown. Preserve the title and key facts.\nURL: ${url}`,
-            },
-          ],
-        },
-        {
-          timeout: deepSearchTimeout,
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-            'User-Agent': 'multi-ai-chat-url-reader',
-          },
-        }
-      );
-
-      const text = String(response?.data?.choices?.[0]?.message?.content || '').trim();
-      if (!text) continue;
-
-      output.push({
-        url,
-        title: text.match(/^Title:\s*(.+)$/im)?.[1]?.trim()
-          || text.match(/^#\s+(.+)$/m)?.[1]?.trim()
-          || url,
-        text,
-        source: 'jina-deepsearch',
-      });
-      debugLog(`[UrlReader] JinaDeepSearch: success ${url} (${text.length} chars)`);
-    } catch (err) {
-      const status = err?.response?.status;
-      const label = status ? `${err.message} (HTTP ${status})` : err?.message || 'unknown';
-      debugLog(`[UrlReader] JinaDeepSearch: failed ${url} - ${label}`);
-    }
-  }
-
-  return output;
-};
-
 const isNonProd = process.env.NODE_ENV !== 'production';
 const debugLog = (...args) => { if (isNonProd) console.log(...args); };
 
@@ -281,9 +190,7 @@ const readUrls = async (rawUrls = []) => {
       }))
     : [];
 
-  const jinaResults = await readWithJinaReader(urls, timeout);
-  const deepSearchResults = await readWithJinaDeepSearch(urls);
-  const merged = [...output, ...providerResults.flat(), ...jinaResults, ...deepSearchResults]
+  const merged = [...output, ...providerResults.flat()]
     .filter((item) => item?.url && item?.text);
 
   debugLog(`[UrlReader] Final aggregated: ${merged.length} result(s)`);

@@ -193,6 +193,10 @@ export interface RerankDocInput {
 export interface RerankDocOutput extends RerankDocInput {
   hybridScore: number;
   accepted: boolean;
+  bm25Score?: number;
+  jaccardScore?: number;
+  rrfScore?: number;
+  lexicalOverlap?: number;
 }
 
 // ── Chat pipeline result ─────────────────────────────────────

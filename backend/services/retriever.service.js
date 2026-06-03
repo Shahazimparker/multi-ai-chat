@@ -21,6 +21,48 @@ class RetrievalResult {
   }
 }
 
+const HYBRID_RRF_K = 60;
+
+const tokenizeForRanking = (text) => {
+  return String(text || '')
+    .toLowerCase()
+    .match(/[a-z0-9]+(?:[._-][a-z0-9]+)*/g) || [];
+};
+
+const jaccardSimilarity = (tokensA, tokensB) => {
+  const setA = new Set(tokensA);
+  const setB = new Set(tokensB);
+  if (!setA.size || !setB.size) return 0;
+
+  let intersection = 0;
+  for (const token of setA) {
+    if (setB.has(token)) intersection++;
+  }
+
+  const union = setA.size + setB.size - intersection;
+  return union > 0 ? intersection / union : 0;
+};
+
+const buildRankMap = (results, scoreSelector) => {
+  return [...results]
+    .map((result, idx) => ({
+      id: result.documentId ?? idx,
+      score: Number(scoreSelector(result, idx)) || 0,
+    }))
+    .sort((a, b) => b.score - a.score || String(a.id).localeCompare(String(b.id)))
+    .reduce((rankMap, item, rank) => {
+      rankMap.set(item.id, rank + 1);
+      return rankMap;
+    }, new Map());
+};
+
+const reciprocalRankFusion = (rankMaps, id, k = HYBRID_RRF_K) => {
+  return rankMaps.reduce((sum, rankMap) => {
+    const rank = rankMap.get(id);
+    return sum + (rank ? 1 / (k + rank) : 0);
+  }, 0);
+};
+
 /**
  * Base Retriever interface
  */
@@ -230,12 +272,16 @@ class HybridRetriever extends Retriever {
     if (!bm25Retriever) throw new Error('HybridRetriever: bm25Retriever is required');
     this.vectorRetriever = vectorRetriever;
     this.bm25Retriever = bm25Retriever;
-    this.vectorWeight = options.vectorWeight || 0.6;
-    this.bm25Weight = options.bm25Weight || 0.4;
+    this.vectorWeight = options.vectorWeight ?? 0.6;
+    this.bm25Weight = options.bm25Weight ?? 0.4;
+    this.jaccardWeight = options.jaccardWeight ?? 0.15;
+    this.rrfWeight = options.rrfWeight ?? 0.1;
+    this.rrfK = options.rrfK ?? HYBRID_RRF_K;
   }
 
   async retrieve(query, options = {}) {
     const { topK = 10 } = options;
+    const queryTokens = tokenizeForRanking(query);
 
     // Run both retrievers in parallel for better performance
     const [vectorResults, bm25Results] = await Promise.all([
@@ -270,13 +316,39 @@ class HybridRetriever extends Retriever {
       }
     }
 
-    // Calculate combined score
-    const combined = Array.from(merged.values()).map((r) => ({
+    const combinedBase = Array.from(merged.values()).map((r) => ({
       ...r,
-      score:
-        r.vectorScore * this.vectorWeight +
-        r.bm25Score * this.bm25Weight,
+      jaccardScore: queryTokens.length > 0
+        ? jaccardSimilarity(queryTokens, tokenizeForRanking(r.content))
+        : 0,
     }));
+
+    const vectorRankMap = buildRankMap(vectorNorm, (r) => r.score);
+    const bm25RankMap = buildRankMap(bm25Norm, (r) => r.score);
+    const jaccardRankMap = queryTokens.length > 0
+      ? buildRankMap(combinedBase, (r) => r.jaccardScore)
+      : new Map();
+    const rrfRaw = new Map(combinedBase.map((r) => [
+      r.documentId,
+      reciprocalRankFusion([vectorRankMap, bm25RankMap, jaccardRankMap], r.documentId, this.rrfK),
+    ]));
+    const rrfMax = Math.max(1e-9, ...rrfRaw.values());
+    const totalWeight = this.vectorWeight + this.bm25Weight + this.jaccardWeight + this.rrfWeight || 1;
+
+    // Calculate combined score
+    const combined = combinedBase.map((r) => {
+      const rrfScore = rrfRaw.get(r.documentId) / rrfMax;
+      return {
+        ...r,
+        rrfScore,
+        score: (
+          r.vectorScore * this.vectorWeight +
+          r.bm25Score * this.bm25Weight +
+          r.jaccardScore * this.jaccardWeight +
+          rrfScore * this.rrfWeight
+        ) / totalWeight,
+      };
+    });
 
     return this._sortByScore(combined).slice(0, topK);
   }

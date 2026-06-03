@@ -144,9 +144,6 @@ Common optional values:
 - `FIRECRAWL_API_KEY`
 - `SERPAPI_API_KEY`
 - `LANGSEARCH_API_KEY`
-- `JINA_API_KEY`
-- `JINA_DEEPSEARCH_MODEL`
-- `JINA_DEEPSEARCH_TIMEOUT_MS`
 - `GITHUB_TOKEN` — optional, raises GitHub API limits for repo deep read
 - `WEB_SEARCH_TIMEOUT_MS`
 - `WEB_SEARCH_MAX_RESULTS`

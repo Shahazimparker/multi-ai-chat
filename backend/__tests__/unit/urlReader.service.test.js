@@ -42,13 +42,11 @@ describe('urlReader.service', () => {
     expect(() => validatePublicHttpUrl('ftp://example.com')).toThrow();
   });
 
-  it('aggregates generic URL rendering with Jina Reader', async () => {
+  it('aggregates generic URL rendering providers', async () => {
     const originalEnv = { ...process.env };
     process.env.EXA_API_KEY = 'exa-key';
     process.env.TAVILY_API_KEY = 'tavily-key';
     process.env.FIRECRAWL_API_KEY = 'firecrawl-key';
-    process.env.JINA_API_KEY = 'jina-key';
-    delete process.env.JINA_DEEPSEARCH_TIMEOUT_MS;
 
     vi.spyOn(axios, 'post').mockImplementation((url) => {
       if (url === 'https://api.firecrawl.dev/v2/scrape') {
@@ -60,30 +58,12 @@ describe('urlReader.service', () => {
       if (url === 'https://api.exa.ai/contents') {
         return Promise.resolve({ data: { results: [{ url: 'https://example.com/', title: 'Exa', text: 'Exa text' }] } });
       }
-      if (url === 'https://deepsearch.jina.ai/v1/chat/completions') {
-        return Promise.resolve({
-          data: {
-            choices: [{
-              message: {
-                content: 'Title: DeepSearch\nDeepSearch text',
-              },
-            }],
-          },
-        });
-      }
       return Promise.resolve({ data: {} });
     });
 
-    vi.spyOn(axios, 'get').mockResolvedValue({ data: 'Title: Jina\nJina reader text' });
-
     const results = await readUrls(['https://example.com']);
 
-    expect(results.map((item) => item.source)).toEqual(['firecrawl', 'tavily', 'exa', 'jina-reader', 'jina-deepsearch']);
-    expect(axios.post).toHaveBeenCalledWith(
-      'https://deepsearch.jina.ai/v1/chat/completions',
-      expect.any(Object),
-      expect.objectContaining({ timeout: 300000 })
-    );
+    expect(results.map((item) => item.source)).toEqual(['firecrawl', 'tavily', 'exa']);
     process.env = originalEnv;
     vi.restoreAllMocks();
   });

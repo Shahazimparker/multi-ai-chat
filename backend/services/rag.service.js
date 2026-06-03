@@ -11,6 +11,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const supabase = require('../config/supabase');
 const { trimTextByTokens, estimateTokens } = require('./tokenBudget.service');
 const RAG_HYBRID_THRESHOLD = 0.52;
+const RAG_RRF_K = 60;
 
 const tokenizeForRanking = (text) => {
   return String(text || '')
@@ -59,6 +60,21 @@ const bm25Score = (queryTokens, docTokens, docsTokens, avgDocLen, k1 = 1.2, b = 
   return score;
 };
 
+const buildRankMapFromScores = (scores) => scores
+  .map((score, idx) => ({ idx, score: Number(score) || 0 }))
+  .sort((a, b) => b.score - a.score || a.idx - b.idx)
+  .reduce((rankMap, item, rank) => {
+    rankMap.set(item.idx, rank + 1);
+    return rankMap;
+  }, new Map());
+
+const reciprocalRankFusionScore = (rankMaps, idx, k = RAG_RRF_K) => {
+  return rankMaps.reduce((sum, rankMap) => {
+    const rank = rankMap.get(idx);
+    return sum + (rank ? 1 / (k + rank) : 0);
+  }, 0);
+};
+
 const rerankDocsHybrid = (rows, queryText, topK, cosineThreshold) => {
   if (!rows?.length) return [];
 
@@ -69,21 +85,32 @@ const rerankDocsHybrid = (rows, queryText, topK, cosineThreshold) => {
 
   const bm25Raw = rows.map((r, i) => bm25Score(qTokens, docsTokens[i], docsTokens, avgLen));
   const bm25Max = Math.max(1e-9, ...bm25Raw);
+  const cosineNorms = rows.map((row) => normalizeCosine(row.similarity));
+  const jaccardScores = rows.map((_, idx) => jaccardScore(qTokens, docsTokens[idx]));
+  const bm25Norms = bm25Raw.map((score) => score / bm25Max);
+  const rankMaps = [
+    buildRankMapFromScores(cosineNorms),
+    buildRankMapFromScores(bm25Raw),
+    buildRankMapFromScores(jaccardScores),
+  ];
+  const rrfRaw = rows.map((_, idx) => reciprocalRankFusionScore(rankMaps, idx));
+  const rrfMax = Math.max(1e-9, ...rrfRaw);
 
   const scored = rows.map((row, idx) => {
-    const cosineNorm = normalizeCosine(row.similarity);
-    const jaccard = jaccardScore(qTokens, docsTokens[idx]);
-    const bm25Norm = bm25Raw[idx] / bm25Max;
+    const cosineNorm = cosineNorms[idx];
+    const jaccard = jaccardScores[idx];
+    const bm25Norm = bm25Norms[idx];
+    const rrfScore = rrfRaw[idx] / rrfMax;
     const contentNums = new Set(extractNumericTokens(row.content));
     const hasAllNums = qNums.every((n) => contentNums.has(n));
     const numericBoost = qNums.length > 0 && hasAllNums ? 0.1 : 0;
     const lexicalOverlap = qTokens.length ? qTokens.filter((t) => docsTokens[idx].includes(t)).length / qTokens.length : 0;
-    const hybridScore = (0.55 * cosineNorm) + (0.3 * bm25Norm) + (0.15 * jaccard) + numericBoost;
+    const hybridScore = (0.5 * cosineNorm) + (0.25 * bm25Norm) + (0.15 * jaccard) + (0.1 * rrfScore) + numericBoost;
     const numericCriticalMiss = qNums.length > 0 && !hasAllNums && cosineNorm < 0.95;
     const minAccepted = Math.max(RAG_HYBRID_THRESHOLD, normalizeCosine(cosineThreshold));
     const lexicalGate = qTokens.length === 0 || lexicalOverlap >= 0.1 || cosineNorm >= 0.85;
     const accepted = !numericCriticalMiss && hybridScore >= minAccepted && lexicalGate;
-    return { ...row, hybridScore, accepted };
+    return { ...row, bm25Score: bm25Norm, jaccardScore: jaccard, rrfScore, lexicalOverlap, hybridScore, accepted };
   });
 
   return scored

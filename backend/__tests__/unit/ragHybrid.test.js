@@ -25,6 +25,8 @@ describe('rerankDocsHybrid', () => {
     const result = rerankDocsHybrid(rows, 'database schema migration', 3, 0.4);
     expect(result.length).toBeGreaterThanOrEqual(1);
     expect(result[0].hybridScore).toBeDefined();
+    expect(result[0].jaccardScore).toBeDefined();
+    expect(result[0].rrfScore).toBeDefined();
     expect(result[0].accepted).toBe(true);
   });
 
