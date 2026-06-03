@@ -19,7 +19,7 @@ const sendMessage = async (req, res) => {
     message,
     image,
     topicId,
-    memoryMode = 'summarized',
+    memoryMode = 'accurate',
     historyLimit = 5,
     ragEnabled = false,
     forceWebSearch = false,
