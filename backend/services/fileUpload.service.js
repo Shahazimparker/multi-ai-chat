@@ -792,19 +792,27 @@ const getFileContent = async (fileId, userId, topicId) => {
 
 /**
  * List uploaded files for a topic (no similarity filter)
+ * When topicId is null, returns files with NULL topic_id (uploaded before topic was created).
  * @param {string} userId
  * @param {string} topicId
  * @param {number} maxFiles - max files to return (default 200)
  */
 const listUserFiles = async (userId, topicId, maxFiles = 200) => {
   try {
-    if (!userId || !topicId) return [];
+    if (!userId) return [];
 
-    const { data, error, count } = await supabase
+    const query = supabase
       .from('uploaded_files_rag')
       .select('id, file_name, file_type, created_at', { count: 'exact' })
-      .eq('user_id', userId)
-      .eq('topic_id', topicId)
+      .eq('user_id', userId);
+
+    if (topicId) {
+      query.eq('topic_id', topicId);
+    } else {
+      query.is('topic_id', null);
+    }
+
+    const { data, error, count } = await query
       .order('created_at', { ascending: false })
       .limit(maxFiles);
 

@@ -281,6 +281,11 @@ const ARTIFACT_INTENTS = [
 
 const detectArtifactIntent = (text = '') => {
   const normalized = String(text).toLowerCase();
+  // Skip artifact detection when the message is a file upload notification
+  // (e.g. "[File uploaded: report.pdf]" or "📎 report.pdf")
+  // These are short auto-generated messages where filename extensions (pdf, docx, csv, json, md, etc.)
+  // falsely trigger artifact intent detection, causing unwanted clarification popups.
+  if (/\[file uploaded:|📎/.test(normalized)) return null;
   return ARTIFACT_INTENTS.find((entry) => entry.keywords.test(normalized) && (entry.verbs.test(normalized) || normalized.trim().split(/\s+/).length <= 8)) || null;
 };
 
@@ -808,6 +813,41 @@ ${page.text}`)
           console.error('[ChatPipeline] Topic creation failed:', topicError.message);
         } else {
           resolvedTopicId = newTopic?.id;
+
+          // ── Backfill topic_id on orphaned files uploaded before topic existed ──
+          // Files uploaded (e.g. via sendMessage flow) before the topic is created
+          // have topic_id = NULL. Link them to the newly created topic so
+          // listUserFiles / searchUserFilesRAG find them on subsequent messages.
+          try {
+            const { error: backfillErr1 } = await supabase
+              .from('uploaded_files_rag')
+              .update({ topic_id: resolvedTopicId })
+              .eq('user_id', user.id)
+              .is('topic_id', null)
+              .gte('created_at', new Date(Date.now() - 10 * 60 * 1000).toISOString()); // last 10 min
+            if (backfillErr1) {
+              console.warn('[ChatPipeline] File topic backfill error (rag):', backfillErr1.message);
+            } else {
+              console.log(`[ChatPipeline] Backfilled topic_id for uploaded_files_rag → ${resolvedTopicId}`);
+            }
+          } catch (backfillErr) {
+            console.warn('[ChatPipeline] File topic backfill failed (rag):', backfillErr.message);
+          }
+
+          // Also backfill uploaded_files (used by search_uploaded_files RPC)
+          try {
+            const { error: backfillErr2 } = await supabase
+              .from('uploaded_files')
+              .update({ topic_id: resolvedTopicId })
+              .eq('user_id', user.id)
+              .is('topic_id', null)
+              .gte('created_at', new Date(Date.now() - 10 * 60 * 1000).toISOString());
+            if (backfillErr2) {
+              console.warn('[ChatPipeline] File topic backfill error (files):', backfillErr2.message);
+            }
+          } catch (backfillErr2) {
+            console.warn('[ChatPipeline] File topic backfill failed (files):', backfillErr2.message);
+          }
         }
       }
 
