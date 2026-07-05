@@ -222,8 +222,8 @@ const searchWeb = async (query) => {
   };
 
   const providers = [
-    { name: 'Exa', fn: exaSearch },
     { name: 'Firecrawl', fn: firecrawlSearch },
+    { name: 'Exa', fn: exaSearch },
     { name: 'Tavily', fn: tavilySearch },
     { name: 'SerpAPI', fn: serpApiSearch },
   ];
