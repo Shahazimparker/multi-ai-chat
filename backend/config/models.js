@@ -70,37 +70,53 @@ const MODELS = {
   },
 
   // ── Groq / LLaMA ───────────────────────────────────────────
-  'groq-mixtral': {
-    label: 'Groq LLaMA 3.1 8B Instant (Free)',
+  // `groq-mixtral` (llama-3.1-8b-instant) and `groq-llama` (llama-3.3-70b-versatile)
+  // were removed here: Groq decommissions both on 2026-08-16, after which they
+  // return HTTP 400. See https://console.groq.com/docs/deprecations
+  'groq-gpt-oss-20b': {
+    label: 'Groq GPT-OSS 20B (Free)',
     provider: 'groq',
     apiKey: process.env.GROQ_API_KEY,
-    model: 'llama-3.1-8b-instant',
+    model: 'openai/gpt-oss-20b',
     paid: false,
     maxTokens: 5999,
   },
-  'groq-llama': {
-    label: 'Groq LLaMA 3.3 70B (Free)',
+  'groq-gpt-oss-120b': {
+    label: 'Groq GPT-OSS 120B (Free)',
     provider: 'groq',
     apiKey: process.env.GROQ_API_KEY,
-    model: 'llama-3.3-70b-versatile',
+    model: 'openai/gpt-oss-120b',
+    paid: false,
+    maxTokens: 5999,
+  },
+  'groq-qwen3': {
+    label: 'Groq Qwen3.6 27B (Free)',
+    provider: 'groq',
+    apiKey: process.env.GROQ_API_KEY,
+    model: 'qwen/qwen3.6-27b',
     paid: false,
     maxTokens: 5999,
   },
 
   // ── Google Gemini ──────────────────────────────────────────
+  // Gemini 2.5 Flash/Pro both shut down 2026-10-16
+  // (https://ai.google.dev/gemini-api/docs/deprecations). Alias keys are kept
+  // stable so stored topics and SUMMARY_MODEL below keep resolving.
   'gemini-flash': {
-    label: 'Gemini Flash 2.5 (Free)',
+    label: 'Gemini Flash 3.6 (Free)',
     provider: 'gemini',
     apiKey: process.env.GEMINI_API_KEY,
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3.6-flash',
     paid: false,
     maxTokens: 5999,
   },
   'gemini-pro': {
-    label: 'Gemini Pro 2.5 (Free)',
+    label: 'Gemini Pro 3.1 (Preview, Free)',
     provider: 'gemini',
     apiKey: process.env.GEMINI_API_KEY,
-    model: 'gemini-2.5-pro',
+    // Google's named replacement for gemini-2.5-pro. Preview status: it can
+    // change or be withdrawn on shorter notice than a stable model.
+    model: 'gemini-3.1-pro-preview',
     paid: false,
     maxTokens: 5999,
   },
@@ -140,11 +156,19 @@ const MODELS = {
     paid: true,
     maxTokens: 200000,
   },
-  'claude-opus': {
-    label: 'Claude Opus (Best, Paid)',
+  'claude-sonnet-5': {
+    label: 'Claude Sonnet 5 (Smart, Paid)',
     provider: 'claude',
     apiKey: process.env.ANTHROPIC_API_KEY,
-    model: 'claude-opus-4-6',
+    model: 'claude-sonnet-5',
+    paid: true,
+    maxTokens: 200000,
+  },
+  'claude-opus-4-8': {
+    label: 'Claude Opus 4.8 (Best, Paid)',
+    provider: 'claude',
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    model: 'claude-opus-4-8',
     paid: true,
     maxTokens: 200000,
   },

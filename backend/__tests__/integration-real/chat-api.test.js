@@ -40,7 +40,7 @@ describe('Chat API (real)', () => {
     // Verify expected models exist
     const modelIds = data.models.map(m => m.id);
     expect(modelIds).toContain('gemini-flash');
-    expect(modelIds).toContain('groq-llama');
+    expect(modelIds).toContain('groq-gpt-oss-120b');
     console.log(`[Models] ${data.models.length} models available`);
   });
 

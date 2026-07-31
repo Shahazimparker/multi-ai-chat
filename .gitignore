@@ -14,6 +14,10 @@ npm-debug.log*
 frontend/build/
 frontend/.cache/
 
+# Test coverage output
+coverage/
+**/coverage/
+
 # Vercel
 .vercel/
 

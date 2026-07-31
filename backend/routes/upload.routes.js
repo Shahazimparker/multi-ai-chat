@@ -4,10 +4,37 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
+
+// ── Rate limiting ────────────────────────────────────────────
+// Baseline for every /api/upload/* route, keyed by IP. Must stay well above
+// the frontend's 2s poll of /status/:sessionId (~30 req/min per tab) so a user
+// with several tabs open, or an office behind one NAT address, is not blocked.
+const uploadBaseLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 150,
+  message: { error: 'Too many upload requests. Please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Stricter cap for the expensive endpoints (parsing, OCR, file generation).
+// Applied *after* requireAuth, so req.user.id is always set and we can key per
+// account rather than per IP — shared-IP users get independent budgets.
+const uploadHeavyLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => req.user?.id || 'anonymous',
+  message: { error: 'Too many file processing requests. Please wait a few minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+router.use(uploadBaseLimiter);
 
 // ── Sanitize filename: strip path traversal, null bytes, CRLF ──
 const sanitizeFilename = (name) => {
@@ -29,13 +56,29 @@ const sanitizeFilename = (name) => {
 // ── Upload session store — tracks active uploads for cancel, status polling, and resume ──
 // Value: { controller, status, progress, message, phase, result, error }
 const uploadSessions = new Map();
-// Clean stale sessions every 60s
+// Finished sessions are kept briefly so a reconnecting client can read the final status.
+const FINISHED_TTL_MS = 60 * 1000;
+// `ts` is refreshed on every progress update, so a processing session only goes stale
+// if its worker died (crash, unhandled rejection). Without this, such a session would
+// pin its entry — and its AbortController — in the Map forever.
+const PROCESSING_STALE_MS = 30 * 60 * 1000;
+
+// Clean stale sessions every 60s. Unref'd so this timer never holds the process open.
 setInterval(() => {
   const now = Date.now();
   for (const [id, s] of uploadSessions) {
-    if (s.status !== 'processing' && now - s.ts > 60000) uploadSessions.delete(id);
+    const age = now - s.ts;
+    if (s.status !== 'processing') {
+      if (age > FINISHED_TTL_MS) uploadSessions.delete(id);
+    } else if (age > PROCESSING_STALE_MS) {
+      console.warn(`[Upload] Evicting stale processing session ${id} (idle ${Math.round(age / 1000)}s)`);
+      try {
+        s.controller?.abort();
+      } catch { /* controller already settled — nothing to release */ }
+      uploadSessions.delete(id);
+    }
   }
-}, 60000);
+}, 60000).unref();
 
 // ── MIME type map for download ──
 const MIME_MAP = {
@@ -127,7 +170,7 @@ const uploadTimeout = (req, res, next) => {
  * POST /api/upload/file
  * Upload and process a file
  */
-router.post('/file', requireAuth, uploadTimeout, upload.single('file'), async (req, res) => {
+router.post('/file', requireAuth, uploadHeavyLimiter, uploadTimeout, upload.single('file'), async (req, res) => {
   let sessionId = null;
   let abortController = null;
   let updateSession = null;
@@ -432,7 +475,7 @@ router.get('/download/:fileId', requireAuth, async (req, res) => {
  * POST /api/upload/generate-file
  * Save AI-generated file content to DB (topic-specific)
  */
-router.post('/generate-file', requireAuth, async (req, res) => {
+router.post('/generate-file', requireAuth, uploadHeavyLimiter, async (req, res) => {
   try {
     const { topicId, fileName, content, fileType, messageId } = req.body;
     if (!fileName || !content) {
@@ -481,7 +524,7 @@ router.post('/generate-file', requireAuth, async (req, res) => {
  * Generate an AI image via DALL-E 3 and save to DB
  * Body: { prompt, topicId, size?, quality? }
  */
-router.post('/generate-image', requireAuth, async (req, res) => {
+router.post('/generate-image', requireAuth, uploadHeavyLimiter, async (req, res) => {
   try {
     const { prompt, topicId, size, quality } = req.body;
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
@@ -501,7 +544,7 @@ router.post('/generate-image', requireAuth, async (req, res) => {
  * Generate a PPTX from structured slide data and save to DB
  * Body: { title, slides: [{title, bullets?, content?}], subtitle?, topicId }
  */
-router.post('/generate-ppt', requireAuth, async (req, res) => {
+router.post('/generate-ppt', requireAuth, uploadHeavyLimiter, async (req, res) => {
   try {
     const { title, slides, subtitle, topicId } = req.body;
     if (!title || typeof title !== 'string' || !title.trim()) {

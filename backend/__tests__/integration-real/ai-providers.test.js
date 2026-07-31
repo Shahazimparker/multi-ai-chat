@@ -85,8 +85,9 @@ describe('AI Providers (real)', () => {
 
   // ── Groq ────────────────────────────────────────────
   describe('Groq', () => {
-    testModelIfConfigured('groq-mixtral', MODELS['groq-mixtral']);
-    testModelIfConfigured('groq-llama', MODELS['groq-llama']);
+    testModelIfConfigured('groq-gpt-oss-20b', MODELS['groq-gpt-oss-20b']);
+    testModelIfConfigured('groq-gpt-oss-120b', MODELS['groq-gpt-oss-120b']);
+    testModelIfConfigured('groq-qwen3', MODELS['groq-qwen3']);
   });
 
   // ── Mistral ─────────────────────────────────────────

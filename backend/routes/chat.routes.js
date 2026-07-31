@@ -13,16 +13,7 @@ const { MODELS } = require('../config/models');
 const { getProviderModels } = require('../services/modelCatalog.service');
 const { classifyError } = require('../services/chatCleanup.service');
 const { CANONICAL_CHAT_PIPELINE_FLAGS, runChatPipeline } = require('../services/chatPipeline.service');
-
-const getCookieValue = (cookieHeader, key) => {
-  if (!cookieHeader) return null;
-  const parts = String(cookieHeader).split(';');
-  for (const part of parts) {
-    const [rawKey, ...rest] = part.trim().split('=');
-    if (rawKey === key) return decodeURIComponent(rest.join('='));
-  }
-  return null;
-};
+const { optionalAuth } = require('../middleware/auth');
 
 // Rate limit: 30 requests/minute per IP
 const chatLimiter = rateLimit({
@@ -30,32 +21,6 @@ const chatLimiter = rateLimit({
   max: 30,
   message: { error: 'Too many requests. Please slow down.' },
 });
-
-// Optional auth middleware (allows anonymous)
-const optionalAuth = async (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
-  const cookieToken = getCookieValue(req.headers.cookie, 'auth_token');
-  const token = bearerToken || cookieToken;
-  if (!token) return next();
-
-  try {
-    const jwt = require('jsonwebtoken');
-    const supabase = require('../config/supabase');
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    const { data: user } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', decoded.userId)
-      .single();
-
-    req.user = user || null;
-  } catch {
-    req.user = null; // treat as anonymous on invalid token
-  }
-  next();
-};
 
 // GET /api/chat/models — public list of available models
 router.get('/models', (req, res) => {

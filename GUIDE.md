@@ -189,33 +189,46 @@ Common optional values:
 
 ## Using the AI Framework Services
 
-All AI framework services are exported through `backend/services/chat.service.js`:
+All AI framework services are exported through `backend/services/index.js`. It
+exposes each service as a **lazily-loaded namespace**, not as flat class
+exports — destructure the namespace first, then the classes out of it:
 
 ```javascript
 const {
-  // Chains, agents, graphs
-  createChain, SimpleChain, Agent, SmartAgent,
-  Graph, GraphWorkflow,
-  
-  // Memory and state
-  BufferMemory, SummaryMemory, MemoryManager,
-  
-  // Looping and refinement
-  RefinementLoop, QueryLoop, LoopExecutor,
-  
-  // Approval and control
-  HumanApprovalHandler, ApprovalRequest,
-  
-  // Tracing and visibility
-  ExecutionTracer, TraceFormatter, TraceAnalyzer,
-  FlowAnalyzer, FlowVisualizer, FlowDebugger
-} = require('./chat.service');
+  chain, agent, graphWorkflow,
+  memory, loopManagement,
+  humanApproval, executionTracer, flowVisibility,
+} = require('./services');
+
+// Chains, agents, graphs
+const { createChain, SimpleChain } = chain;
+const { Agent } = agent;
+const { Graph, GraphBuilder } = graphWorkflow;
+
+// Memory and state
+const { BufferMemory, SummaryMemory, MemoryManager } = memory;
+
+// Looping and refinement
+const { RefinementLoop, QueryLoop, LoopExecutor } = loopManagement;
+
+// Approval and control
+const { HumanApprovalHandler, ApprovalRequest } = humanApproval;
+
+// Tracing and visibility
+const { ExecutionTracer, TraceFormatter, TraceAnalyzer } = executionTracer;
+const { FlowAnalyzer, FlowVisualizer, FlowDebugger } = flowVisibility;
 ```
 
 ### Example: Create a SmartAgent
 
+> **Not implemented.** `SmartAgent` and `GreedyToolSelection` do not exist in
+> the codebase. `services/agent.service.js` exports `Agent`, `Tool`,
+> `ToolRegistry`, `AgentMemory`, `createAgent` and `createTool`. The snippet
+> below describes intended future API, not something you can run today.
+
 ```javascript
-const { SmartAgent, GreedyToolSelection } = require('./chat.service');
+const { agent } = require('./services');
+const { SmartAgent, GreedyToolSelection } = agent; // ⚠️ both undefined
 
 const agent = new SmartAgent(modelDispatcher, toolRegistry, {
   modelId: 'claude-3-5-sonnet',
@@ -235,7 +248,8 @@ const result = await agent.orchestrate('Analyze market trends', {
 ### Example: Create a Workflow Graph
 
 ```javascript
-const { Graph, GraphBuilder } = require('./chat.service');
+const { graphWorkflow } = require('./services');
+const { Graph, GraphBuilder } = graphWorkflow;
 
 const graph = new Graph();
 graph.addNode('fetch', fetchDataFn)
@@ -251,7 +265,8 @@ const result = await graph.run(input);
 ### Example: Trace Execution
 
 ```javascript
-const { ExecutionTracer, TraceFormatter } = require('./chat.service');
+const { executionTracer } = require('./services');
+const { ExecutionTracer, TraceFormatter } = executionTracer;
 
 const tracer = new ExecutionTracer({ verbose: true });
 tracer.startTrace('workflow');

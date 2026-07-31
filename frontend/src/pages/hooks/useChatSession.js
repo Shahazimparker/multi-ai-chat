@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import api from '../../config/api';
-
-const API_BASE_URL = process.env.NODE_ENV === 'production'
-  ? 'https://multi-ai-chat-backend.vercel.app/api'
-  : 'http://localhost:5000/api';
+import api, { API_BASE_URL } from '../../config/api';
 
 export const useChatSession = ({ refreshTokenStats }) => {
   const [models, setModels] = useState([]);
@@ -37,10 +33,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
     const poll = async () => {
       while (!cancelled) {
         try {
-          const res = await fetch(`${API_BASE_URL}/upload/status/${savedSid}`, {
-            credentials: 'include',
-          });
-          const data = await res.json();
+          const { data } = await api.get(`/upload/status/${savedSid}`);
           if (!data.active) {
             sessionStorage.removeItem('uploadSessionId');
             if (!cancelled) {
@@ -574,12 +567,8 @@ export const useChatSession = ({ refreshTokenStats }) => {
   const cancelUploadAndStream = useCallback(() => {
     const sid = uploadSessionIdRef.current;
     if (sid) {
-      const csrfToken = sessionStorage.getItem('csrf_token');
-      fetch(`${API_BASE_URL}/upload/cancel/${sid}`, {
-        method: 'POST',
-        headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
-        credentials: 'include',
-      }).catch(() => {});
+      // api.post attaches the CSRF token and credentials via interceptors.
+      api.post(`/upload/cancel/${sid}`).catch(() => {});
       uploadSessionIdRef.current = null;
     }
     if (uploadAbortRef.current) {

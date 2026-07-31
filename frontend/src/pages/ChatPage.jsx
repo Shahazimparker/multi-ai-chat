@@ -27,6 +27,14 @@ const ChatPage = () => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
+  // Stable identity matters: ModelSelector lists this in the dep array of the
+  // effect that fetches /chat/models, so an inline arrow here would refetch the
+  // model list on every ChatPage render (including every streamed token).
+  const handleModelChange = useCallback((nextModel) => {
+    session.setModel(nextModel);
+    session.setProviderModelId(null);
+  }, [session.setModel, session.setProviderModelId]);
+
   const handleScroll = useCallback(() => {
     const el = messagesAreaRef.current;
     if (!el) return;
@@ -80,10 +88,7 @@ const ChatPage = () => {
 
           <ModelSelector
             selectedModel={session.model}
-            onModelChange={(nextModel) => {
-              session.setModel(nextModel);
-              session.setProviderModelId(null);
-            }}
+            onModelChange={handleModelChange}
             onUnifiedProviderSelect={session.setUnifiedProvider}
           />
 

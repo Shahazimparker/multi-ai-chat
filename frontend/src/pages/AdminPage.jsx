@@ -12,6 +12,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import api from '../config/api';
 import UserModal from '../components/admin/UserModal';
+import { ToastStack, useToasts } from '../components/layout/Toast';
 import './AdminPage.css';
 
 const COLORS = ['#7c3aed', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#a78bfa'];
@@ -27,6 +28,7 @@ const AdminPage = () => {
   const [saving, setSaving] = useState(false);
   const [modal, setModal] = useState({ open: false, user: null }); // create/edit modal
   const [apiStatus, setApiStatus] = useState(null);
+  const { toasts, showToast, dismissToast } = useToasts();
 
   // Load users
   useEffect(() => {
@@ -41,20 +43,20 @@ const AdminPage = () => {
       const res = await api.get('/admin/api-status');
       setApiStatus(res.data);
     }
-    catch { alert('Failed to load API status'); }
+    catch { showToast('Failed to load API status'); }
     finally { setLoading(false); }
   };
   const loadUsers = async () => {
     setLoading(true);
     try { const res = await api.get('/admin/users'); setUsers(res.data.users || []); }
-    catch { alert('Failed to load users'); }
+    catch { showToast('Failed to load users'); }
     finally { setLoading(false); }
   };
 
   const loadAnalytics = async () => {
     setLoading(true);
     try { const res = await api.get('/admin/analytics'); setAnalytics(res.data); }
-    catch { alert('Failed to load analytics'); }
+    catch { showToast('Failed to load analytics'); }
     finally { setLoading(false); }
   };
 
@@ -70,7 +72,7 @@ const AdminPage = () => {
       setModal({ open: false, user: null });
       loadUsers();
     } catch (err) {
-      alert(err.response?.data?.error || 'Save failed');
+      showToast(err.response?.data?.error || 'Save failed');
     } finally {
       setSaving(false);
     }
@@ -79,24 +81,24 @@ const AdminPage = () => {
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this user? All their data will be lost.')) return;
     try { await api.delete(`/admin/users/${id}`); loadUsers(); }
-    catch (err) { alert(err.response?.data?.error || 'Delete failed'); }
+    catch (err) { showToast(err.response?.data?.error || 'Delete failed'); }
   };
 
   const handleResetTokens = async (id) => {
     if (!window.confirm('Reset token usage to 0?')) return;
     try { await api.post(`/admin/users/${id}/reset-tokens`); loadUsers(); }
-    catch { alert('Reset failed'); }
+    catch { showToast('Reset failed'); }
   };
 
   const handleUnlockLogin = async (id) => {
     try { await api.post(`/admin/users/${id}/unlock-login`); loadUsers(); }
-    catch (err) { alert(err.response?.data?.error || 'Unlock failed'); }
+    catch (err) { showToast(err.response?.data?.error || 'Unlock failed'); }
   };
 
   const handleLockLogin = async (id) => {
     if (!window.confirm('Lock this user\'s login (simulate 5 failed attempts)?')) return;
     try { await api.post(`/admin/users/${id}/lock-login`); loadUsers(); }
-    catch (err) { alert(err.response?.data?.error || 'Lock failed'); }
+    catch (err) { showToast(err.response?.data?.error || 'Lock failed'); }
   };
 
   // Build pie data for model usage
@@ -322,6 +324,8 @@ const AdminPage = () => {
           saving={saving}
         />
       )}
+
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 };

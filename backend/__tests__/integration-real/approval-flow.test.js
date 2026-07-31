@@ -169,7 +169,7 @@ describe('2 — Model Listing', () => {
     expect(data.models.length).toBeGreaterThan(0);
     const modelIds = data.models.map((m) => m.id);
     expect(modelIds).toContain('gemini-flash');
-    expect(modelIds).toContain('groq-llama');
+    expect(modelIds).toContain('groq-gpt-oss-120b');
     console.log(`[Models] ${data.models.length} models available`);
   });
 });

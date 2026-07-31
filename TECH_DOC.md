@@ -50,9 +50,26 @@ This document is the technical reference for the current codebase state.
 - Human approvals are deploy-safe: `backend/services/humanApproval.service.js` supports persistent Supabase-backed requests and non-blocking serverless mode; `backend/routes/approval.routes.js` exposes admin approve/reject APIs; schema lives in `database/migration_add_human_approvals.sql`.
 - Providers with streaming support: OpenAI, Groq, Claude, Gemini, Mistral, Cohere, DeepSeek, OpenRouter, Together, AnyAPI — all 10 providers.
 
+### Pipeline Feature Flags
+
+`CANONICAL_CHAT_PIPELINE_FLAGS` (frozen object in `chatPipeline.service.js`) controls which optional features are active on the canonical `/stream` and `/message` routes:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `exactCacheEnabled` | `false` | Exact SHA-256 cache lookup disabled for live chat (avoids stale answers) |
+| `identityCheckEnabled` | `true` | Identity/persona questions short-circuit before AI dispatch |
+| `perQueryLimitEnabled` | `true` | Per-query token limit enforced from `users.per_query_limit` |
+| `dynamicBudgetEnabled` | `true` | Token budget allocated dynamically based on query complexity |
+| `memoryEnabled` | `true` | Cross-chat RAG memory (`embedAndStoreMessage` / `searchMemory`) active |
+| `cacheResponse` | `true` | Successful responses written to semantic cache |
+| `postSaveEmbedding` | `true` | Message embedded into `message_embeddings` after DB save |
+| `enableOrchestratorBrain` | `true` | Custom AI framework runtime initialised before provider streaming |
+
+To override any flag for a specific route, spread `CANONICAL_CHAT_PIPELINE_FLAGS` and overwrite the target key when calling `runChatPipeline()`.
+
 ### Core services (Existing)
 
-- Chat orchestration: `backend/services/chat.service.js`
+- Chat orchestration: `backend/services/chatPipeline.service.js`
 - Context and memory: `backend/services/context.service.js`, `backend/services/memory.service.js`, `backend/services/summary.service.js`
 - `memory.service.js` now exports `embedAndStoreMessage` and `searchMemory` for RAG-based cross-chat memory (accurate mode only)
   - Cross-chat memory persisted in `message_embeddings` table; searched via `search_memory` Supabase RPC
@@ -68,8 +85,9 @@ This document is the technical reference for the current codebase state.
 - Similarity and compression: `backend/services/similarity.service.js`, `backend/services/compress.service.js`
 - Tool execution helpers: `backend/services/tools/webSearch.service.js`, `backend/services/tools/codeExecute.service.js`
   - `webSearch.service.js` uses primary fallback in this order: `Exa -> Firecrawl -> Tavily -> SerpAPI`, then always aggregates LangSearch.
+  - `codeExecute.service.js` is **disabled by default**. Set `ENABLE_EXECUTE_CODE=true` in `.env` to activate the `[EXECUTE_CODE]` tool tag at runtime.
 - URL reading helpers:
-  - `backend/services/tools/urlReader.service.js` — extracts/validates URLs from user query and injects URL context
+  - `backend/services/tools/urlReader.service.js` — extracts/validates URLs from user query and injects URL context. Blocks private/internal hosts (loopback, RFC-1918 ranges, `.local`, `.internal`) and non-HTTP/S protocols to prevent SSRF.
   - `backend/services/tools/githubReader.service.js` — GitHub repo deep-read (tree + raw file content with limits)
   - `backend/services/tools/siteReaders.service.js` — site-specific readers for GitLab, Bitbucket, StackOverflow, Notion, Confluence, arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, API docs, Gov/Legal
   - Runtime order: site-specific reader first, then generic provider fallback (Firecrawl/Tavily/Exa)
@@ -98,6 +116,9 @@ This document is the technical reference for the current codebase state.
 
 **Memory & State:**
 - `memory.service.js` — 6 in-process memory strategies (Buffer, Summary, Entity, TokenBuffer, Window, Combined) + `embedAndStoreMessage` + `searchMemory` with hybrid reranking (cosine+BM25+Jaccard+RRF) for cross-chat RAG memory
+  - Hybrid reranking weights: **55% cosine + 30% BM25 + 15% Jaccard** with +0.1 numeric boost via RRF fusion
+  - Thresholds: `RAG_HYBRID_THRESHOLD = 0.52`, `MEMORY_HYBRID_THRESHOLD = 0.56`
+  - External LangSearch rerank API is intentionally unwired from runtime (free-tier reliability constraints)
 - `loopManagement.service.js` — 4 loop patterns (RefinementLoop, QueryLoop, ValidationLoop, PipelineLoop)
 
 **Observability & Control:**
@@ -107,7 +128,7 @@ This document is the technical reference for the current codebase state.
 - `flowVisibility.service.js` — Variable tracking, state diffing, flow analysis and visualization
 
 **Central Export:**
-- `chat.service.js` — Centralized export point for all 16+ AI framework services
+- `index.js` — Centralized export point for all 16+ AI framework services. Exposes each service as a lazily-loaded namespace (`chain`, `agent`, `graphWorkflow`, …), not as flat class exports.
 
 ### AI provider layer
 
@@ -175,6 +196,56 @@ This document is the technical reference for the current codebase state.
 - Layout/theme/token bar: `frontend/src/components/layout/*`
 - Admin modal: `frontend/src/components/admin/UserModal.jsx`
 
+## Inline Approval Flow (GENERATE_* Tools)
+
+All 10 file-generation tools (`GENERATE_PPT`, `GENERATE_IMAGE`, `GENERATE_PDF`, `GENERATE_EXCEL`, `GENERATE_DOCX`, `GENERATE_CSV`, `GENERATE_CHART`, `GENERATE_HTML`, `GENERATE_JSON`, `GENERATE_MD`) are gated by an explicit user approval step before execution. The full sequence:
+
+1. **Intent detection** — `chatPipeline.service.js` detects a generation intent via `ARTIFACT_INTENTS`. If the request lacks sufficient detail, structured clarifying questions are sent to the frontend via `ClarificationPrompt.jsx` before proceeding.
+2. **Approval request created** — `toolProcessor.service.js` calls `approvalManager` to persist a record in the `human_approvals` table and emits an `approval_request` SSE event.
+3. **Frontend prompt** — `ApprovalPrompt.jsx` shows three options: **Yes, generate** / **Other** (custom instructions) / **No**.
+4. **Polling** — backend polls `approvalManager` every 500 ms for up to 2 minutes (`APPROVAL_TIMEOUT_MS = 120000`). Polling stops immediately if the stream is aborted.
+5. **Response handling:**
+   - **Yes** → `POST /api/approval/:id/respond { response: true }` → `waitForUserApproval` returns `{ approved: true, instructions: '' }` → generation proceeds.
+   - **No** → `POST /api/approval/:id/respond { response: false }` → returns cancellation message to chat.
+   - **Other** → user types instructions (max 500 chars) → `POST /api/approval/:id/respond { response: true, reason: "<instructions>" }` → backend detects non-default reason → returns `[USER MODIFICATION REQUEST]` to AI → AI revises plan → emits a fresh `approval_request` SSE with updated `summary` → cycle repeats until Yes or No.
+6. **Timeout** → request auto-rejected after 2 minutes if no response.
+
+**`waitForUserApproval` return shape:** `{ approved: boolean, reason: string, instructions: string }` — `instructions` is non-empty only when the user submitted modifications via the Other path.
+
+**`buildSummary(toolName, context)` — per-tool human-readable plan string sent in `approval_request`:**
+
+| Tool | Summary fields |
+|---|---|
+| `GENERATE_IMAGE` | `Prompt: "..."` |
+| `GENERATE_PPT` | `Title: "..."`, `Theme: ...`, `Slides (N):` numbered titles (first 8, then `… and N more`) |
+| `GENERATE_PDF` / `GENERATE_DOCX` | `Title: "..."`, `Sections (N):` headings (first 6, then `… and N more`) |
+| `GENERATE_EXCEL` | `Title: "..."`, `Sheets (N): Sheet1, Sheet2, …` |
+| `GENERATE_CSV` | `Columns (N): col1, col2`, `Rows: N` |
+| `GENERATE_CHART` | `Type: bar`, `Title: "..."`, `Data points: a, b, c` |
+| `GENERATE_HTML` / `GENERATE_JSON` / `GENERATE_MD` | Title and type |
+
+### SSE Event Types (complete)
+
+| Event type | When emitted | Key fields |
+|---|---|---|
+| `connected` | Immediately on stream open | `status: "connected"` |
+| `framework_status` | During OrchestratorBrain pre-stream phase | `message`, `step` |
+| `approval_request` | Before any GENERATE_* tool executes | `approvalId`, `toolType`, `toolLabel`, `message`, `summary`, `options: ['yes','other','no']` |
+| `tool_status` / `status` | During tool execution (web search, DB query, generation) | `type`, `tool`, `status`, `message` |
+| `chunk` | Streamed provider tokens | `type: "chunk"`, `text` |
+| `done` | Stream complete | `tokensUsed`, `topicId`, `assistantMessageId`, `model`, `cacheHit`, `generatedFiles`, `orchestratorBrain`, `responseTime` |
+| `error` | Pipeline or provider error | `type: "error"`, `error`, `errorType`, `suggestedModels`, `recommendedModelId`, `failedModelId` |
+
+> A second `approval_request` event arrives on the same stream when the "Other" modification path is used — after the AI revises its plan.
+
+### Artifact Intent Clarification
+
+`ARTIFACT_INTENTS` in `chatPipeline.service.js` defines per-intent detection and clarification questions. When `hasEnoughDetails(text)` returns false, the pipeline emits a clarification form instead of proceeding to generation.
+
+**PPT clarification fields:** Topic (text), Title (text, optional), Slides (select: 4/6/8, default 6), Theme (select, default `modern_corporate`), Audience (select: executives/team members/clients).
+
+**20 available PPT themes:** `modern_corporate`, `graphite_gold`, `arctic_blue`, `midnight_plum`, `teal_glass`, `startup_bold`, `forest_night`, `slate_coral`, `golden_age`, `cobalt_bold`, `emerald_glass`, `violet_tech`, `ocean_depth`, `ruby_noir`, `sandstone_editorial`, `rose_creative`, `charcoal_lime`, `clean_minimal`, `sunset_warm`, `mono_editorial`.
+
 ## Artifact Lifecycle
 
 AI-generated files (code blocks the AI writes) and user-uploaded files both land in `uploaded_files_rag`. They differ in one critical way:
@@ -201,9 +272,41 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
   - `database/migration_add_message_embeddings.sql`
   - `database/migration_add_locked_until.sql`
   - `database/migration_delete_topic_cascade.sql`
-  - ERP sample/schema assets under `database/`
 
 > **Note:** `schema.sql` and `schema_export.sql` differ on `uploaded_files_rag.topic_id`: the local schema says `ON DELETE SET NULL`; the actual deployed constraint is `ON DELETE CASCADE`. Always check `schema_export.sql` for live FK behavior.
+
+### `message_embeddings` table (added by `migration_add_message_embeddings.sql`)
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `user_id` | `UUID` | FK → `users(id) ON DELETE CASCADE` |
+| `topic_id` | `UUID` | FK → `topics(id) ON DELETE CASCADE` |
+| `message_id` | `UUID` | FK → `messages(id) ON DELETE CASCADE`; upsert conflict key |
+| `role` | `TEXT` | `'user'` or `'assistant'` |
+| `content` | `TEXT` | Raw message text |
+| `embedding` | `vector(1536)` | HNSW index (`vector_cosine_ops`) |
+| `created_at` | `TIMESTAMPTZ` | |
+
+A `AFTER DELETE` trigger on `messages` (`trg_cleanup_message_embedding`) auto-deletes the corresponding embedding row when a message is deleted. The `search_memory` RPC accepts `(query_embedding, p_user_id, p_exclude_topic, match_threshold, match_count)` and excludes the current topic from results. **Prerequisite:** run this migration before using `accurate` memory mode.
+
+### `human_approvals` table (added by `migration_add_human_approvals.sql`)
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `TEXT` | PK (string ID generated by service) |
+| `type` | `TEXT` | `'approval'` \| `'input'` \| `'selection'` \| `'feedback'` |
+| `title` / `description` | `TEXT` | Human-readable prompt |
+| `context` | `JSONB` | Execution state snapshot |
+| `options` | `JSONB` | Available choices for selection type |
+| `status` | `TEXT` | `pending` \| `approved` \| `rejected` \| `expired` |
+| `response` | `JSONB` | User's response value |
+| `reason` | `TEXT` | Approval reason or user instructions |
+| `approver` | `TEXT` | User email or `'system'` |
+| `required_by` | `TEXT` | Node/step that created the request |
+| `expires_at` / `approved_at` | `TIMESTAMPTZ` | |
+
+Index on `(status, created_at DESC)` for efficient pending-approval queries.
 
 ## Bug Fixes and Improvements Applied
 
@@ -239,7 +342,7 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
 ### Security Fixes
 | File | Fix |
 |---|---|
-| `chat.service.js` | PII leak: web search query content removed from logs; only query length logged |
+| `toolProcessor.service.js` | PII leak: web search query content removed from logs; only query length logged |
 | `server.js` | CORS bypass: `startsWith` replaced with exact `includes` match to prevent subdomain spoofing |
 | `sanitize.js` | Whitespace collapse removed: newlines/indentation preserved for code and markdown in chat messages |
 | `server.js` + `csrf.js` | CSRF middleware enabled globally for mutating authenticated requests; private-network origin bypass removed |
@@ -260,41 +363,141 @@ AI-generated files (code blocks the AI writes) and user-uploaded files both land
 
 ## Environment Variables
 
-### Backend minimum
+### Backend — required
 
 - `JWT_SECRET`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_KEY`
 - `FRONTEND_URL`
 
-### Backend optional/common
+### Backend — optional
 
-- `SENTRY_DSN`
-- `ANONYMOUS_TOKEN_LIMIT` — token cap for anonymous users (default: 10000)
-- Provider API keys used by configured or optional provider modules
-- Web search provider keys: `EXA_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY`, `SERPAPI_API_KEY`, `LANGSEARCH_API_KEY`
-- Web search optional tuning: `WEB_SEARCH_TIMEOUT_MS`, `WEB_SEARCH_MAX_RESULTS`, `LANGSEARCH_FRESHNESS`, `LANGSEARCH_SUMMARY`
-- URL deep-read optional tuning:
-  - `GITHUB_TOKEN`
-  - `GITHUB_READER_MAX_FILES`, `GITHUB_READER_MAX_FILE_BYTES`, `GITHUB_READER_MAX_TOTAL_CHARS`
-  - `SITE_READER_MAX_FILES`, `SITE_READER_MAX_FILE_BYTES`, `SITE_READER_MAX_TOTAL_CHARS`
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `5000` | HTTP listen port |
+| `NODE_ENV` | `development` | Enables/disables dev logging |
+| `SENTRY_DSN` | — | Backend error tracking |
+| `ANONYMOUS_TOKEN_LIMIT` | `10000` | Token cap for unauthenticated requests |
+| `ENABLE_EXECUTE_CODE` | `false` | Enable `[EXECUTE_CODE]` tool tag at runtime |
+| **AI provider keys** | | |
+| `GEMINI_API_KEY` | — | Google Gemini (also used as summarization fallback) |
+| `GROQ_API_KEY` | — | Groq LLaMA models |
+| `MISTRAL_API_KEY` | — | Mistral AI models |
+| `COHERE_API_KEY` | — | Cohere models |
+| `OPENAI_API_KEY` | — | OpenAI models |
+| `ANTHROPIC_API_KEY` | — | Claude models |
+| `DEEPSEEK_API_KEY` | — | DeepSeek models |
+| `OPENROUTER_API_KEY` | — | OpenRouter (live model catalog) |
+| `TOGETHER_API_KEY` | — | Together AI (live model catalog) |
+| `ANYAPI_API_KEY` | — | Generic OpenAI-compatible endpoint |
+| **Dedicated summarization keys** (fall back to primary key if absent) | | |
+| `GEMINI_SUMMARY_API_KEY` | — | Dedicated key for history summarization via Gemini Flash |
+| `MISTRAL_SUMMARY_API_KEY` | — | Dedicated key for summarization via Mistral |
+| `CEREBRAS_SUMMARY_API_KEY` | — | Summarization fallback via Cerebras Llama 3.1-8b |
+| **Web search** | | |
+| `EXA_API_KEY` | — | Exa search provider |
+| `TAVILY_API_KEY` | — | Tavily search provider |
+| `FIRECRAWL_API_KEY` | — | Firecrawl provider |
+| `SERPAPI_API_KEY` | — | SerpAPI provider |
+| `LANGSEARCH_API_KEY` | — | LangSearch aggregation |
+| `WEB_SEARCH_TIMEOUT_MS` | `8000` | Per-provider timeout |
+| `WEB_SEARCH_MAX_RESULTS` | `8` | Max results returned |
+| `LANGSEARCH_FRESHNESS` | `noLimit` | LangSearch freshness filter |
+| `LANGSEARCH_SUMMARY` | `true` | Include LangSearch summaries |
+| **URL deep-read tuning** | | |
+| `GITHUB_TOKEN` | — | Raises GitHub API rate limits for repo deep-read |
+| `GITHUB_READER_MAX_FILES` | — | Max files fetched per GitHub repo |
+| `GITHUB_READER_MAX_FILE_BYTES` | — | Max bytes per file in GitHub deep-read |
+| `GITHUB_READER_MAX_TOTAL_CHARS` | — | Total char cap across all files |
+| `SITE_READER_MAX_FILES` | — | Max files for site-specific readers |
+| `SITE_READER_MAX_FILE_BYTES` | — | Max bytes per file |
+| `SITE_READER_MAX_TOTAL_CHARS` | — | Total char cap |
+| **Chat runtime tuning** | | |
+| `CHAT_MAX_DB_QUERIES` | `12` | Max DB tool-call rounds per request |
+| `CHAT_MAX_CONSECUTIVE_ZERO_RESULTS` | `4` | Bail-out after N consecutive empty tool results |
+| `CHAT_TOOL_RESERVE_RATIO` | `0.15` | Fraction of token budget reserved for tool outputs |
+| `CHAT_SEMANTIC_CACHE_THRESHOLD` | `0.92` | Cosine similarity threshold for semantic cache hit |
 
 ### Frontend
 
-- `REACT_APP_API_URL`
-- `REACT_APP_SENTRY_DSN` (optional)
+- `REACT_APP_API_URL` — backend base URL (e.g. `https://multi-ai-chat-backend.vercel.app/api`)
+- `REACT_APP_SENTRY_DSN` (optional) — frontend Sentry project DSN
 
-## Testing Reality
+## Testing
 
-- Backend scripts exist in `backend/package.json`: `test`, `test:coverage`, `test:real`, `typecheck`, and `lint`
-- Frontend test command exists (`react-scripts test`)
-- Real integration tests include live web search coverage in `backend/__tests__/integration-real/webSearch.test.js`
+### Commands
+
+```bash
+cd backend
+npm test                # 243 unit tests (no real APIs)
+npm run test:watch      # watch mode
+npm run test:coverage   # with coverage report
+npm run test:real       # 25 real integration tests (requires live .env + backend running)
+npm run lint            # ESLint
+npm run typecheck       # TypeScript (no emit)
+```
+
+> **Warning:** `test:real` consumes actual API tokens and may incur cost. Real-test failures can occur from provider quota/rate limits (e.g. Gemini 429 on free tier) even when application wiring is correct.
+
+### Unit test inventory (243 tests, no real APIs)
+
+| File | Tests | Coverage |
+|---|---|---|
+| `chatCleanup.test.js` | 39 | `stripToolTags` (18 patterns), `isPlaceholderOnly`, `classifyError` (8 error types) |
+| `tokenBudget.test.js` | 38 | `estimateTokens`, `trimTextByTokens`, `fitMessagesToBudget`, `createPromptBudget`, `createDynamicPromptBudget`, `calculateComplexityScore`, `smartTrimContextBlock` |
+| `toolProcessor-matchers.test.js` | 36 | All 14 tool tag regex matchers: SEARCH_FILES, GET_FILE, WEB_SEARCH, EXECUTE_CODE, GENERATE_IMAGE, GENERATE_PPT, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD |
+| `pptGeneration.test.js` | 23 | All 15 slide layouts, all 12 themes, single-item timeline, statistics_strip label parsing, faq 5-item cap, comparison_split headers, unknown theme/layout fallback |
+| `ragHybrid.test.js` | 10 | `rerankDocsHybrid` — cosine+BM25+Jaccard+RRF, numeric critical miss, lexical gate, topK |
+| `memoryHybrid.test.js` | 11 | `rerankMemoryRowsHybrid` — same hybrid scoring for cross-chat memory, role preservation |
+| `sanitize.test.js` | 11 | HTML tag stripping, entity decoding, newline/whitespace preservation, XSS vectors, `sanitizeBody` middleware |
+| `compress.test.js` | 11 | All 7 filler patterns, short text skip, >50% compression guard |
+| `chatRuntime.config.test.js` | 13 | All 4 config values: defaults, env parsing, min/max clamping, non-numeric fallback |
+| `similarity.test.js` | 8 | `jaccardSimilarity` (stop words, case, punctuation) |
+| `tokenCheck.test.js` | 5 | Anonymous cap (10000), quota enforcement, 429 on exhaustion, `tokenRemaining` |
+| `tokenAccounting.test.js` | 6 | API-reported vs fallback billing, zero inputs, optional fields |
+| `imageGeneration.test.js` | 5 | Recraft, FLUX.2 model list validation |
+| `retrieverHybrid.test.js` | 2 | `HybridRetriever` vector+BM25+Jaccard+RRF fusion, empty-result handling |
+| `orchestratorBrain.test.js` | 2 | Module load, degraded result on null config |
+| `toolProcessor-logic.test.js` | 5 | `buildFileContext` |
+| `humanApproval.test.js` | — | Approval persist, serverless non-blocking mode, cross-instance approval |
+| `toolLoop.status.test.js` | — | Tool loop status event emission |
+| `chatPipeline.resultShape.test.js` | — | Pipeline return object contract |
+| `urlReader.service.test.js` | — | URL extraction, SSRF guard, private host blocking |
+| `webSearch.service.test.js` | — | Provider fallback chain |
+| `siteReaders.service.test.js` | — | Domain-specific reader dispatch |
+| `githubReader.service.test.js` | — | GitHub URL parsing and repo read |
+
+### Integration tests (real backends — `test:real`)
+
+| File | Tests | Coverage |
+|---|---|---|
+| `supabase.test.js` | 7 | Connection, table queries, RPC calls, health endpoint |
+| `ai-providers.test.js` | 10 | Gemini Flash/Pro, Groq, Mistral, DeepSeek V4, OpenAI, OpenRouter |
+| `chat-api.test.js` | 4 | `GET /health`, `GET /models`, anonymous `POST /stream`, SSE streaming |
+| `sanitize.test.js` | 11 | `sanitizeInput` + `sanitizeBody` against real middleware |
+| `toolLoop.test.js` | 2 | Real Gemini single-round dispatch, abort propagation |
+| `webSearch.test.js` | 1 | Real provider-backed search, normalized result shape |
+
+For authenticated real tests set `REAL_TEST_USERNAME` (or `TEST_USERNAME`) and `REAL_TEST_PASSWORD` (or `TEST_PASSWORD`) in `.env`.
+
+## Artifact Cleanup
+
+AI-generated files are stored in `uploaded_files_rag` with the `topic_id` returned by the backend in the SSE `done` event. Deleting a chat triggers explicit cleanup in `backend/controllers/history.controller.js` (deletes from `uploaded_files_rag` and `uploaded_files` by `topic_id`) before calling the `delete_topic_cascade` RPC — so artifacts are removed even if the SQL function is not deployed. The sidebar re-fetches the artifact list after deletion to keep the UI in sync.
+
+**One-time cleanup for pre-fix orphaned generated files** — run in Supabase SQL Editor if old generated files still appear in the sidebar after deletion:
+
+```sql
+DELETE FROM uploaded_files_rag
+WHERE topic_id IS NULL
+  AND file_type IN ('generated','html','js','jsx','ts','tsx','css','json','xml','md','svg','py','sql','sh');
+```
 
 ## Related Docs
 
 - Implementation guide: `GUIDE.md`
 - Testing guide: `TESTING.md`
 - Management summary: `MANAGEMENT_PRESENTATION.md`
+
 ## Artifact Intent Model Guard
 
 - For artifact intents (`artifact_ppt`, `artifact_other`), orchestrator can require model switch via `errorType: model_switch_required`.

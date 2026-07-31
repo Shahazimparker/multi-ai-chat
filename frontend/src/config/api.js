@@ -1,6 +1,9 @@
 import axios from 'axios';
 
-const API_BASE_URL = process.env.NODE_ENV === 'production'
+// Single source of truth for the backend origin. Exported because a few call
+// sites must use native XHR/fetch rather than this axios instance — upload
+// progress events and SSE streaming — and they still need the same base URL.
+export const API_BASE_URL = process.env.NODE_ENV === 'production'
   ? 'https://multi-ai-chat-backend.vercel.app/api'
   : 'http://localhost:5000/api';
 

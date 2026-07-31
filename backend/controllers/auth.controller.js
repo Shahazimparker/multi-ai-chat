@@ -12,9 +12,10 @@ const AUTH_COOKIE_NAME = 'auth_token';
 const parseRememberMe = (value) => value === true || value === 'true' || value === 1 || value === '1';
 
 // ── Per-account failed-attempt tracking (complements IP rate limiter) ──
-const failMap = new Map();             // username → { count, lockedUntil }
+const failMap = new Map();             // username → { count, lockedUntil, lastFail }
 const MAX_FAILS = 5;                   // lock after 5 failed attempts
 const LOCK_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+const ATTEMPT_WINDOW_MS = 15 * 60 * 1000; // failures older than this stop counting
 
 /**
  * Check if account is locked — checks both in-memory failMap AND DB locked_until
@@ -61,10 +62,19 @@ const recordFailedAttempt = async (username) => {
   const key = username.toLowerCase();
 
   // In-memory tracking
-  const entry = failMap.get(key) || { count: 0, lockedUntil: null };
+  const now = Date.now();
+  const entry = failMap.get(key) || { count: 0, lockedUntil: null, lastFail: 0 };
+
+  // Sliding window: attempts older than ATTEMPT_WINDOW_MS no longer count toward
+  // the lock, so a few failures spread over months can't accumulate into one.
+  if (!entry.lockedUntil && now - entry.lastFail > ATTEMPT_WINDOW_MS) {
+    entry.count = 0;
+  }
+
   entry.count++;
+  entry.lastFail = now;
   if (entry.count >= MAX_FAILS) {
-    entry.lockedUntil = Date.now() + LOCK_DURATION_MS;
+    entry.lockedUntil = now + LOCK_DURATION_MS;
   }
   failMap.set(key, entry);
 
@@ -98,11 +108,16 @@ const clearFailedAttempts = async (username) => {
   }
 };
 
-// Periodic cleanup of stale entries (runs hourly)
+// Periodic cleanup of stale entries (runs hourly).
+// Evicts both expired locks and counting-only entries that never reached MAX_FAILS —
+// without the second case, every username that ever failed a login would be retained
+// for the lifetime of the process, which is an unbounded, attacker-controlled map.
 setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of failMap) {
-    if (entry.lockedUntil && now >= entry.lockedUntil) failMap.delete(key);
+    const lockExpired = entry.lockedUntil && now >= entry.lockedUntil;
+    const countStale = !entry.lockedUntil && now - entry.lastFail > ATTEMPT_WINDOW_MS;
+    if (lockExpired || countStale) failMap.delete(key);
   }
 }, 60 * 60 * 1000).unref();
 

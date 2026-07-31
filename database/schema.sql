@@ -27,16 +27,10 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ─────────────────────────────────────────────
--- TABLE: sessions (JWT session tracking)
--- ─────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS sessions (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
-  token_hash  TEXT NOT NULL,             -- SHA-256 of JWT token
-  expires_at  TIMESTAMPTZ NOT NULL,
-  created_at  TIMESTAMPTZ DEFAULT NOW()
-);
+-- NOTE: a `sessions` table for JWT tracking used to live here. It was never
+-- read or written by the application, so it was dropped — see
+-- database/migration_drop_sessions.sql. JWTs are stateless; access is revoked
+-- via users.is_active / users.expires_at, which requireAuth checks per request.
 
 -- ─────────────────────────────────────────────
 -- TABLE: topics (chat topics / conversations)
@@ -346,12 +340,39 @@ CREATE TRIGGER topics_updated_at
 -- ─────────────────────────────────────────────
 -- ROW LEVEL SECURITY (RLS)
 -- ─────────────────────────────────────────────
-ALTER TABLE users    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE topics   ENABLE ROW LEVEL SECURITY;
-ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+-- The backend connects with the service_role key, which bypasses RLS entirely,
+-- so nothing here affects server-side queries. RLS exists to deny *direct*
+-- PostgREST access from the `anon` and `authenticated` roles, which hold
+-- GRANT ALL on these tables. No policies are defined on purpose: RLS enabled
+-- with zero policies means those roles can read and write nothing.
+--
+-- Without this, anyone holding the (publishable) anon key could reach user
+-- content — documents, embeddings, memories — straight over the REST API,
+-- bypassing Express auth, token budgets, and rate limits.
+ALTER TABLE users              ENABLE ROW LEVEL SECURITY;
+ALTER TABLE topics             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE messages           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE query_cache        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE query_analytics    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rag_documents      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE uploaded_files     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rag_chunks         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE uploaded_files_rag ENABLE ROW LEVEL SECURITY;
 
--- NOTE: Backend uses service_role key which bypasses RLS.
--- These policies protect direct client access.
+-- These tables exist in the deployed database but are not created by this
+-- file (they appear only in schema_export.sql). Guarded so a fresh provision
+-- from schema.sql alone still runs cleanly.
+DO $$
+DECLARE
+  t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['chat_jobs', 'code_files', 'file_rag', 'user_memories']
+  LOOP
+    IF to_regclass('public.' || quote_ident(t)) IS NOT NULL THEN
+      EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+    END IF;
+  END LOOP;
+END $$;
 
 -- ─────────────────────────────────────────────
 -- SEED: Default admin user (change password after deploy!)
@@ -429,11 +450,6 @@ CREATE INDEX IF NOT EXISTS idx_uploaded_files_rag_user_id ON uploaded_files_rag(
 CREATE INDEX IF NOT EXISTS idx_uploaded_files_rag_topic_id ON uploaded_files_rag(topic_id);
 CREATE INDEX IF NOT EXISTS idx_uploaded_files_rag_hash ON uploaded_files_rag(file_hash);
 CREATE INDEX IF NOT EXISTS idx_uploaded_files_rag_created_at ON uploaded_files_rag(created_at DESC);
-
--- ── Sessions table indexes ──────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
 
 -- ── Vector similarity indexes (HNSW for fast similarity search) ──
 CREATE INDEX IF NOT EXISTS idx_rag_docs_embedding ON rag_documents USING hnsw (embedding vector_cosine_ops);

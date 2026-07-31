@@ -10,7 +10,6 @@ const runToolLoop = async ({
   promptBudget,
   maxToolRounds,
   loggerPrefix = 'Tool',
-  getNudgeSourceText = () => '',
   onBeforeDispatch = null,
   onAfterDispatch = null,
   onAfterToolHandled = null,

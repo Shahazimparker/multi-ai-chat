@@ -426,24 +426,10 @@ const runChatPipeline = async (opts) => {
         })
       : null;
 
-    // Orchestrator-selected model handling: note the recommended model for downstream use.
-    const routedModelId = orchestratorBrain?.routingDecision?.recommendedModelId;
-    const routedIntent = orchestratorBrain?.routingDecision?.intent;
-    if (false) {
-      // model-switch gate removed — all models support artifact generation via the text-tag path
-      return makePipelineResult({
-        err: new Error(`Model switch required for artifact intent: ${routedModelId}`),
-        errorType: 'model_switch_required',
-        userMessage: 'This request needs a stronger model for artifact generation. Please switch model and continue.',
-        suggestedModels: [routedModelId, 'deepseek-v4-pro', 'claude-sonnet'].filter((v, idx, arr) => arr.indexOf(v) === idx && MODELS[v]),
-        recommendedModelId: routedModelId,
-        orchestratorBrain,
-        estimatedInputTokens,
-        modelConfig,
-        effectiveModelConfig,
-        resolvedTopicId,
-      });
-    }
+    // NOTE: a model-switch gate used to sit here, returning `model_switch_required`
+    // when the orchestrator routed an artifact intent to a weaker model. It was
+    // retired because every model now generates artifacts via the text-tag path,
+    // so `orchestratorBrain.routingDecision` is advisory only and no longer blocks.
 
     // ── 2. Prompt budget ──────────────────────────────────────
     let promptBudget = createPromptBudget(modelConfig);
@@ -762,7 +748,6 @@ ${page.text}`)
       promptBudget,
       maxToolRounds: MAX_TOOL_ROUNDS,
       loggerPrefix: 'ChatPipeline',
-      getNudgeSourceText: () => finalQuery,
       onStreamChunk,
     });
 

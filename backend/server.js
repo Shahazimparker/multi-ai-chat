@@ -71,7 +71,9 @@ app.use(sentryTracingHandler());
 
 // ── Security & logging middleware ──────────────────────────
 app.use(helmet());                            // sets secure HTTP headers
-app.use(morgan('dev'));                        // request logging
+// 'combined' (Apache-style) in production for parseable access logs; 'dev' is
+// colourised and concise but strips the fields log aggregators expect.
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(express.json({ limit: '10mb' }));     // parse JSON bodies (10MB for RAG docs)
 
 // ── CORS — MUST run before CSRF so error responses get CORS headers ──

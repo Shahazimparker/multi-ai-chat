@@ -11,7 +11,7 @@ const HAS_GEMINI   = !!process.env.GEMINI_API_KEY;
 const describeReal = (HAS_DEEPSEEK || HAS_GROQ || HAS_GEMINI) ? describe : describe.skip;
 
 // Prefer DeepSeek V4 Flash (paid, no free-tier quota cap) → Groq → Gemini Flash
-const REAL_MODEL_ID = HAS_DEEPSEEK ? 'deepseek-v4-flash' : HAS_GROQ ? 'groq-llama' : 'gemini-flash';
+const REAL_MODEL_ID = HAS_DEEPSEEK ? 'deepseek-v4-flash' : HAS_GROQ ? 'groq-gpt-oss-120b' : 'gemini-flash';
 
 describeReal('runToolLoop (real)', () => {
   const modelConfig = MODELS[REAL_MODEL_ID];

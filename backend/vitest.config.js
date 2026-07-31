@@ -7,6 +7,12 @@ module.exports = defineConfig({
     include: ['__tests__/**/*.test.js'],
     exclude: ['__tests__/integration-real/**'],
     setupFiles: ['./__tests__/setup.js'],
+    // Vitest's 5s default is too low here: tests that call vi.resetModules()
+    // re-import the AI SDK graph (openai + groq + anthropic + google), which
+    // alone costs ~1.6s cold in plain node and considerably more under
+    // vitest's transform. Document generation (pptx, pdf, xlsx) is also slow.
+    testTimeout: 30000,
+    hookTimeout: 30000,
     coverage: {
       provider: 'v8',
       include: [

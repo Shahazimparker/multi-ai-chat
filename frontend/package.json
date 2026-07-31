@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
-    "@sentry/react": "^8.40.0",
+    "@sentry/react": "^10.69.0",
     "@supabase/supabase-js": "^2.39.7",
     "axios": "^1.7.9",
     "lucide-react": "^0.383.0",

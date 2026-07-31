@@ -5,6 +5,7 @@ import api from '../../config/api';
 import './ModelSelector.css';
 
 const PROVIDER_META = {
+  deepseek: { label: 'DeepSeek', color: '#4d6bfe', emoji: 'D' },
   gemini: { label: 'Google Gemini', color: '#4285f4', emoji: 'G' },
   groq: { label: 'Groq', color: '#f97316', emoji: 'Q' },
   mistral: { label: 'Mistral AI', color: '#7c3aed', emoji: 'M' },
