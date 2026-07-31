@@ -159,8 +159,8 @@ Common optional values:
 
 ### Frontend
 
-- `REACT_APP_API_URL`
-- `REACT_APP_SENTRY_DSN`
+- `VITE_API_URL`
+- `VITE_SENTRY_DSN`
 
 ## Local Setup
 
@@ -183,41 +183,36 @@ Common optional values:
 ### Frontend
 
 1. Deploy `frontend/` to Vercel.
-2. Set `REACT_APP_API_URL` to the backend API URL.
-3. Set `REACT_APP_SENTRY_DSN` if Sentry is enabled.
+2. Set `VITE_API_URL` to the backend API URL.
+3. Set `VITE_SENTRY_DSN` if Sentry is enabled.
 4. Redeploy after env changes.
 
 ## Using the AI Framework Services
 
-All AI framework services are exported through `backend/services/index.js`. It
-exposes each service as a **lazily-loaded namespace**, not as flat class
-exports — destructure the namespace first, then the classes out of it:
+The `backend/services/index.js`, `services/ai/index.js` and `services/tools/index.js`
+barrel files were removed: nothing imported them, and they had drifted out of sync
+with the modules they described. Require each service directly — this is also what
+every runtime path already does.
 
 ```javascript
-const {
-  chain, agent, graphWorkflow,
-  memory, loopManagement,
-  humanApproval, executionTracer, flowVisibility,
-} = require('./services');
-
-// Chains, agents, graphs
-const { createChain, SimpleChain } = chain;
-const { Agent } = agent;
-const { Graph, GraphBuilder } = graphWorkflow;
+const { createChain, SimpleChain } = require('./services/chain.service');
+const { Agent, ToolRegistry, createTool } = require('./services/agent.service');
+const { Graph, GraphBuilder } = require('./services/graphWorkflow.service');
 
 // Memory and state
-const { BufferMemory, SummaryMemory, MemoryManager } = memory;
-
-// Looping and refinement
-const { RefinementLoop, QueryLoop, LoopExecutor } = loopManagement;
+const { BufferMemory, SummaryMemory, MemoryManager } = require('./services/memory.service');
 
 // Approval and control
-const { HumanApprovalHandler, ApprovalRequest } = humanApproval;
+const { HumanApprovalHandler, ApprovalRequest } = require('./services/humanApproval.service');
 
 // Tracing and visibility
-const { ExecutionTracer, TraceFormatter, TraceAnalyzer } = executionTracer;
-const { FlowAnalyzer, FlowVisualizer, FlowDebugger } = flowVisibility;
+const { ExecutionTracer, TraceFormatter, TraceAnalyzer } = require('./services/executionTracer.service');
+const { FlowAnalyzer, FlowVisualizer, FlowDebugger } = require('./services/flowVisibility.service');
 ```
+
+> `loopManagement.service.js` (RefinementLoop, QueryLoop, LoopExecutor) was also
+> removed — 573 lines with no importer. The loop that actually runs is
+> `toolLoop.service.js`.
 
 ### Example: Create a SmartAgent
 

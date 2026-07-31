@@ -63,8 +63,12 @@ const sendMessage = async (req, res) => {
 
     console.error('[Chat] Error:', result.err.message);
 
+    if (result.errorType === 'topic_not_found') {
+      return res.status(404).json({ error: result.userMessage, errorType: result.errorType });
+    }
+
     if (result.errorType === 'invalid_model' || result.errorType === 'query_too_long' || result.errorType === 'context_too_large') {
-      return res.status(400).json({ error: result.userMessage });
+      return res.status(400).json({ error: result.userMessage, errorType: result.errorType });
     }
 
     const { errorType, userMessage } = classifyError(result.err.message);

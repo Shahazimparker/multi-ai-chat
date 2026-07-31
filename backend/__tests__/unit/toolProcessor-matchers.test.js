@@ -4,7 +4,6 @@ const {
   findSearchFileMatch,
   findGetFileMatch,
   findWebSearchMatch,
-  findExecuteCodeMatch,
   findGenerateImageMatch,
   findGeneratePPTMatch,
   findGeneratePDFMatch,
@@ -64,21 +63,25 @@ describe('findWebSearchMatch', () => {
   });
 });
 
-describe('findExecuteCodeMatch', () => {
-  it('matches [EXECUTE_CODE]...[/EXECUTE_CODE]', () => {
-    const m = findExecuteCodeMatch('[EXECUTE_CODE]console.log("hello")[/EXECUTE_CODE]');
-    expect(m).not.toBeNull();
-    expect(m[1]).toBe('console.log("hello")');
+describe('removed EXECUTE_CODE tool', () => {
+  it('no longer exposes an EXECUTE_CODE matcher', () => {
+    // The code-execution tool was removed: it never ran (the worker crashed on
+    // construction), and its worker_threads design was not a real sandbox.
+    const toolProcessor = require('../../services/toolProcessor.service');
+    expect(toolProcessor.findExecuteCodeMatch).toBeUndefined();
   });
 
-  it('matches multiline code', () => {
-    const m = findExecuteCodeMatch('[EXECUTE_CODE]const x = 1;\nconsole.log(x);[/EXECUTE_CODE]');
-    expect(m).not.toBeNull();
-    expect(m[1]).toContain('const x = 1;');
-  });
-
-  it('returns null for non-matching text', () => {
-    expect(findExecuteCodeMatch('no code here')).toBeNull();
+  it('leaves an [EXECUTE_CODE] tag unhandled so it is stripped, not executed', async () => {
+    const { processToolCall } = require('../../services/toolProcessor.service');
+    const result = await processToolCall({
+      reply: '[EXECUTE_CODE]console.log("hello")[/EXECUTE_CODE]',
+      aiResponse: {},
+      aiMessages: [],
+      user: { id: 'user-1' },
+      topicId: null,
+      abortController: new AbortController(),
+    });
+    expect(result.handled).toBe(false);
   });
 });
 

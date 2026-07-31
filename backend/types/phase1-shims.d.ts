@@ -54,7 +54,9 @@ declare module 'pdf-parse' {
   export = pdfParse;
 }
 
-declare module 'xlsx' {
-  const XLSX: any;
-  export = XLSX;
+// exceljs ships its own index.d.ts, but tsconfig sets `noResolve: true`, so
+// node_modules types are never read and every dependency needs a shim here.
+declare module 'exceljs' {
+  const ExcelJS: any;
+  export = ExcelJS;
 }

@@ -11,57 +11,54 @@ const AUTH_COOKIE_NAME = 'auth_token';
 
 const parseRememberMe = (value) => value === true || value === 'true' || value === 1 || value === '1';
 
+// ── Login identifier validation ────────────────────────────
+// The identifier is interpolated into a PostgREST filter string, where `,`
+// separates OR terms, `()` group them and `*`/`%` are LIKE wildcards. Anything
+// outside this charset is rejected before it can reach a query, so a caller
+// cannot inject extra predicates or turn the lookup into a wildcard match.
+// `_` is permitted because usernames legitimately contain it — the exact-match
+// re-check in `login` below neutralises its LIKE-wildcard meaning.
+const IDENTIFIER_PATTERN = /^[A-Za-z0-9._+@-]{1,254}$/;
+const isSafeIdentifier = (value) => typeof value === 'string' && IDENTIFIER_PATTERN.test(value);
+
 // ── Per-account failed-attempt tracking (complements IP rate limiter) ──
 const failMap = new Map();             // username → { count, lockedUntil, lastFail }
 const MAX_FAILS = 5;                   // lock after 5 failed attempts
 const LOCK_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 const ATTEMPT_WINDOW_MS = 15 * 60 * 1000; // failures older than this stop counting
 
+const minutesUntil = (timestamp) => Math.ceil((new Date(timestamp) - Date.now()) / 1000 / 60);
+
 /**
- * Check if account is locked — checks both in-memory failMap AND DB locked_until
+ * In-memory lock check — fast path for recent brute-force, no DB round trip.
+ * Returns minutes remaining, or null when not locked.
  */
-const checkAccountLock = async (username) => {
-  const key = username.toLowerCase();
-
-  // 1. Check in-memory failMap (fast path for recent brute-force)
+const checkAccountLock = (identifier) => {
+  const key = String(identifier || '').toLowerCase();
   const entry = failMap.get(key);
-  if (entry) {
-    if (entry.lockedUntil && Date.now() < entry.lockedUntil) {
-      return Math.ceil((entry.lockedUntil - Date.now()) / 1000 / 60);
-    }
-    if (entry.lockedUntil) failMap.delete(key); // lock expired
+  if (!entry) return null;
+
+  if (entry.lockedUntil && Date.now() < entry.lockedUntil) {
+    return Math.ceil((entry.lockedUntil - Date.now()) / 1000 / 60);
   }
-
-  // 2. Check DB locked_until (persisted/admin-initiated locks)
-  try {
-    const { data: user } = await supabase
-      .from('users')
-      .select('locked_until')
-      .ilike('username', key)
-      .single();
-
-    if (user?.locked_until) {
-      const until = new Date(user.locked_until);
-      if (until > new Date()) {
-        return Math.ceil((until - new Date()) / 1000 / 60);
-      }
-      // Expired — clear it
-      await supabase.from('users').update({ locked_until: null }).ilike('username', key);
-    }
-  } catch (err) {
-    console.error('[Auth] DB lock check error:', err.message);
-  }
-
+  if (entry.lockedUntil) failMap.delete(key); // lock expired
   return null;
 };
 
 /**
- * Record a failed login attempt — updates in-memory failMap AND persists to DB when threshold is reached
+ * Record a failed login attempt.
+ *
+ * The in-memory counter is always updated. The DB lock is only written when the
+ * caller resolved a real user, and is keyed by that user's primary key — never
+ * by a caller-supplied pattern. A pattern-based UPDATE here previously let an
+ * unauthenticated caller lock every account in the system at once.
+ *
+ * @param {string} identifier - what the caller typed (username or email)
+ * @param {string|null} userId - resolved user id, or null when no user matched
  */
-const recordFailedAttempt = async (username) => {
-  const key = username.toLowerCase();
+const recordFailedAttempt = async (identifier, userId = null) => {
+  const key = String(identifier || '').toLowerCase();
 
-  // In-memory tracking
   const now = Date.now();
   const entry = failMap.get(key) || { count: 0, lockedUntil: null, lastFail: 0 };
 
@@ -78,13 +75,14 @@ const recordFailedAttempt = async (username) => {
   }
   failMap.set(key, entry);
 
-  // Persist to DB when threshold is reached
-  if (entry.count >= MAX_FAILS) {
+  // Persist to DB when threshold is reached — only ever for a known account.
+  if (entry.count >= MAX_FAILS && userId) {
     try {
-      await supabase
+      const { error } = await supabase
         .from('users')
         .update({ locked_until: new Date(Date.now() + LOCK_DURATION_MS).toISOString() })
-        .ilike('username', key);
+        .eq('id', userId);
+      if (error) console.error('[Auth] DB lock persist error:', error.message);
     } catch (err) {
       console.error('[Auth] DB lock persist error:', err.message);
     }
@@ -92,17 +90,22 @@ const recordFailedAttempt = async (username) => {
 };
 
 /**
- * Clear failed attempts — clears both in-memory failMap AND DB locked_until
+ * Clear failed attempts — clears the in-memory counter and, when a user id is
+ * supplied, the persisted DB lock for exactly that account.
+ *
+ * @param {string} identifier - username or email used at login
+ * @param {string|null} userId - resolved user id
  */
-const clearFailedAttempts = async (username) => {
-  const key = username.toLowerCase();
-  failMap.delete(key);
+const clearFailedAttempts = async (identifier, userId = null) => {
+  failMap.delete(String(identifier || '').toLowerCase());
+  if (!userId) return;
 
   try {
-    await supabase
+    const { error } = await supabase
       .from('users')
       .update({ locked_until: null })
-      .ilike('username', key);
+      .eq('id', userId);
+    if (error) console.error('[Auth] DB lock clear error:', error.message);
   } catch (err) {
     console.error('[Auth] DB lock clear error:', err.message);
   }
@@ -132,8 +135,14 @@ const login = async (req, res) => {
       return res.status(400).json({ error: 'Username and password required' });
     }
 
-    // Check per-account lock before even querying DB (async — checks both failMap and DB)
-    const minsLeft = await checkAccountLock(username);
+    // Reject identifiers that could alter the PostgREST filter before any query runs.
+    // Same generic response as a wrong password — this must not be an oracle.
+    if (!isSafeIdentifier(username)) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Per-account lock — in-memory fast path, no DB round trip
+    const minsLeft = checkAccountLock(username);
     if (minsLeft !== null) {
       return res.status(429).json({
         error: `Account locked due to too many failed attempts. Try again in ${minsLeft} minute(s).`,
@@ -147,9 +156,29 @@ const login = async (req, res) => {
       .or(`username.ilike.${username},email.ilike.${username}`)
       .single();
 
-    if (error || !user) {
+    // Re-assert an exact (case-insensitive) match. `ilike` still treats `_` as a
+    // single-character wildcard, so a row can come back that isn't the account
+    // the caller named; without this, `a_min` would resolve to `admin`.
+    const identifier = username.toLowerCase();
+    const isExactMatch = user
+      && (String(user.username || '').toLowerCase() === identifier
+        || String(user.email || '').toLowerCase() === identifier);
+
+    if (error || !user || !isExactMatch) {
+      // No user id — the in-memory counter still ticks, but nothing is locked in the DB.
       await recordFailedAttempt(username);
       return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Persisted lock (admin-initiated, or carried over from a previous process)
+    if (user.locked_until) {
+      if (new Date(user.locked_until) > new Date()) {
+        return res.status(429).json({
+          error: `Account locked due to too many failed attempts. Try again in ${minutesUntil(user.locked_until)} minute(s).`,
+        });
+      }
+      // Expired — clear it for exactly this account
+      await supabase.from('users').update({ locked_until: null }).eq('id', user.id);
     }
 
     // Check account status
@@ -163,12 +192,12 @@ const login = async (req, res) => {
     // Verify password
     const validPassword = await bcrypt.compare(password, user.password_hash);
     if (!validPassword) {
-      await recordFailedAttempt(username);
+      await recordFailedAttempt(username, user.id);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Success — clear failed attempts for this account (async — clears both failMap and DB)
-    await clearFailedAttempts(username);
+    // Success — clear failed attempts for this account (in-memory + DB)
+    await clearFailedAttempts(username, user.id);
 
     // Create JWT — expires based on user's session_minutes setting
     const expiresInSeconds = (user.session_minutes || 60) * 60;

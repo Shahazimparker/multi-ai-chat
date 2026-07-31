@@ -231,8 +231,8 @@ const unlockLogin = async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Also clear in-memory failMap
-    clearFailedAttempts(user.username);
+    // Also clear the in-memory failMap (DB lock was already cleared above)
+    await clearFailedAttempts(user.username, id);
 
     res.json({ message: `Login unlocked for ${user.username}` });
   } catch (err) {

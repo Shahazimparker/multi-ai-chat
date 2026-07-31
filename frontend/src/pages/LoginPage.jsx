@@ -4,7 +4,7 @@
 // ============================================================
 
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import ThemeToggle from '../components/layout/ThemeToggle';
 import { Sparkles, Lock, User, Eye, EyeOff } from 'lucide-react';

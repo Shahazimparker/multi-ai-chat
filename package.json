@@ -4,11 +4,12 @@
   "description": "MultiAI Chat Platform — monorepo root",
   "private": true,
   "scripts": {
-    "install:all":   "cd backend && npm install && cd ../frontend && npm install",
-    "dev:backend":   "cd backend && npm run dev",
-    "dev:frontend":  "cd frontend && npm start",
-    "build:frontend":"cd frontend && npm run build",
+    "install:all":   "npm install && npm install --prefix backend && npm install --prefix frontend",
+    "dev:backend":   "npm run dev --prefix backend",
+    "dev:frontend":  "npm start --prefix frontend",
+    "build:frontend":"npm run build --prefix frontend",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "test": "npm test --prefix backend && npm test --prefix frontend",
     "e2e": "playwright test --config=playwright.real.config.ts",
     "e2e:mock": "playwright test",
     "e2e:ui": "playwright test --ui"

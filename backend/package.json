@@ -23,12 +23,12 @@
     "@google/generative-ai": "^0.24.1",
     "@sentry/node": "^10.69.0",
     "@supabase/supabase-js": "^2.39.7",
-    "axios": "^1.7.9",
+    "axios": "^1.19.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "docx": "^9.7.1",
     "dotenv": "^16.4.5",
-    "exceljs": "^3.4.0",
+    "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.0",
     "groq-sdk": "^1.4.1",
@@ -45,8 +45,7 @@
     "pdfkit": "^0.18.0",
     "pg": "^8.20.0",
     "pptxgenjs": "^4.0.1",
-    "tesseract.js": "^5.1.0",
-    "xlsx": "^0.18.5"
+    "tesseract.js": "^5.1.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -60,5 +59,9 @@
   },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "overrides": {
+    "brace-expansion": "^5.0.9",
+    "uuid": "^11.1.1"
   }
 }

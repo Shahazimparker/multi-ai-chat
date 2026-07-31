@@ -1,3 +1,8 @@
+// Rule for this suite: `test.skip` may only gate on *configuration* the runner
+// cannot supply — missing credentials, or the explicit destructive-test opt-in.
+// It must never gate on application behaviour (e.g. "the approval prompt did not
+// appear"), because that turns the exact defect the test exists to catch into a
+// green run. Assert behaviour; skip only on environment.
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, type Browser, type Page } from '@playwright/test';

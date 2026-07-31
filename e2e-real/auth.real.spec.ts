@@ -28,6 +28,8 @@ test('configured admin user can reach admin page', async ({ page }) => {
   test.skip(!REAL_ADMIN || !REAL_ADMIN_PASSWORD, 'No real admin credentials configured');
   await login(page, REAL_ADMIN, REAL_ADMIN_PASSWORD);
   await page.goto('/admin', { waitUntil: 'networkidle' });
-  test.skip(!/\/admin$/.test(page.url()), 'Configured admin credentials do not have admin access in this environment');
+  // Reaching /admin *is* the assertion of this test — a redirect away means the
+  // admin role is broken, which must fail rather than skip.
+  await expect(page).toHaveURL(/\/admin$/);
   await expect(page.locator('.admin-brand')).toContainText('Admin');
 });

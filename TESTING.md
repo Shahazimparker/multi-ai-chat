@@ -12,7 +12,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 ## What To Verify First
 
 1. `backend/server.js` boots cleanly with `JWT_SECRET`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, and optional Sentry env vars.
-2. `frontend` starts and resolves `REACT_APP_API_URL`.
+2. `frontend` starts and resolves `VITE_API_URL`.
 3. `/api/health` responds.
 4. Login works and returns a token.
 5. Chat works in `/chat`.
@@ -28,7 +28,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 ### Chat Pipeline
 
 - `/api/chat/stream` returns real provider-token SSE chunks (no artificial `setTimeout` delays) and a final `done` event.
-- Artifact model routing guard: when orchestrator returns `model_switch_required`, SSE error includes `suggestedModels` and `recommendedModelId`; if client resends with `allowArtifactWithCurrentModel: true`, request continues on the current model.
+- Artifact requests run on whichever model is selected — the `model_switch_required` gate and its `allowArtifactWithCurrentModel` override were removed, so no model-switch modal should ever appear.
 - `/api/chat/message` remains available only as legacy JSON compatibility.
 - OrchestratorBrain emits `framework_status` SSE events before provider token chunks and is covered by `backend/__tests__/unit/orchestratorBrain.test.js`, which uses the real model registry and real framework classes without mocks.
 - Human approval deploy safety is covered by `backend/__tests__/unit/humanApproval.test.js`: approvals persist, return immediately in serverless mode, and can be approved by a separate manager instance.
@@ -214,10 +214,10 @@ backend/
 |---|---|---|
 | `chatCleanup.service.js` | 39 | `stripToolTags` (all 18 patterns), `isPlaceholderOnly`, `classifyError` (all 8 types) |
 | `tokenBudget.service.js` | 38 | `estimateTokens`, `trimTextByTokens`, `estimateMessagesTokens`, `fitMessagesToBudget`, `createPromptBudget`, `calculateComplexityScore`, `createDynamicPromptBudget`, `parseMemoryBlock`, `rebuildMemoryBlock`, `smartTrimContextBlock` |
-| `toolProcessor-matchers` | 36 | All 13 remaining tool tag matchers: SEARCH_FILES, GET_FILE, WEB_SEARCH, EXECUTE_CODE, GENERATE_IMAGE, GENERATE_PPT, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD |
+| `toolProcessor-matchers` | 35 | All 13 remaining tool tag matchers: SEARCH_FILES, GET_FILE, WEB_SEARCH, GENERATE_IMAGE, GENERATE_PPT, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD — plus a regression guard that `[EXECUTE_CODE]` stays unhandled |
 | `toolProcessor-logic` | 5 | `buildFileContext` |
 | `chatRuntime.config.js` | 13 | All 4 config values: defaults, env reading, min/max clamping, non-numeric fallback |
-| `similarity.service.js` | 8 | `jaccardSimilarity` (stop words, case, punctuation) |
+| `sse.test.js` (frontend) | 13 | `createSseParser` — frames split across chunk boundaries, CRLF, multi-line data, malformed JSON, flush |
 | `compress.service.js` | 11 | All 7 filler patterns, short text skip, >50% compression guard |
 | `sanitize.js` | 11 | HTML tag stripping, entity decoding, newline/whitespace preservation, XSS vectors, sanitizeBody middleware |
 | `tokenAccounting.service.js` | 6 | Both billing paths (API-reported vs fallback), zero inputs, optional fields |
@@ -232,7 +232,7 @@ backend/
 #### Tier 2: Integration with Real Backends — 18 tests
 | Service | Tests | What's covered |
 |---|---|---|
-| `toolProcessor.service.js` | 21 | `processToolCall` with real backends: SEARCH_FILES, GET_FILE, WEB_SEARCH, EXECUTE_CODE, GENERATE_PPT (text-tag + function-call paths), GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD, no-tool-match, invalid JSON, empty slides, function-call error message forwarding |
+| `toolProcessor.service.js` | 21 | `processToolCall` with real backends: SEARCH_FILES, GET_FILE, WEB_SEARCH, GENERATE_PPT (text-tag + function-call paths), GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD, no-tool-match, invalid JSON, empty slides, function-call error message forwarding |
 | `toolLoop.service.js` | 1 | Module load verification |
 
 
@@ -331,7 +331,7 @@ cd backend && npx vitest run __tests__/unit/chatPipeline.resultShape.test.js
 - **Backend real**: 25 real integration tests (`npm run test:real`) — requires `.env` + backend running
 - **Backend lint**: ESLint (`npm run lint`)
 - **Backend types**: TypeScript type checking (`npm run typecheck`)
-- **Frontend**: `npm run test` from `frontend` (react-scripts test)
+- **Frontend**: `npm test` from `frontend` (Vitest + Testing Library, jsdom)
 - **CI**: GitHub Actions runs lint + typecheck + unit tests on every push/PR (real tests excluded from CI)
 
 ### Last Known Real-Test Caveat

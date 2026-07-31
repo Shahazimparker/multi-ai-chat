@@ -75,7 +75,6 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
     ragEnabled = false,
     forceWebSearch = false,
     history,
-    allowArtifactWithCurrentModel = false,
   } = req.body;
 
   const user = req.user;
@@ -110,7 +109,6 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
     ragEnabled,
     forceWebSearch: Boolean(forceWebSearch),
     history,
-    allowArtifactWithCurrentModel: Boolean(allowArtifactWithCurrentModel),
     abortController,
 
     ...CANONICAL_CHAT_PIPELINE_FLAGS,
@@ -142,7 +140,12 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
     if (result.errorType === 'aborted' || res.writableEnded || res.destroyed) return;
 
     console.error('[Stream] Error:', result.err.message);
-    const { errorType, userMessage: errorMessage } = classifyError(result.err?.message);
+    // The pipeline classifies its own failures (unknown model, over-budget query,
+    // unowned topic). Only fall back to classifyError for provider-level errors,
+    // which is all it knows how to read.
+    const { errorType, userMessage: errorMessage } = result.errorType && result.userMessage
+      ? { errorType: result.errorType, userMessage: result.userMessage }
+      : classifyError(result.err?.message);
 
     if (!res.headersSent) {
       res.setHeader('Content-Type', 'text/event-stream');

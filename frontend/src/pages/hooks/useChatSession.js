@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import api, { API_BASE_URL } from '../../config/api';
+import { createSseParser } from '../../utils/sse';
 
 export const useChatSession = ({ refreshTokenStats }) => {
   const [models, setModels] = useState([]);
@@ -19,7 +20,6 @@ export const useChatSession = ({ refreshTokenStats }) => {
   const [messageQueue, setMessageQueue] = useState([]);
   const [queuePopoverOpen, setQueuePopoverOpen] = useState(false);
   const [failedMessage, setFailedMessage] = useState(null);
-  const [llmError, setLlmError] = useState(null);
 
   const abortControllerRef = useRef(null);
   const uploadAbortRef = useRef(null);
@@ -140,60 +140,54 @@ export const useChatSession = ({ refreshTokenStats }) => {
         if (event.lengthComputable) setUploadProgress(Math.round((event.loaded / event.total) * 100));
       };
 
+      // Per-request state. This used to live on `window.__uploadSseError`, which
+      // meant two concurrent uploads clobbered each other's error.
+      const parser = createSseParser();
       let parsedLen = 0;
+      let sseError = null;
+      let doneEvent = null;
+
+      const consume = (events) => {
+        for (const data of events) {
+          if (data.type === 'init' && data.sessionId) {
+            uploadSessionIdRef.current = data.sessionId;
+            sessionStorage.setItem('uploadSessionId', data.sessionId);
+          }
+          if (data.type === 'error' || data.type === 'aborted') {
+            sseError = data.error || 'Upload failed';
+          }
+          if (data.type === 'done') doneEvent = data;
+          if (data.type === 'progress' && typeof data.percent === 'number') {
+            setUploadProgress(data.percent);
+            if (data.message) setUploadMessage(data.message);
+          }
+        }
+      };
+
       xhr.onreadystatechange = () => {
         if (xhr.readyState !== 3 && xhr.readyState !== 4) return;
         const chunk = xhr.responseText.substring(parsedLen);
         parsedLen = xhr.responseText.length;
-        for (const line of chunk.split('\n')) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === 'init' && data.sessionId) {
-              uploadSessionIdRef.current = data.sessionId;
-              sessionStorage.setItem('uploadSessionId', data.sessionId);
-            }
-            if (data.type === 'error') window.__uploadSseError = data.error;
-            if (data.type === 'progress' && typeof data.percent === 'number') {
-              setUploadProgress(data.percent);
-              if (data.message) setUploadMessage(data.message);
-            }
-          } catch {}
-        }
+        consume(parser.push(chunk));
       };
 
       xhr.onload = () => {
+        consume(parser.flush());
+
         if (xhr.status >= 200 && xhr.status < 300) {
-          const sseError = window.__uploadSseError;
-          window.__uploadSseError = null;
-          let result = null;
-          let lastError = null;
-          for (const line of xhr.responseText.split('\n')) {
-            if (!line.startsWith('data: ')) continue;
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.type === 'done') result = data;
-              if (data.type === 'error') lastError = data.error;
-            } catch {}
-          }
-          if (sseError || lastError) {
-            reject(new Error(sseError || lastError || 'Upload failed'));
-          } else {
-            resolve(result || { fileName: file.name });
-          }
+          if (sseError) reject(new Error(sseError));
+          else resolve(doneEvent || { fileName: file.name });
           return;
         }
-        let errorMessage = 'Upload failed';
-        try {
-          const parsed = JSON.parse(xhr.responseText);
-          if (parsed.error) errorMessage = parsed.error;
-        } catch {
-          for (const line of xhr.responseText.split('\n')) {
-            if (!line.startsWith('data: ')) continue;
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.type === 'error') errorMessage = data.error;
-            } catch {}
+
+        // Non-2xx: the body is usually a plain JSON error, not an SSE stream.
+        let errorMessage = sseError || 'Upload failed';
+        if (!sseError) {
+          try {
+            const parsed = JSON.parse(xhr.responseText);
+            if (parsed.error) errorMessage = parsed.error;
+          } catch {
+            /* not JSON — keep the default message */
           }
         }
         reject(new Error(errorMessage));
@@ -210,10 +204,10 @@ export const useChatSession = ({ refreshTokenStats }) => {
     });
   }, [model, ragEnabled]);
 
-  const sendMessage = useCallback(async (msgText, filesArr, image, isRetry = false, forceCurrentModel = false, forceWebSearch = false) => {
+  const sendMessage = useCallback(async (msgText, filesArr, image, isRetry = false, forceWebSearch = false) => {
     let finalMessage = String(msgText).trim();
     const files = filesArr || [];
-    setFailedMessage({ text: finalMessage, files, image, forceCurrentModel, forceWebSearch: Boolean(forceWebSearch) });
+    setFailedMessage({ text: finalMessage, files, image, forceWebSearch: Boolean(forceWebSearch) });
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -287,7 +281,6 @@ export const useChatSession = ({ refreshTokenStats }) => {
           historyLimit: Number(historyLimit),
           ragEnabled,
           forceWebSearch: Boolean(forceWebSearch),
-          allowArtifactWithCurrentModel: Boolean(forceCurrentModel),
         }),
         signal: controller.signal,
       });
@@ -300,24 +293,20 @@ export const useChatSession = ({ refreshTokenStats }) => {
       let streamingText = '';
       setMessages((prev) => [...prev, { role: 'assistant', content: '', streaming: true, statusMessage: null, created_at: new Date().toISOString() }]);
 
-      while (true) {
+      const parser = createSseParser();
+      let streamEnded = false;
+
+      while (!streamEnded) {
         const { done, value } = await reader.read();
-        if (done) break;
-        const text = decoder.decode(value);
-        for (const line of text.split('\n')) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
+        // `stream: true` keeps multi-byte characters intact across chunk edges.
+        const text = done ? decoder.decode() : decoder.decode(value, { stream: true });
+        const events = done ? [...parser.push(text), ...parser.flush()] : parser.push(text);
+
+        for (const data of events) {
+          {
             if (data.type === 'error') {
               setError(data.error);
-              if (data.errorType === 'model_switch_required') {
-                setLlmError({
-                  error: data.error || 'Model switch required',
-                  suggestedModels: Array.isArray(data.suggestedModels) ? data.suggestedModels : [],
-                  recommendedModelId: data.recommendedModelId || null,
-                  failedModelId: data.failedModelId || null,
-                });
-              }
+              streamEnded = true;
               break;
             }
             if (data.type === 'approval_request') {
@@ -385,18 +374,11 @@ export const useChatSession = ({ refreshTokenStats }) => {
             } else if (data.type === 'done') {
               metadata = data;
               fullReply = streamingText;
-            } else if (data.type === 'cached') {
-              fullReply = data.reply;
-              metadata = { cacheHit: true, tokensUsed: 0 };
-              setMessages((prev) => {
-                const updated = [...prev];
-                updated[updated.length - 1] = { ...updated[updated.length - 1], content: fullReply, ...metadata, streaming: false, statusMessage: null };
-                return updated;
-              });
-              break;
             }
-          } catch {}
+          }
         }
+
+        if (done) streamEnded = true;
       }
 
       if (metadata.topicId) topicIdToUse = metadata.topicId;
@@ -510,7 +492,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
     if (loading || messageQueue.length === 0) return;
     const [next, ...rest] = messageQueue;
     setMessageQueue(rest);
-    sendMessage(next.text, next.files, next.image, false, false, Boolean(next.forceWebSearch));
+    sendMessage(next.text, next.files, next.image, false, Boolean(next.forceWebSearch));
   }, [loading, messageQueue, sendMessage]);
 
   useEffect(() => {
@@ -529,25 +511,16 @@ export const useChatSession = ({ refreshTokenStats }) => {
       setMessageQueue((prev) => [...prev, { text, files: [...(files || [])], image, forceWebSearch: Boolean(forceWebSearch) }]);
       return;
     }
-    await sendMessage(text, files || [], image, false, false, Boolean(forceWebSearch));
+    await sendMessage(text, files || [], image, false, Boolean(forceWebSearch));
   }, [loading, sendMessage]);
 
   const handleRetry = useCallback(() => {
     if (!failedMessage) return;
-    const { text, files, image, forceCurrentModel, forceWebSearch } = failedMessage;
+    const { text, files, image, forceWebSearch } = failedMessage;
     setFailedMessage(null);
     setError('');
     setMessages((prev) => (prev[prev.length - 1]?.role === 'assistant' ? prev.slice(0, -1) : prev));
-    sendMessage(text, files, image, true, forceCurrentModel, Boolean(forceWebSearch));
-  }, [failedMessage, sendMessage]);
-
-  const handleContinueWithCurrentModel = useCallback(() => {
-    if (!failedMessage) return;
-    const { text, files, image, forceWebSearch } = failedMessage;
-    setLlmError(null);
-    setError('');
-    setMessages((prev) => (prev[prev.length - 1]?.role === 'assistant' ? prev.slice(0, -1) : prev));
-    sendMessage(text, files, image, true, true, Boolean(forceWebSearch));
+    sendMessage(text, files, image, true, Boolean(forceWebSearch));
   }, [failedMessage, sendMessage]);
 
   const removeFromQueue = useCallback((index) => {
@@ -612,9 +585,6 @@ export const useChatSession = ({ refreshTokenStats }) => {
     setQueuePopoverOpen,
     queuePopoverRef,
     failedMessage,
-    llmError,
-    setLlmError,
-    handleContinueWithCurrentModel,
     handleTopicSelect,
     handleNewChat,
     requestSend,

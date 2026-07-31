@@ -1,5 +1,5 @@
 // ============================================================
-// FILE: frontend/src/index.js
+// FILE: frontend/src/main.jsx
 // PURPOSE: React app entry — renders App into DOM
 // ============================================================
 
@@ -10,10 +10,10 @@ import './index.css';
 import App from './App';
 
 // Initialize Sentry for error tracking
-if (process.env.REACT_APP_SENTRY_DSN) {
+if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
-    dsn: process.env.REACT_APP_SENTRY_DSN,
-    environment: process.env.NODE_ENV || 'development',
+    dsn: import.meta.env.VITE_SENTRY_DSN,
+    environment: import.meta.env.MODE,
     integrations: [
       Sentry.browserTracingIntegration(),
       Sentry.replayIntegration({
@@ -23,7 +23,7 @@ if (process.env.REACT_APP_SENTRY_DSN) {
       Sentry.captureConsoleIntegration({ levels: ['error', 'warn'] }),
     ],
     // Performance Monitoring
-    tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+    tracesSampleRate: import.meta.env.PROD ? 0.1 : 1.0,
     // Session Replay
     replaysSessionSampleRate: 0.1,
     replaysOnErrorSampleRate: 1.0,

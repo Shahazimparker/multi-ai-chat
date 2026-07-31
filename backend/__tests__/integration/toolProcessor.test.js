@@ -60,12 +60,12 @@ describe('processToolCall', () => {
       expect(result.handled).toBe(true);
     });
 
-    it('matches EXECUTE_CODE tag pattern', async () => {
+    it('does not handle EXECUTE_CODE — the tool was removed', async () => {
       const result = await processToolCall({
         ...baseArgs,
         reply: '[EXECUTE_CODE]1+1[/EXECUTE_CODE]',
       });
-      expect(result.handled).toBe(true);
+      expect(result.handled).toBe(false);
     });
   });
 

@@ -3,9 +3,14 @@ import axios from 'axios';
 // Single source of truth for the backend origin. Exported because a few call
 // sites must use native XHR/fetch rather than this axios instance — upload
 // progress events and SSE streaming — and they still need the same base URL.
-export const API_BASE_URL = process.env.NODE_ENV === 'production'
-  ? 'https://multi-ai-chat-backend.vercel.app/api'
-  : 'http://localhost:5000/api';
+//
+// VITE_API_URL is the configuration point. The production default is only a
+// fallback for deploys that forget to set it — the URL used to be hardcoded
+// with no way to override it, which made every non-default environment wrong.
+export const API_BASE_URL = import.meta.env.VITE_API_URL
+  || (import.meta.env.PROD
+    ? 'https://multi-ai-chat-backend.vercel.app/api'
+    : 'http://localhost:5000/api');
 
 const api = axios.create({
   baseURL: API_BASE_URL,

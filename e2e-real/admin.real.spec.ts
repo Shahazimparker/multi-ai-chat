@@ -3,16 +3,18 @@ import { ALLOW_MUTATION, REAL_ADMIN, REAL_ADMIN_PASSWORD, login } from './suppor
 
 let context: BrowserContext;
 let page: Page;
-let hasAdminAccess = false;
 
 test.describe.serial('real admin', () => {
   test.beforeAll(async ({ browser }) => {
+    // Credentials missing is a configuration gate, not a product failure, so it
+    // stays a skip. Credentials present but not reaching /admin is a real
+    // authorisation failure and must fail the run.
     test.skip(!REAL_ADMIN || !REAL_ADMIN_PASSWORD, 'No real admin credentials configured');
     context = await browser.newContext();
     page = await context.newPage();
     await login(page, REAL_ADMIN, REAL_ADMIN_PASSWORD);
     await page.goto('/admin');
-    hasAdminAccess = /\/admin$/.test(page.url());
+    await expect(page).toHaveURL(/\/admin$/, { timeout: 15_000 });
   });
 
   test.afterAll(async () => {
@@ -20,7 +22,6 @@ test.describe.serial('real admin', () => {
   });
 
   test.beforeEach(async () => {
-    test.skip(!hasAdminAccess, 'Configured admin credentials do not reach /admin in this environment');
     await page.goto('/admin');
     await page.waitForLoadState('networkidle');
     // If still on login page, session was lost - log in again

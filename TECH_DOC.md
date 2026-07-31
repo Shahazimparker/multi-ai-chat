@@ -63,7 +63,7 @@ This document is the technical reference for the current codebase state.
 | `memoryEnabled` | `true` | Cross-chat RAG memory (`embedAndStoreMessage` / `searchMemory`) active |
 | `cacheResponse` | `true` | Successful responses written to semantic cache |
 | `postSaveEmbedding` | `true` | Message embedded into `message_embeddings` after DB save |
-| `enableOrchestratorBrain` | `true` | Custom AI framework runtime initialised before provider streaming |
+| `enableOrchestratorBrain` | `false` | Custom AI framework runtime initialised before provider streaming. Off by default — it costs 2-3 extra LLM calls per message (routing decision + SmartAgent plan) whose outputs are not consumed, since the model-switch gate they fed was retired. Set `ENABLE_ORCHESTRATOR_BRAIN=true` to re-enable; its tokens are then counted into `totalAITokens` and billed. |
 
 To override any flag for a specific route, spread `CANONICAL_CHAT_PIPELINE_FLAGS` and overwrite the target key when calling `runChatPipeline()`.
 
@@ -82,16 +82,22 @@ To override any flag for a specific route, spread `CANONICAL_CHAT_PIPELINE_FLAGS
   - Semantic cache (`getSemanticCachedResponse`, pgvector cosine ≥ 0.92) remains active when RAG provides embeddings.
 - Token budgeting: `backend/services/tokenBudget.service.js`
 - Analytics: `backend/services/analytics.service.js`
-- Similarity and compression: `backend/services/similarity.service.js`, `backend/services/compress.service.js`
-- Tool execution helpers: `backend/services/tools/webSearch.service.js`, `backend/services/tools/codeExecute.service.js`
+- Compression: `backend/services/compress.service.js`
+- Tool execution helpers: `backend/services/tools/webSearch.service.js`
   - `webSearch.service.js` uses primary fallback in this order: `Exa -> Firecrawl -> Tavily -> SerpAPI`, then always aggregates LangSearch.
-  - `codeExecute.service.js` is **disabled by default**. Set `ENABLE_EXECUTE_CODE=true` in `.env` to activate the `[EXECUTE_CODE]` tool tag at runtime.
+  - **Removed:** `codeExecute.service.js` and the `[EXECUTE_CODE]` tool tag. The worker threw
+    `SyntaxError: Unexpected eval or arguments in strict mode` at construction on every input, so
+    the tool had never executed anything. Its `worker_threads` design was also not a sandbox — it
+    shared the server process, and shadowing `process`/`require`/`eval` with `undefined` is
+    escapable via constructor chains (`(function(){}).constructor(...)`), which would have exposed
+    `process.env` (JWT secret, Supabase service key, all provider keys). If code execution is needed
+    again, it must run out-of-process in a real isolate or container, not in a worker thread.
 - URL reading helpers:
   - `backend/services/tools/urlReader.service.js` — extracts/validates URLs from user query and injects URL context. Blocks private/internal hosts (loopback, RFC-1918 ranges, `.local`, `.internal`) and non-HTTP/S protocols to prevent SSRF.
   - `backend/services/tools/githubReader.service.js` — GitHub repo deep-read (tree + raw file content with limits)
   - `backend/services/tools/siteReaders.service.js` — site-specific readers for GitLab, Bitbucket, StackOverflow, Notion, Confluence, arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, API docs, Gov/Legal
   - Runtime order: site-specific reader first, then generic provider fallback (Firecrawl/Tavily/Exa)
-  - `backend/services/tools/rerank.service.js` exists but is currently not wired in runtime paths.
+  - `rerank.service.js` was deleted: it had no importer in any runtime path. Reranking is done in-process by the hybrid scorers in `rag.service.js` / `memory.service.js`.
 - File generation: `backend/services/imageGeneration.service.js` (Recraft/FLUX via OpenRouter), `backend/services/pptGeneration.service.js` (pptxgenjs), `backend/services/pdfGeneration.service.js` (pdfkit), `backend/services/excelGeneration.service.js` (exceljs), `backend/services/wordGeneration.service.js` (docx), `backend/services/csvGeneration.service.js`, `backend/services/chartGeneration.service.js` (SVG), `backend/services/htmlGeneration.service.js`, `backend/services/jsonGeneration.service.js`, `backend/services/markdownGeneration.service.js`
 
 ### AI Framework Services (LangChain/LangGraph/LangSmith Equivalent)
@@ -119,7 +125,7 @@ To override any flag for a specific route, spread `CANONICAL_CHAT_PIPELINE_FLAGS
   - Hybrid reranking weights: **55% cosine + 30% BM25 + 15% Jaccard** with +0.1 numeric boost via RRF fusion
   - Thresholds: `RAG_HYBRID_THRESHOLD = 0.52`, `MEMORY_HYBRID_THRESHOLD = 0.56`
   - External LangSearch rerank API is intentionally unwired from runtime (free-tier reliability constraints)
-- `loopManagement.service.js` — 4 loop patterns (RefinementLoop, QueryLoop, ValidationLoop, PipelineLoop)
+- `loopManagement.service.js` was deleted — 573 lines with no importer anywhere in the codebase. The tool loop that is actually used lives in `toolLoop.service.js`.
 
 **Observability & Control:**
 - `callbacks.service.js` — Event-driven lifecycle hooks for monitoring; global manager auto-initializes Logger, CostTracker, MetricsCollector on first use; ApprovalHandler wired to approval lifecycle events
@@ -378,7 +384,6 @@ Index on `(status, created_at DESC)` for efficient pending-approval queries.
 | `NODE_ENV` | `development` | Enables/disables dev logging |
 | `SENTRY_DSN` | — | Backend error tracking |
 | `ANONYMOUS_TOKEN_LIMIT` | `10000` | Token cap for unauthenticated requests |
-| `ENABLE_EXECUTE_CODE` | `false` | Enable `[EXECUTE_CODE]` tool tag at runtime |
 | **AI provider keys** | | |
 | `GEMINI_API_KEY` | — | Google Gemini (also used as summarization fallback) |
 | `GROQ_API_KEY` | — | Groq LLaMA models |
@@ -420,8 +425,8 @@ Index on `(status, created_at DESC)` for efficient pending-approval queries.
 
 ### Frontend
 
-- `REACT_APP_API_URL` — backend base URL (e.g. `https://multi-ai-chat-backend.vercel.app/api`)
-- `REACT_APP_SENTRY_DSN` (optional) — frontend Sentry project DSN
+- `VITE_API_URL` — backend base URL (e.g. `https://multi-ai-chat-backend.vercel.app/api`)
+- `VITE_SENTRY_DSN` (optional) — frontend Sentry project DSN
 
 ## Testing
 
@@ -445,7 +450,7 @@ npm run typecheck       # TypeScript (no emit)
 |---|---|---|
 | `chatCleanup.test.js` | 39 | `stripToolTags` (18 patterns), `isPlaceholderOnly`, `classifyError` (8 error types) |
 | `tokenBudget.test.js` | 38 | `estimateTokens`, `trimTextByTokens`, `fitMessagesToBudget`, `createPromptBudget`, `createDynamicPromptBudget`, `calculateComplexityScore`, `smartTrimContextBlock` |
-| `toolProcessor-matchers.test.js` | 36 | All 14 tool tag regex matchers: SEARCH_FILES, GET_FILE, WEB_SEARCH, EXECUTE_CODE, GENERATE_IMAGE, GENERATE_PPT, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD |
+| `toolProcessor-matchers.test.js` | 35 | All 13 tool tag regex matchers: SEARCH_FILES, GET_FILE, WEB_SEARCH, GENERATE_IMAGE, GENERATE_PPT, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CSV, GENERATE_CHART, GENERATE_HTML, GENERATE_JSON, GENERATE_MD — plus a regression guard that `[EXECUTE_CODE]` is left unhandled |
 | `pptGeneration.test.js` | 23 | All 15 slide layouts, all 12 themes, single-item timeline, statistics_strip label parsing, faq 5-item cap, comparison_split headers, unknown theme/layout fallback |
 | `ragHybrid.test.js` | 10 | `rerankDocsHybrid` — cosine+BM25+Jaccard+RRF, numeric critical miss, lexical gate, topK |
 | `memoryHybrid.test.js` | 11 | `rerankMemoryRowsHybrid` — same hybrid scoring for cross-chat memory, role preservation |
@@ -498,11 +503,13 @@ WHERE topic_id IS NULL
 - Testing guide: `TESTING.md`
 - Management summary: `MANAGEMENT_PRESENTATION.md`
 
-## Artifact Intent Model Guard
+## Artifact Intent Model Guard (removed)
 
-- For artifact intents (`artifact_ppt`, `artifact_other`), orchestrator can require model switch via `errorType: model_switch_required`.
-- SSE error payload includes `suggestedModels`, `recommendedModelId`, and `failedModelId`.
-- Client can explicitly override by resending with `allowArtifactWithCurrentModel: true` to continue with the currently selected model.
+The orchestrator used to be able to block a request with `errorType: model_switch_required`
+and have the client retry with `allowArtifactWithCurrentModel: true`. That gate was retired
+once every model gained artifact generation through the text-tag path, and the surrounding
+machinery — the SSE error fields, the frontend modal, and the `allowArtifactWithCurrentModel`
+request field — has now been deleted rather than left unreachable.
 
 ## URL Read Triggering
 

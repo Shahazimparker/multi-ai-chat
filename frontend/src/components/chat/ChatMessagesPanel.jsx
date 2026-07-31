@@ -48,8 +48,13 @@ const ChatMessagesPanel = ({
       cancelUploadAndStream={cancelUploadAndStream}
     />
 
+    {/* `typing-row`, not `assistant`: sharing `.message-row.assistant` with real
+        messages made that selector ambiguous, so any test asserting on assistant
+        text failed intermittently depending on whether the indicator was still
+        mounted. `.message-row.assistant` only sets flex-direction: row, which is
+        already the flex default, so dropping it changes nothing visually. */}
     {loading && !isStreaming && (
-      <div className="message-row assistant">
+      <div className="message-row typing-row">
         <div className="msg-avatar assistant"><Loader2 size={14} className="spin" /></div>
         <div className="msg-bubble assistant typing-indicator">
           <span /><span /><span />

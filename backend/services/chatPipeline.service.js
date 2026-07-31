@@ -20,7 +20,7 @@
 
 const supabase = require('../config/supabase');
 const { MODELS } = require('../config/models');
-const { CHAT_SEMANTIC_CACHE_THRESHOLD } = require('../config/chatRuntime.config');
+const { CHAT_SEMANTIC_CACHE_THRESHOLD, ENABLE_ORCHESTRATOR_BRAIN } = require('../config/chatRuntime.config');
 const { compressPrompt } = require('./compress.service');
 const { getCachedResponse, getSemanticCachedResponse, setCachedResponse } = require('./cache.service');
 const { buildRAGContext, embedText } = require('./rag.service');
@@ -73,7 +73,6 @@ const {
  * @param {number}   [opts.historyTokenBudget]       — token budget for history context
  * @param {boolean}  [opts.cacheResponse=false]      — whether to call setCachedResponse
  * @param {boolean}  [opts.postSaveEmbedding=false]  — embed messages after save
- * @param {boolean}  [opts.allowArtifactWithCurrentModel=false] — explicit user override for artifact routing model recommendation
  *
  * // ---- callbacks ----
  * @param {(chunk: string) => void} [opts.onStreamChunk]
@@ -113,10 +112,9 @@ const CANONICAL_CHAT_PIPELINE_FLAGS = Object.freeze({
   memoryEnabled: true,
   cacheResponse: true,
   postSaveEmbedding: true,
-  enableOrchestratorBrain: true,
+  // Opt-in: see ENABLE_ORCHESTRATOR_BRAIN in config/chatRuntime.config.js
+  enableOrchestratorBrain: ENABLE_ORCHESTRATOR_BRAIN,
 });
-const EXECUTE_CODE_ENABLED = String(process.env.ENABLE_EXECUTE_CODE || '').toLowerCase() === 'true';
-
 const PPT_THEME_OPTIONS = [
   { value: 'modern_corporate', label: 'Modern corporate' },
   { value: 'graphite_gold', label: 'Graphite gold' },
@@ -321,6 +319,44 @@ const buildArtifactClarificationEvent = (artifact, rawMessage = '') => {
   };
 };
 
+// Per-request ceiling for unauthenticated callers. Mirrors the value the
+// tokenCheck middleware advertises, which nothing previously enforced.
+const ANONYMOUS_TOKEN_LIMIT = Number.parseInt(process.env.ANONYMOUS_TOKEN_LIMIT, 10) || 10000;
+
+// Hard ceiling on client-supplied history turns, independent of token budget —
+// bounds the work done parsing/estimating before the budget trim can apply.
+const MAX_CLIENT_HISTORY_TURNS = 20;
+
+/**
+ * Normalise untrusted client-supplied chat history into role/content pairs that
+ * fit the history token budget. Keeps the most recent turns.
+ */
+const sanitizeClientHistory = (history, tokenBudget) => {
+  const recent = history.slice(-MAX_CLIENT_HISTORY_TURNS);
+
+  const normalized = [];
+  for (const entry of recent) {
+    const content = typeof entry?.content === 'string' ? entry.content : '';
+    if (!content) continue;
+    normalized.push({
+      role: entry?.role === 'assistant' ? 'assistant' : 'user',
+      content,
+    });
+  }
+
+  // Walk backwards so the newest turns survive a tight budget.
+  const budget = Math.max(0, tokenBudget || 0);
+  const kept = [];
+  let used = 0;
+  for (let i = normalized.length - 1; i >= 0; i--) {
+    const cost = estimateTokens(normalized[i].content) + 4;
+    if (used + cost > budget) break;
+    kept.unshift(normalized[i]);
+    used += cost;
+  }
+  return kept;
+};
+
 const makePipelineResult = (overrides = {}) => ({
   finalReply: '',
   billableTokens: 0,
@@ -381,7 +417,6 @@ const runChatPipeline = async (opts) => {
     cacheResponse = false,
     postSaveEmbedding = false,
     enableOrchestratorBrain = false,
-    allowArtifactWithCurrentModel = false,
 
     // callbacks
     onStreamChunk,
@@ -406,6 +441,43 @@ const runChatPipeline = async (opts) => {
       });
     }
 
+    // ── 1b. Verify topic ownership ────────────────────────────
+    // `topicId` arrives straight from the request body. Every downstream reader
+    // (history, summaries, cache, RAG, uploaded files) filters on topic_id alone,
+    // so without this check any authenticated caller could pass another user's
+    // topic id and have that conversation loaded into their prompt — and their
+    // own turns written back into the victim's topic.
+    if (topicId) {
+      if (isAnonymous || !user?.id) {
+        // Anonymous callers own no topics. Drop the id rather than letting it
+        // reach the cache / RAG / file lookups.
+        resolvedTopicId = null;
+      } else {
+        const { data: ownedTopic, error: topicLookupError } = await supabase
+          .from('topics')
+          .select('id')
+          .eq('id', topicId)
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        // A malformed id fails the uuid cast and surfaces as an error here;
+        // both cases get the same response so this can't confirm existence.
+        if (topicLookupError || !ownedTopic) {
+          if (topicLookupError) {
+            console.warn('[ChatPipeline] Topic ownership lookup failed:', topicLookupError.message);
+          }
+          return makePipelineResult({
+            err: new Error('Topic not found'),
+            errorType: 'topic_not_found',
+            userMessage: 'Topic not found.',
+            modelConfig,
+            effectiveModelConfig,
+            resolvedTopicId: null,
+          });
+        }
+      }
+    }
+
     const estimatedInputTokens = estimateTokens(message);
     const orchestratorBrain = enableOrchestratorBrain
       ? await runOrchestratorBrain({
@@ -413,7 +485,7 @@ const runChatPipeline = async (opts) => {
           providerModelId,
           message,
           image,
-          topicId,
+          topicId: resolvedTopicId,
           userId: user?.id || null,
           isAnonymous,
           memoryMode,
@@ -426,6 +498,11 @@ const runChatPipeline = async (opts) => {
         })
       : null;
 
+    // The brain's provider calls are real spend, so they seed the AI token total
+    // and flow into billing/analytics like any other call. Zero when it is off,
+    // which is the default — so this is a no-op on the standard path.
+    let totalAITokens = orchestratorBrain?.tokensUsed || 0;
+
     // NOTE: a model-switch gate used to sit here, returning `model_switch_required`
     // when the orchestrator routed an artifact intent to a weaker model. It was
     // retired because every model now generates artifacts via the text-tag path,
@@ -433,9 +510,9 @@ const runChatPipeline = async (opts) => {
 
     // ── 2. Prompt budget ──────────────────────────────────────
     let promptBudget = createPromptBudget(modelConfig);
-    if (dynamicBudgetEnabled && topicId && user) {
+    if (dynamicBudgetEnabled && resolvedTopicId && user) {
       try {
-        const turnCount = await getTopicTurnCount(topicId);
+        const turnCount = await getTopicTurnCount(resolvedTopicId);
         const complexityScore = calculateComplexityScore(message);
         promptBudget = createDynamicPromptBudget(turnCount, complexityScore, modelConfig);
       } catch (err) {
@@ -456,12 +533,20 @@ const runChatPipeline = async (opts) => {
       };
     }
 
-    if (perQueryLimitEnabled && user && estimatedInputTokens > user.per_query_limit) {
+    // Anonymous callers have no `per_query_limit` row, so the checks below skip
+    // them entirely. ANONYMOUS_TOKEN_LIMIT stands in as their per-request cap —
+    // without it an unauthenticated caller could spend without bound.
+    const effectivePerQueryLimit = user?.per_query_limit || ANONYMOUS_TOKEN_LIMIT;
+    const limitEnabled = perQueryLimitEnabled || isAnonymous || !user;
+
+    if (limitEnabled && estimatedInputTokens > effectivePerQueryLimit) {
       return makePipelineResult({
-        err: new Error(`Query too long. Max ${user.per_query_limit} tokens per query. Your query is ~${estimatedInputTokens} tokens.`),
+        err: new Error(`Query too long. Max ${effectivePerQueryLimit} tokens per query. Your query is ~${estimatedInputTokens} tokens.`),
         errorType: 'query_too_long',
-        userMessage: `Query too long. Max ${user.per_query_limit} tokens per query. Your query is ~${estimatedInputTokens} tokens.`,
+        userMessage: `Query too long. Max ${effectivePerQueryLimit} tokens per query. Your query is ~${estimatedInputTokens} tokens.`,
         estimatedInputTokens,
+        totalAITokens,
+        billableTokens: totalAITokens,
         modelConfig,
         effectiveModelConfig,
         resolvedTopicId,
@@ -476,11 +561,13 @@ const runChatPipeline = async (opts) => {
 
     // ── 4. Exact-match cache ───────────────────────────────────
     if (exactCacheEnabled && !isIdentityQuestion) {
-      const cachedReply = await getCachedResponse(compressedQuery, modelId, user?.id, topicId);
+      const cachedReply = await getCachedResponse(compressedQuery, modelId, user?.id, resolvedTopicId);
       if (cachedReply) {
         return makePipelineResult({
           finalReply: cachedReply,
-          billableTokens: 0,
+          // A cache hit is free, but any brain tokens already spent are not.
+          billableTokens: totalAITokens,
+          totalAITokens,
           cacheHit: true,
           modelConfig,
           effectiveModelConfig,
@@ -515,11 +602,12 @@ const runChatPipeline = async (opts) => {
 
       // Semantic cache lookup (same embedding vector)
       {
-        const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, CHAT_SEMANTIC_CACHE_THRESHOLD, user?.id, topicId);
+        const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, CHAT_SEMANTIC_CACHE_THRESHOLD, user?.id, resolvedTopicId);
         if (semanticCachedReply) {
           return makePipelineResult({
             finalReply: semanticCachedReply,
-            billableTokens: 0,
+            billableTokens: totalAITokens,
+            totalAITokens,
             cacheHit: true,
             modelConfig,
             effectiveModelConfig,
@@ -550,9 +638,9 @@ const runChatPipeline = async (opts) => {
           embedProvider,
           abortController.signal,
           queryVector,
-          { tokenBudget: promptBudget.ragTokens, topicId, userId: user?.id }
+          { tokenBudget: promptBudget.ragTokens, topicId: resolvedTopicId, userId: user?.id }
         ),
-        listUserFiles(user?.id, topicId),
+        listUserFiles(user?.id, resolvedTopicId),
       ]);
       ragContext = ragCtx;
       const normalizedFileData = Array.isArray(fileData)
@@ -609,7 +697,7 @@ ${page.text}`)
     }
     const { context: historyContext, summaryTokens: historySummaryTokens, _debug } = await buildContextMessages(
       finalQuery,
-      isAnonymous ? null : topicId,
+      resolvedTopicId,
       historyOpts,
       abortController.signal
     );
@@ -631,15 +719,13 @@ ${page.text}`)
 
     // ── 8. Build AI messages ──────────────────────────────────
     const aiMessages = [];
-    const allowExecuteCode = EXECUTE_CODE_ENABLED && Boolean(user?.id);
     const askClarifyingDirective = `\n\n## IMPORTANT: Ask Clarifying Questions First\nBefore using any GENERATE_* tool (GENERATE_PPT, GENERATE_IMAGE, GENERATE_HTML, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CHART, GENERATE_CSV):\n- If the user's request lacks critical details (title, theme, structure, layout, purpose, content), ask clarifying questions FIRST\n- Do NOT immediately jump to generation with vague or insufficient information\n- Ask 2-4 specific, targeted questions to get the details you need\n- Only use the GENERATE_* tool AFTER the user has provided sufficient context\n- This ensures the output matches what the user actually wants\n- Wait for the user's response before proceeding with generation`;
     const toolLines = [
       '1. Web Search: [WEB_SEARCH:query="your search query"]',
-      ...(allowExecuteCode ? ['2. Execute JS Code: [EXECUTE_CODE]console.log("hello");[/EXECUTE_CODE]'] : []),
-      `${allowExecuteCode ? '3' : '2'}. Generate Image (DALL-E 3): [GENERATE_IMAGE:prompt=detailed image description here]`,
+      '2. Generate Image (DALL-E 3): [GENERATE_IMAGE:prompt=detailed image description here]',
       '   - Use when the user asks you to generate, create, or draw an image/picture/photo',
       '   - Write the most descriptive prompt possible for best results',
-      `${allowExecuteCode ? '4' : '3'}. Generate PowerPoint: [GENERATE_PPT]{"title":"Presentation Title","subtitle":"Optional subtitle","theme":"emerald_glass","slides":[{"title":"Slide Title","layout":"cards","bullets":["Point 1","Point 2","Point 3"]},{"title":"Roadmap","layout":"timeline","bullets":["Now","Next","Later"]},{"title":"KPIs","layout":"kpi_dashboard","bullets":["Revenue: $2.4M","Margin: 58%","NPS: 51"]}]}[/GENERATE_PPT]`,
+      `3. Generate PowerPoint: [GENERATE_PPT]{"title":"Presentation Title","subtitle":"Optional subtitle","theme":"emerald_glass","slides":[{"title":"Slide Title","layout":"cards","bullets":["Point 1","Point 2","Point 3"]},{"title":"Roadmap","layout":"timeline","bullets":["Now","Next","Later"]},{"title":"KPIs","layout":"kpi_dashboard","bullets":["Revenue: $2.4M","Margin: 58%","NPS: 51"]}]}[/GENERATE_PPT]`,
       '   - Use when the user asks you to create a presentation, slides, or PowerPoint',
       '   - Include 4-8 content slides with varied layouts for visual quality',
       '   - Allowed themes: modern_corporate, startup_bold, clean_minimal, emerald_glass, sunset_warm, charcoal_lime, sandstone_editorial, ruby_noir, violet_tech, ocean_depth, rose_creative, mono_editorial, arctic_blue, forest_night, golden_age, midnight_plum, slate_coral, graphite_gold, teal_glass, cobalt_bold',
@@ -666,11 +752,14 @@ ${page.text}`)
     if (memoryContext) systemSections.push(memoryContext);
     aiMessages.push({ role: 'system', content: systemSections.join('\n\n') });
 
-    // History
+    // History. The `history` fallback is client-supplied (anonymous sessions have
+    // no server-side topic), so it is untrusted: cap the number of turns, coerce
+    // each entry to a known shape, and trim it to the history token budget. An
+    // uncapped array here let a caller push megabytes straight into the prompt.
     if (historyContext && historyContext.length > 0) {
       aiMessages.push(...historyContext);
-    } else if (history && Array.isArray(history) && history.length > 0) {
-      aiMessages.push(...history);
+    } else if (Array.isArray(history) && history.length > 0) {
+      aiMessages.push(...sanitizeClientHistory(history, promptBudget.historyTokens));
     }
 
     // Current user message
@@ -687,8 +776,8 @@ ${page.text}`)
       onToolStatus?.(buildArtifactClarificationEvent(artifactIntent, finalQuery));
       return makePipelineResult({
         finalReply: '',
-        billableTokens: 0,
-        totalAITokens: 0,
+        billableTokens: totalAITokens,
+        totalAITokens,
         totalEmbeddingTokens,
         orchestratorBrain,
         cacheCreationTokens: 0,
@@ -709,15 +798,17 @@ ${page.text}`)
 
     const promptTokens = estimateMessagesTokens(aiMessages);
 
-    if (perQueryLimitEnabled && user && promptTokens > user.per_query_limit) {
+    if (limitEnabled && promptTokens > effectivePerQueryLimit) {
       return makePipelineResult({
-        err: new Error(`Query context too large after RAG/history. Max ${user.per_query_limit} tokens per query. Current prompt is ~${promptTokens} tokens.`),
+        err: new Error(`Query context too large after RAG/history. Max ${effectivePerQueryLimit} tokens per query. Current prompt is ~${promptTokens} tokens.`),
         errorType: 'context_too_large',
-        userMessage: `Query context too large after RAG/history. Max ${user.per_query_limit} tokens per query. Current prompt is ~${promptTokens} tokens.`,
+        userMessage: `Query context too large after RAG/history. Max ${effectivePerQueryLimit} tokens per query. Current prompt is ~${promptTokens} tokens.`,
         promptTokens,
         estimatedInputTokens,
         compressTokens,
         historySummaryTokens,
+        totalAITokens,
+        billableTokens: totalAITokens,
         modelConfig,
         effectiveModelConfig,
         isIdentityQuestion,
@@ -727,7 +818,6 @@ ${page.text}`)
     }
 
     // ── 9. Tool-call loop ─────────────────────────────────────
-    let totalAITokens = 0;
     let finalReply = '';
     const MAX_TOOL_ROUNDS = 6;
 
@@ -940,7 +1030,7 @@ ${page.text}`)
         err,
         errorType: 'aborted',
         userMessage: 'Request aborted',
-        resolvedTopicId: topicId,
+        resolvedTopicId,
       });
     }
 
@@ -951,7 +1041,7 @@ ${page.text}`)
       err,
       errorType,
       userMessage,
-      resolvedTopicId: topicId,
+      resolvedTopicId,
     });
   }
 };

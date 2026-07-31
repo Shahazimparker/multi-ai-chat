@@ -1,19 +1,20 @@
-name: Backend Tests
+name: Tests
 
 on:
   push:
     branches: [main, master]
-    paths:
-      - 'backend/**'
   pull_request:
     branches: [main, master]
-    paths:
-      - 'backend/**'
+
+# Node 22 matches backend/package.json `engines: >=22`. CI previously ran on
+# Node 18, so it was validating a runtime the project declares unsupported.
+env:
+  NODE_VERSION: '22'
 
 jobs:
-  test:
+  backend:
+    name: Backend
     runs-on: ubuntu-latest
-
     defaults:
       run:
         working-directory: backend
@@ -23,24 +24,93 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: backend/package-lock.json
 
       - run: npm ci
 
-      - name: Run ESLint
+      - name: ESLint
         run: npm run lint
 
-      - name: Run TypeScript type check
+      - name: TypeScript type check
         run: npm run typecheck
 
-      - name: Run tests
+      - name: Unit + integration tests
         run: npm test
         env:
           SUPABASE_URL: 'https://test.supabase.co'
           SUPABASE_SERVICE_KEY: 'test-key'
-          BIZ_SUPABASE_URL: 'https://test-biz.supabase.co'
-          BIZ_SUPABASE_SERVICE_KEY: 'test-key'
           JWT_SECRET: 'test-jwt-secret-minimum-32-chars!!'
           FRONTEND_URL: 'http://localhost:3000'
+
+      # Blocking: production dependencies must stay clean at high+.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      # Reported, not blocking. react-router 7.12-8.2 carries an RSC-mode CSRF
+      # advisory that does not apply here: this is a client-only SPA using
+      # BrowserRouter, with no React Router server/RSC framework mode. The fixed
+      # line (react-router 8.3+) requires React 19, which is a separate upgrade.
+      # Revisit with React 19; do not silently pin backwards to satisfy the scanner.
+      - name: Audit production dependencies (report only)
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+
+  e2e:
+    name: E2E (mocked)
+    runs-on: ubuntu-latest
+    needs: [frontend]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install root and frontend deps
+        run: |
+          npm ci
+          npm ci --prefix frontend
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      # The mocked suite stubs every API call, so it needs no backend, no
+      # database and no provider keys. The real suite (e2e-real) needs live
+      # credentials and is run manually.
+      - name: Run mocked E2E
+        run: npx playwright test --reporter=list
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

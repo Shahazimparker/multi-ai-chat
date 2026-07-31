@@ -9,7 +9,7 @@
 const path = require('path');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
-const XLSX = require('xlsx');
+const ExcelJS = require('exceljs');
 
 // Supported file types and their loaders
 const SUPPORTED_FORMATS = {
@@ -172,6 +172,28 @@ const DocumentLoader = {
 };
 
 /**
+ * Render one exceljs cell value as a CSV field.
+ * Handles the richer shapes exceljs returns (formula, hyperlink, rich text)
+ * that a raw String() would turn into "[object Object]".
+ */
+const toCsvCell = (value) => {
+  if (value === null || value === undefined) return '';
+
+  let text;
+  if (value instanceof Date) text = value.toISOString();
+  else if (typeof value === 'object') {
+    if (typeof value.text === 'string') text = value.text;
+    else if (Array.isArray(value.richText)) text = value.richText.map((part) => part.text).join('');
+    else if ('result' in value) text = String(value.result ?? '');
+    else if ('hyperlink' in value) text = String(value.hyperlink ?? '');
+    else text = String(value);
+  } else text = String(value);
+
+  // Quote when the field contains a delimiter, quote or newline.
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+
+/**
  * SpreadsheetLoader — extract data from Excel/CSV
  */
 const SpreadsheetLoader = {
@@ -190,14 +212,23 @@ const SpreadsheetLoader = {
       };
     }
 
-    // Excel file
-    const workbook = XLSX.read(buffer, { type: 'buffer' });
-    const sheets = [];
+    // Excel file. Read via exceljs — `xlsx` was dropped because its npm build
+    // carries unfixed prototype-pollution and ReDoS advisories.
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer);
 
-    workbook.SheetNames.forEach((name) => {
-      const sheet = workbook.Sheets[name];
-      const csv = XLSX.utils.sheet_to_csv(sheet);
-      sheets.push(`[Sheet: ${name}]\n${csv}`);
+    const sheets = [];
+    const sheetNames = [];
+
+    workbook.eachSheet((worksheet) => {
+      sheetNames.push(worksheet.name);
+      const rows = [];
+      worksheet.eachRow({ includeEmpty: false }, (row) => {
+        // row.values is 1-indexed with a leading hole; drop it.
+        const cells = Array.isArray(row.values) ? row.values.slice(1) : [];
+        rows.push(cells.map(toCsvCell).join(','));
+      });
+      sheets.push(`[Sheet: ${worksheet.name}]\n${rows.join('\n')}`);
     });
 
     return {
@@ -206,7 +237,7 @@ const SpreadsheetLoader = {
         type: 'spreadsheet',
         fileName,
         format: ext,
-        sheets: workbook.SheetNames,
+        sheets: sheetNames,
         size: buffer.length,
       },
     };

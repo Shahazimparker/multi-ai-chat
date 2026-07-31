@@ -6,7 +6,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { PlusCircle, MessageSquare, Trash2, Pencil, Check, X, LogOut, Settings, FileText, Clock, ChevronRight, Search, Download } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useAuth } from '../../context/AuthContext';
 import ThemeToggle from '../layout/ThemeToggle';
 import api from '../../config/api';

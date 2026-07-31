@@ -4,33 +4,32 @@
   "private": true,
   "dependencies": {
     "@sentry/react": "^10.69.0",
-    "@supabase/supabase-js": "^2.39.7",
-    "axios": "^1.7.9",
-    "lucide-react": "^0.383.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "axios": "^1.19.0",
+    "lucide-react": "^1.28.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "react-markdown": "^9.0.1",
-    "react-router-dom": "^6.28.0",
-    "react-scripts": "5.0.1",
+    "react-router": "^8.3.0",
     "react-syntax-highlighter": "^16.1.1",
     "recharts": "^2.12.3",
     "remark-gfm": "^4.0.0"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test"
+    "start": "vite",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version"
-    ]
-  },
-  "proxy": "http://localhost:5000"
+  "type": "module",
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@vitejs/plugin-react": "^6.0.5",
+    "jsdom": "^25.0.1",
+    "vite": "^8.2.0",
+    "vitest": "^4.1.10"
+  }
 }

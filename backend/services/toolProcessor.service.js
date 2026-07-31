@@ -1,6 +1,5 @@
 const { searchUserFilesRAG, getFileContent } = require('./fileUpload.service');
 const { searchWeb } = require('./tools/webSearch.service');
-const { executeCode } = require('./tools/codeExecute.service');
 const { generateImage } = require('./imageGeneration.service');
 const { generatePPT } = require('./pptGeneration.service');
 const { generatePDF } = require('./pdfGeneration.service');
@@ -201,7 +200,6 @@ const buildFileContext = (fileResults, totalFileCount) => {
 const findSearchFileMatch = (reply) => reply.match(/\[SEARCH_FILES:query=([^\]]+)\]/);
 const findGetFileMatch = (reply) => reply.match(/\[GET_FILE:id=([^\]]+)\]/);
 const findWebSearchMatch = (reply) => reply.match(/\[WEB_SEARCH:query=(?:"|')([^"']+)(?:"|')\]/i) || reply.match(/\[WEB_SEARCH:([^\]]+)\]/i);
-const findExecuteCodeMatch = (reply) => reply.match(/\[EXECUTE_CODE\]([\s\S]*?)\[\/EXECUTE_CODE\]/i);
 const findGenerateImageMatch = (reply) => reply.match(/\[GENERATE_IMAGE:prompt=([^\]]+)\]/i);
 const findGeneratePPTMatch = (reply) => reply.match(/\[GENERATE_PPT\]([\s\S]*?)\[\/GENERATE_PPT\]/i);
 const findGeneratePDFMatch = (reply) => reply.match(/\[GENERATE_PDF\]([\s\S]*?)\[\/GENERATE_PDF\]/i);
@@ -212,7 +210,6 @@ const findGenerateChartMatch = (reply) => reply.match(/\[GENERATE_CHART\]([\s\S]
 const findGenerateHTMLMatch = (reply) => reply.match(/\[GENERATE_HTML\]([\s\S]*?)\[\/GENERATE_HTML\]/i);
 const findGenerateJSONMatch = (reply) => reply.match(/\[GENERATE_JSON\]([\s\S]*?)\[\/GENERATE_JSON\]/i);
 const findGenerateMDMatch = (reply) => reply.match(/\[GENERATE_MD\]([\s\S]*?)\[\/GENERATE_MD\]/i);
-const EXECUTE_CODE_ENABLED = String(process.env.ENABLE_EXECUTE_CODE || '').toLowerCase() === 'true';
 
 const runPPTGeneration = async ({ parsed, reply = '', user, topicId, onStatus, consumedText = '' }) => {
   onStatus?.({ type: 'status', tool: 'ppt_gen', message: 'Generating PowerPoint presentation...' });
@@ -316,35 +313,6 @@ const processToolCall = async ({
       handled: true,
       newMessages: [
         { role: 'assistant', content: reply.replace(webSearchMatch[0], '').trim() || '[searching on web]' },
-        { role: 'user', content: resultBlock },
-      ],
-      embedTokens: 0,
-    };
-  }
-
-  const executeCodeMatch = findExecuteCodeMatch(reply);
-  if (executeCodeMatch) {
-    if (!EXECUTE_CODE_ENABLED || !user?.id) {
-      const disabledMessage = !EXECUTE_CODE_ENABLED
-        ? 'Code execution is disabled by server policy.'
-        : 'Code execution requires authenticated access.';
-      return {
-        handled: true,
-        newMessages: [
-          { role: 'assistant', content: reply.replace(executeCodeMatch[0], '').trim() || '[Code execution blocked]' },
-          { role: 'user', content: `[CODE EXECUTION RESULT]\n${disabledMessage}\n[END CODE EXECUTION RESULT]` },
-        ],
-        embedTokens: 0,
-      };
-    }
-    const code = executeCodeMatch[1].trim();
-    const result = await executeCode(code);
-    const resultBlock = `[CODE EXECUTION RESULT]\n\`\`\`\n${result}\n\`\`\`\n[END CODE EXECUTION RESULT]\n\nNow answer the user's question based on this result.`;
-
-    return {
-      handled: true,
-      newMessages: [
-        { role: 'assistant', content: reply.replace(executeCodeMatch[0], '').trim() || '[Executing JavaScript code]' },
         { role: 'user', content: resultBlock },
       ],
       embedTokens: 0,
@@ -707,7 +675,6 @@ module.exports = {
   findSearchFileMatch,
   findGetFileMatch,
   findWebSearchMatch,
-  findExecuteCodeMatch,
   findGenerateImageMatch,
   findGeneratePPTMatch,
   findGeneratePDFMatch,

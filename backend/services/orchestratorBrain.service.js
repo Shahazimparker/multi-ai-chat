@@ -27,10 +27,11 @@ const hashTextToVector = (text, dims = 32) => {
   return vector;
 };
 
-const makeDispatcher = (effectiveModelConfig, abortController) => ({
+const makeDispatcher = (effectiveModelConfig, abortController, onTokens = null) => ({
   async dispatch({ messages }) {
     if (abortController?.signal?.aborted) throw { name: 'AbortError' };
     const dispatchResult = await dispatchToAI(effectiveModelConfig, messages || [], abortController?.signal || null);
+    onTokens?.(dispatchResult?.tokensUsed || 0);
     return {
       text: dispatchResult?.text || '',
       content: dispatchResult?.text || '',
@@ -55,7 +56,7 @@ const parseFirstJsonObject = (text) => {
   }
 };
 
-const runRoutingDecision = async (input, abortController) => {
+const runRoutingDecision = async (input, abortController, onTokens = null) => {
   const flash = MODELS['deepseek-v4-flash'];
   const pro = MODELS['deepseek-v4-pro'];
   if (!flash?.apiKey || !pro?.apiKey) return null;
@@ -79,6 +80,7 @@ const runRoutingDecision = async (input, abortController) => {
 
   const call = async (modelCfg, messages) => {
     const result = await dispatchToAI(modelCfg, messages, abortController?.signal || null);
+    onTokens?.(result?.tokensUsed || 0);
     return parseFirstJsonObject(result?.text || '');
   };
 
@@ -110,7 +112,7 @@ const runRoutingDecision = async (input, abortController) => {
 };
 
 const createFrameworkRuntime = (options = {}) => {
-  const { effectiveModelConfig, abortController, onToolStatus } = options;
+  const { effectiveModelConfig, abortController, onToolStatus, onTokens = null } = options;
   const callbackManager = createCallbackManager({ verbose: false });
   const logger = handlers.LoggerHandler(callbackManager);
   const costTracker = handlers.CostTrackerHandler(callbackManager);
@@ -122,7 +124,7 @@ const createFrameworkRuntime = (options = {}) => {
   const templateRegistry = getGlobalRegistry();
   const parser = createParser('regex', {
     patterns: {
-      toolTags: /\[(WEB_SEARCH|EXECUTE_CODE|GENERATE_IMAGE|GENERATE_PPT|QUERY_DB)\b/gi,
+      toolTags: /\[(WEB_SEARCH|GENERATE_IMAGE|GENERATE_PPT|QUERY_DB)\b/gi,
       codeBlocks: /```[\s\S]*?```/g,
     },
   });
@@ -144,13 +146,13 @@ const createFrameworkRuntime = (options = {}) => {
   toolRegistry
     .register(createTool('classify_intent', 'Classify chat intent for routing', async ({ message }) => ({
       intent: /\b(file|document|upload|pdf|ppt|image|chart)\b/i.test(message || '') ? 'artifact_or_rag' : 'chat',
-      needsTools: /\[(WEB_SEARCH|EXECUTE_CODE|GENERATE_IMAGE|GENERATE_PPT|QUERY_DB)\b/i.test(message || ''),
+      needsTools: /\[(WEB_SEARCH|GENERATE_IMAGE|GENERATE_PPT|QUERY_DB)\b/i.test(message || ''),
     }), { message: 'string' }))
     .register(createTool('select_runtime_path', 'Select runtime path for chat pipeline', async ({ intent, ragEnabled }) => ({
       path: ragEnabled || intent === 'artifact_or_rag' ? 'retrieval_augmented_stream' : 'direct_stream',
     }), { intent: 'string', ragEnabled: 'boolean' }));
 
-  const smartAgent = new SmartAgent(makeDispatcher(effectiveModelConfig, abortController), toolRegistry, {
+  const smartAgent = new SmartAgent(makeDispatcher(effectiveModelConfig, abortController, onTokens), toolRegistry, {
     modelId: effectiveModelConfig?.model,
     maxIterations: 1,
     maxRefinements: 0,
@@ -228,7 +230,13 @@ const createFrameworkRuntime = (options = {}) => {
 };
 
 const runOrchestratorBrain = async (input, options = {}) => {
-  const runtime = createFrameworkRuntime(options);
+  // Every provider call this layer makes is real spend. Accumulate it so the
+  // caller can bill it — previously these tokens were invisible to quotas,
+  // analytics and the user's token bar.
+  let tokensUsed = 0;
+  const onTokens = (n) => { tokensUsed += n || 0; };
+
+  const runtime = createFrameworkRuntime({ ...options, onTokens });
   const trace = runtime.tracer.startTrace('chat-stream-orchestrator-brain', {
     type: 'workflow',
     metadata: {
@@ -240,7 +248,7 @@ const runOrchestratorBrain = async (input, options = {}) => {
   });
 
   try {
-    const routingDecision = await runRoutingDecision(input, options?.abortController).catch(() => null);
+    const routingDecision = await runRoutingDecision(input, options?.abortController, onTokens).catch(() => null);
 
     await runtime.callbackManager.onOperationStart(
       runtime.callbackManager.createContext('orchestrator-brain', 'workflow')
@@ -281,6 +289,7 @@ const runOrchestratorBrain = async (input, options = {}) => {
 
     return {
       enabled: true,
+      tokensUsed,
       traceId: trace.id,
       routingDecision,
       graph: graphResult,
@@ -303,6 +312,7 @@ const runOrchestratorBrain = async (input, options = {}) => {
     });
     return {
       enabled: true,
+      tokensUsed,
       traceId: completedTrace.id,
       error: err.message,
       routingDecision: null,

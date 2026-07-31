@@ -83,7 +83,7 @@ cp .env.example .env.local
 npm start
 ```
 
-Frontend expects `REACT_APP_API_URL`; backend expects `JWT_SECRET`, `SUPABASE_URL`, and `SUPABASE_SERVICE_KEY` at minimum.
+Frontend expects `VITE_API_URL`; backend expects `JWT_SECRET`, `SUPABASE_URL`, and `SUPABASE_SERVICE_KEY` at minimum.
 
 Also set `DEEPSEEK_API_KEY` — the default model (`deepseek-v4-flash`) uses it, so without it the first chat fails with "API key not configured". Every other provider key in `.env.example` is optional and only needed for the models that use it.
 

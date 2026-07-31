@@ -5,7 +5,7 @@
 // ============================================================
 
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { Users, BarChart2, Plus, Trash2, Edit2, RefreshCw, LogOut, MessageSquare, Zap, ChevronLeft, Lock, Unlock, Sun, Moon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';

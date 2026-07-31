@@ -7,7 +7,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Menu, X, PlusCircle, MessageSquare, LogOut, Settings, Trash2, Pencil, Check, FileText, Clock, ChevronRight, Search, Download } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import api from '../../config/api';
 import ThemeToggle from '../layout/ThemeToggle';
 import './MobileNav.css';

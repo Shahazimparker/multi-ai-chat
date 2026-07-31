@@ -20,7 +20,6 @@ module.exports = defineConfig({
         'services/tokenAccounting.service.js',
         'services/chatCleanup.service.js',
         'services/compress.service.js',
-        'services/similarity.service.js',
         'services/toolProcessor.service.js',
         'services/toolLoop.service.js',
         'services/orchestratorBrain.service.js',
