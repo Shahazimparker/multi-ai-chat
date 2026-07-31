@@ -25,6 +25,78 @@ function buildGeminiModel(genAI, modelName, messages) {
   return genAI.getGenerativeModel(modelParams);
 }
 
+/** Converts message content (string, or OpenAI-style parts array) to Gemini parts. */
+function toParts(content) {
+  if (typeof content === 'string') return content ? [{ text: content }] : [];
+  if (!Array.isArray(content)) return content == null ? [] : [{ text: String(content) }];
+
+  const parts = [];
+  for (const part of content) {
+    if (typeof part === 'string') {
+      if (part) parts.push({ text: part });
+      continue;
+    }
+    if (part?.text) {
+      parts.push({ text: part.text });
+      continue;
+    }
+    const url = typeof part?.image_url === 'string' ? part.image_url : part?.image_url?.url;
+    const dataUrl = typeof url === 'string' ? url.match(/^data:([^;,]+);base64,(.+)$/) : null;
+    if (dataUrl) parts.push({ inlineData: { mimeType: dataUrl[1], data: dataUrl[2] } });
+  }
+  return parts;
+}
+
+/**
+ * Builds Gemini chat contents from our provider-neutral message array.
+ *
+ * Unlike Claude/OpenAI, Gemini rejects a history that starts with a model turn
+ * ("First content should be with role 'user', got model") and requires strict
+ * user/model alternation. Our pipeline can produce both: the conversation
+ * summary is injected as an assistant turn, and history trimming can drop the
+ * leading user turn. Normalize here so every caller is safe.
+ */
+function buildGeminiHistory(messages) {
+  const mapped = messages
+    .filter(m => m.role !== 'system')
+    .map(m => ({
+      role: m.role === 'assistant' || m.role === 'model' ? 'model' : 'user',
+      parts: toParts(m.content),
+    }))
+    .filter(m => m.parts.length > 0);
+
+  // History must open with a user turn.
+  while (mapped.length > 0 && mapped[0].role === 'model') mapped.shift();
+
+  // Merge consecutive same-role turns — Gemini enforces alternation.
+  const history = [];
+  for (const item of mapped) {
+    const previous = history[history.length - 1];
+    if (previous && previous.role === item.role) {
+      previous.parts.push(...item.parts);
+    } else {
+      history.push(item);
+    }
+  }
+  return history;
+}
+
+/**
+ * Splits messages into the startChat history plus the outgoing message parts.
+ * Trailing user turns are folded into the outgoing message so the conversation
+ * stays strictly alternating.
+ */
+function buildGeminiRequest(messages) {
+  const history = buildGeminiHistory(messages);
+  const outgoing = [];
+
+  while (history.length > 0 && history[history.length - 1].role === 'user') {
+    outgoing.unshift(...history.pop().parts);
+  }
+
+  return { history, message: outgoing.length > 0 ? outgoing : [{ text: ' ' }] };
+}
+
 /**
  * Non-streaming call — sends messages to Gemini API
  * @param {string} modelName  Gemini model identifier
@@ -37,16 +109,10 @@ const callGemini = async (modelName, apiKey, messages, signal = null) => {
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = buildGeminiModel(genAI, modelName, messages);
 
-  const chatMessages = messages.filter(m => m.role !== 'system');
-  const lastMessage = chatMessages[chatMessages.length - 1];
-
-  const history = chatMessages.slice(0, -1).map(m => ({
-    role: m.role === 'assistant' ? 'model' : m.role,
-    parts: [{ text: m.content }],
-  }));
+  const { history, message } = buildGeminiRequest(messages);
 
   const chat = model.startChat({ history });
-  const resultPromise = chat.sendMessage(lastMessage.content);
+  const resultPromise = chat.sendMessage(message);
 
   // Google SDK doesn't natively support AbortSignal yet, so we race it
   const result = await Promise.race([
@@ -76,18 +142,12 @@ const callGeminiStream = async (modelName, apiKey, messages, signal = null, onCh
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = buildGeminiModel(genAI, modelName, messages);
 
-  const chatMessages = messages.filter(m => m.role !== 'system');
-  const lastMessage = chatMessages[chatMessages.length - 1];
-
-  const history = chatMessages.slice(0, -1).map(m => ({
-    role: m.role === 'assistant' ? 'model' : m.role,
-    parts: [{ text: m.content }],
-  }));
+  const { history, message } = buildGeminiRequest(messages);
 
   const chat = model.startChat({ history });
 
   // Use sendMessageStream instead of sendMessage
-  const resultPromise = chat.sendMessageStream(lastMessage.content);
+  const resultPromise = chat.sendMessageStream(message);
 
   const result = await Promise.race([
     resultPromise,
@@ -115,4 +175,4 @@ const callGeminiStream = async (modelName, apiKey, messages, signal = null, onCh
   return { text: fullText, tokensUsed };
 };
 
-module.exports = { callGemini, callGeminiStream };
+module.exports = { callGemini, callGeminiStream, buildGeminiHistory, buildGeminiRequest };

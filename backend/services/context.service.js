@@ -68,19 +68,18 @@ const toRoleMessage = (message) => ({
 });
 
 const buildRoleAwareContext = ({ memoryMode, olderSummary, latestMessages }) => {
+  const instruction = memoryMode === 'accurate'
+    ? 'Continue the same conversation. Use the summary and recent turns below as prior context. Prefer the most recent turns if there is any conflict.'
+    : 'Continue the same conversation. Use the prior summary and recent turns below as memory for the next reply.';
+
+  // The summary belongs in the system message, not in an assistant turn: Gemini
+  // rejects a history whose first turn is a model turn.
   const context = [{
     role: 'system',
-    content: memoryMode === 'accurate'
-      ? 'Continue the same conversation. Use the summary and recent turns below as prior context. Prefer the most recent turns if there is any conflict.'
-      : 'Continue the same conversation. Use the prior summary and recent turns below as memory for the next reply.',
+    content: olderSummary
+      ? `${instruction}\n\n[Conversation summary]\n${olderSummary}`
+      : instruction,
   }];
-
-  if (olderSummary) {
-    context.push({
-      role: 'assistant',
-      content: `[Conversation summary]\n${olderSummary}`,
-    });
-  }
 
   context.push(...latestMessages.map(toRoleMessage));
   return context;
@@ -216,17 +215,26 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
   for (let i = latestMessages.length - 1; i >= 0; i--) {
     const message = toRoleMessage(latestMessages[i]);
     const estimatedTokens = Math.ceil(String(message.content || '').length / 4) + 4;
-    if (latestContextMessages.length > 0 && runningTokens + estimatedTokens > tokenBudget * 0.6) {
+    // Always keep the most recent exchange (assistant reply + the user turn it
+    // answered) so a tight budget can't leave a dangling assistant message.
+    const isMinimumKeep = latestContextMessages.length < 2;
+    if (!isMinimumKeep && runningTokens + estimatedTokens > tokenBudget * 0.6) {
       break;
     }
     latestContextMessages.unshift(message);
     runningTokens += estimatedTokens;
   }
 
+  // A window opening on an assistant turn is an orphaned answer, and Gemini
+  // rejects history that doesn't start with a user turn.
+  while (latestContextMessages.length > 0 && latestContextMessages[0].role !== 'user') {
+    latestContextMessages.shift();
+  }
+
   const context = buildRoleAwareContext({
     memoryMode,
     olderSummary: olderSummaryText,
-    latestMessages: latestContextMessages.length > 0 ? latestContextMessages : latestMessages,
+    latestMessages: latestContextMessages,
   });
 
   return {
