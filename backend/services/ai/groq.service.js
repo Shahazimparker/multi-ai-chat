@@ -28,7 +28,7 @@ const callGroq = async (modelName, apiKey, messages, signal = null) => {
  * @param {(text: string) => void} onChunk
  * @returns {Promise<{text: string, tokensUsed: number}>}
  */
-const callGroqStream = async (modelName, apiKey, messages, signal = null, onChunk) => {
+const callGroqStream = async (modelName, apiKey, messages, signal = null, onChunk, onReasoning) => {
   const client = new Groq({ apiKey });
   const stream = await client.chat.completions.create({
     model:       modelName,
@@ -39,9 +39,16 @@ const callGroqStream = async (modelName, apiKey, messages, signal = null, onChun
   }, { signal });
 
   let fullText = '';
+  let fullReasoning = '';
   let tokensUsed = 0;
 
   for await (const chunk of stream) {
+    const reasoningDelta = chunk.choices?.[0]?.delta?.reasoning
+      || chunk.choices?.[0]?.delta?.reasoning_content;
+    if (reasoningDelta) {
+      fullReasoning += reasoningDelta;
+      if (onReasoning) onReasoning(reasoningDelta);
+    }
     const delta = chunk.choices?.[0]?.delta?.content;
     if (delta) {
       fullText += delta;
@@ -52,7 +59,7 @@ const callGroqStream = async (modelName, apiKey, messages, signal = null, onChun
     }
   }
 
-  return { text: fullText, tokensUsed };
+  return { text: fullText, reasoning: fullReasoning, tokensUsed };
 };
 
 module.exports = { callGroq, callGroqStream };

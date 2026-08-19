@@ -103,6 +103,9 @@ export const useChatSession = ({ refreshTokenStats }) => {
           tokensUsed: entry.tokens_used,
           created_at: entry.created_at,
           generatedFiles: gf,
+          // Undefined when the opt-in reasoning migration has not been applied;
+          // the panel simply does not render in that case.
+          reasoning: entry.reasoning || undefined,
         };
       }));
     } catch {
@@ -291,6 +294,8 @@ export const useChatSession = ({ refreshTokenStats }) => {
       let fullReply = '';
       let metadata = {};
       let streamingText = '';
+      let reasoningTextAcc = '';
+      let reasoningStartedAt = null;
       setMessages((prev) => [...prev, { role: 'assistant', content: '', streaming: true, statusMessage: null, created_at: new Date().toISOString() }]);
 
       const parser = createSseParser();
@@ -308,6 +313,44 @@ export const useChatSession = ({ refreshTokenStats }) => {
               setError(data.error);
               streamEnded = true;
               break;
+            }
+            // Chain of thought — its own panel, never the answer bubble.
+            // `reasoningStartedAt` drives the live "Thinking for 14s" counter;
+            // it is stamped once so the timer measures the whole thinking
+            // phase, not the gap between deltas.
+            if (data.type === 'reasoning') {
+              if (reasoningStartedAt === null) reasoningStartedAt = Date.now();
+              reasoningTextAcc += data.text;
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last && last.role === 'assistant') {
+                  updated[updated.length - 1] = {
+                    ...last,
+                    reasoning: reasoningTextAcc,
+                    reasoningStartedAt,
+                    reasoningDone: false,
+                    statusMessage: null,
+                  };
+                }
+                return updated;
+              });
+              continue;
+            }
+            // The server streamed text that turned out to be a tool call's
+            // preamble, not part of the answer. Drop it and start the bubble
+            // over from the round that follows the tool.
+            if (data.type === 'reset') {
+              streamingText = '';
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last && last.role === 'assistant') {
+                  updated[updated.length - 1] = { ...last, content: '', streaming: true };
+                }
+                return updated;
+              });
+              continue;
             }
             if (data.type === 'approval_request') {
               setMessages((prev) => {
@@ -366,9 +409,22 @@ export const useChatSession = ({ refreshTokenStats }) => {
             }
             if (data.type === 'chunk') {
               streamingText += data.text;
+              // The first answer token marks the end of thinking: freeze the
+              // counter at its final value so the collapsed header reads
+              // "Thought for 14s" instead of counting up forever.
+              const reasoningJustFinished = reasoningStartedAt !== null;
+              const reasoningElapsedMs = reasoningJustFinished ? Date.now() - reasoningStartedAt : null;
               setMessages((prev) => {
                 const updated = [...prev];
-                updated[updated.length - 1] = { ...updated[updated.length - 1], content: streamingText, statusMessage: null };
+                const last = updated[updated.length - 1];
+                updated[updated.length - 1] = {
+                  ...last,
+                  content: streamingText,
+                  statusMessage: null,
+                  ...(reasoningJustFinished && !last.reasoningDone
+                    ? { reasoningDone: true, reasoningElapsedMs }
+                    : {}),
+                };
                 return updated;
               });
             } else if (data.type === 'done') {
@@ -447,7 +503,10 @@ export const useChatSession = ({ refreshTokenStats }) => {
 
       setMessages((prev) => {
         const updated = [...prev];
-        updated[updated.length - 1] = { ...updated[updated.length - 1], streaming: false, statusMessage: null, model: metadata.model, tokensUsed: metadata.tokensUsed, cacheHit: metadata.cacheHit, generatedFiles };
+        // Also stop the counter here: a turn that reasoned but produced no
+        // answer text never hit the chunk branch, and would otherwise be left
+        // ticking forever.
+        updated[updated.length - 1] = { ...updated[updated.length - 1], streaming: false, statusMessage: null, model: metadata.model, tokensUsed: metadata.tokensUsed, cacheHit: metadata.cacheHit, generatedFiles, reasoningDone: true };
         return updated;
       });
       if (generatedFiles.length > 0) setSidebarRefresh((prev) => prev + 1);

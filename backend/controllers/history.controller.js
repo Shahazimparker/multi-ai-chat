@@ -5,6 +5,10 @@
 
 const supabase = require('../config/supabase');
 
+// Set false the first time a query proves the opt-in `reasoning` column is
+// absent, so every later request skips straight to the working column list.
+let reasoningColumnExists = true;
+
 // ── GET /api/history/topics — list user's topics ──────────
 const getTopics = async (req, res) => {
   const { data, error } = await supabase
@@ -32,12 +36,27 @@ const getMessages = async (req, res) => {
 
   if (!topic) return res.status(404).json({ error: 'Topic not found' });
 
-  const { data, error } = await supabase
+  const BASE_COLUMNS = 'id, role, content, model, tokens_used, created_at, generated_files';
+
+  const fetchMessages = (columns) => supabase
     .from('messages')
-    .select('id, role, content, model, tokens_used, created_at, generated_files')
+    .select(columns)
     .eq('topic_id', id)
     .eq('is_summary', false)
     .order('created_at', { ascending: true });
+
+  // `reasoning` is an opt-in migration
+  // (database/migration_add_reasoning_to_messages.sql). Selecting a column that
+  // does not exist fails the whole query, so drop it and retry rather than
+  // return no history at all.
+  let { data, error } = await fetchMessages(
+    reasoningColumnExists ? `${BASE_COLUMNS}, reasoning` : BASE_COLUMNS
+  );
+  if (error && reasoningColumnExists && /reasoning/i.test(error.message || '')) {
+    console.warn('[History] messages.reasoning column not found — run database/migration_add_reasoning_to_messages.sql to keep reasoning across reloads.');
+    reasoningColumnExists = false;
+    ({ data, error } = await fetchMessages(BASE_COLUMNS));
+  }
 
   if (error) return res.status(500).json({ error: error.message });
   res.json({ messages: data || [] });

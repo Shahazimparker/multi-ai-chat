@@ -107,12 +107,13 @@ const callOpenRouter = async (modelName, apiKey, messages, signal = null) => {
  * @param {(text: string) => void} onChunk
  * @returns {Promise<{text: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number}>}
  */
-const callOpenRouterStream = async (modelName, apiKey, messages, signal = null, onChunk) => {
+const callOpenRouterStream = async (modelName, apiKey, messages, signal = null, onChunk, onReasoning) => {
   const baseConfig = buildOpenRouterConfig(modelName, apiKey, messages, signal);
-  const response = await callOpenAICompatibleStream({ ...baseConfig, onChunk });
+  const response = await callOpenAICompatibleStream({ ...baseConfig, onChunk, onReasoning });
 
   return {
     text: response.text,
+    reasoning: response.reasoning || '',
     tokensUsed: response.tokensUsed,
     cacheCreationTokens: response.cacheCreationTokens || 0,
     cacheReadTokens: response.cacheReadTokens || 0,

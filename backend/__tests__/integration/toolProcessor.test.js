@@ -52,12 +52,25 @@ describe('processToolCall', () => {
       expect(result.handled).toBe(true);
     });
 
-    it('matches WEB_SEARCH tag pattern', async () => {
+    it('matches WEB_SEARCH tag pattern when forceWebSearch is enabled', async () => {
       const result = await processToolCall({
         ...baseArgs,
         reply: '[WEB_SEARCH:query="test"]',
+        forceWebSearch: true,
       });
       expect(result.handled).toBe(true);
+      expect(result.newMessages[1].content).toContain('[WEB SEARCH RESULTS');
+    });
+
+    it('returns disabled notification and skips search when forceWebSearch is false', async () => {
+      const result = await processToolCall({
+        ...baseArgs,
+        reply: '[WEB_SEARCH:query="test"]',
+        forceWebSearch: false,
+      });
+      expect(result.handled).toBe(true);
+      expect(result.newMessages[1].content).toContain('Web search is disabled for this conversation');
+      expect(result.newMessages[1].content).not.toContain('[WEB SEARCH RESULTS');
     });
 
     it('does not handle EXECUTE_CODE — the tool was removed', async () => {

@@ -42,21 +42,35 @@ const callClaude = async (modelName, apiKey, messages, signal = null) => {
  * @param {Array} messages
  * @param {AbortSignal|null} signal
  * @param {(text: string) => void} onChunk
- * @returns {Promise<{text: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number}>}
+ * @param {(text: string) => void} [onReasoning] — extended-thinking deltas
+ * @param {object|null} [modelConfig] — set `reasoning` on the model in
+ *   config/models.js to turn thinking on; omitted means no thinking, as before
+ * @returns {Promise<{text: string, reasoning: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number}>}
  */
-const callClaudeStream = async (modelName, apiKey, messages, signal = null, onChunk) => {
+const callClaudeStream = async (modelName, apiKey, messages, signal = null, onChunk, onReasoning, modelConfig = null) => {
   const client = new Anthropic({ apiKey });
   const { system, chatMessages } = extractClaudeParams(messages);
+
+  // Extended thinking is opt-in per model. `budget_tokens` is rejected with a
+  // 400 on Sonnet 5 / Opus 4.8 — adaptive thinking replaces it. `display`
+  // defaults to "omitted" on those models, which streams thinking blocks with
+  // empty text, so it has to be set explicitly for the reasoning UI to show
+  // anything at all.
+  const thinking = modelConfig?.reasoning
+    ? { type: 'adaptive', display: 'summarized' }
+    : null;
 
   const stream = await client.messages.create({
     model: modelName,
     max_tokens: 16000,
     ...(system ? { system } : {}),
+    ...(thinking ? { thinking } : {}),
     messages: chatMessages,
     stream: true,
   }, { signal });
 
   let fullText = '';
+  let fullReasoning = '';
   let inputTokens = 0;
   let outputTokens = 0;
   let cacheCreationTokens = 0;
@@ -67,6 +81,13 @@ const callClaudeStream = async (modelName, apiKey, messages, signal = null, onCh
       const delta = event.delta.text;
       fullText += delta;
       if (onChunk) onChunk(delta);
+    }
+    if (event.type === 'content_block_delta' && event.delta?.type === 'thinking_delta') {
+      const delta = event.delta.thinking;
+      if (delta) {
+        fullReasoning += delta;
+        if (onReasoning) onReasoning(delta);
+      }
     }
     // Capture usage from the final message event
     if (event.type === 'message_delta' && event.usage) {
@@ -81,6 +102,7 @@ const callClaudeStream = async (modelName, apiKey, messages, signal = null, onCh
 
   return {
     text: fullText,
+    reasoning: fullReasoning,
     tokensUsed: inputTokens + outputTokens,
     cacheCreationTokens,
     cacheReadTokens,

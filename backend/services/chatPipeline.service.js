@@ -76,6 +76,11 @@ const {
  *
  * // ---- callbacks ----
  * @param {(chunk: string) => void} [opts.onStreamChunk]
+ * @param {() => void} [opts.onStreamReset]  — discard text already streamed for
+ *   this turn; fired when a round turns out to be a tool call after a preamble
+ *   was forwarded, so the client's bubble must be cleared before the next round
+ * @param {(chunk: string) => void} [opts.onReasoningChunk] — reasoning /
+ *   thinking deltas, for models that expose a chain of thought
  * @param {(event: object) => void} [opts.onToolStatus]
  *
  * @returns {Promise<{
@@ -104,6 +109,14 @@ const {
  *   userMessage: string|null,
  * }>}
  */
+// Set false the first time an insert proves the opt-in `reasoning` column is
+// absent, so every later request skips straight to the working shape.
+let reasoningColumnExists = true;
+
+/** PostgREST reports an unknown column as PGRST204 naming it in the message. */
+const isMissingReasoningColumn = (err) =>
+  err?.code === 'PGRST204' || /reasoning/i.test(err?.message || '');
+
 const CANONICAL_CHAT_PIPELINE_FLAGS = Object.freeze({
   exactCacheEnabled: false,
   identityCheckEnabled: true,
@@ -420,6 +433,8 @@ const runChatPipeline = async (opts) => {
 
     // callbacks
     onStreamChunk,
+    onStreamReset,
+    onReasoningChunk,
     onToolStatus,
   } = opts;
 
@@ -721,7 +736,7 @@ ${page.text}`)
     const aiMessages = [];
     const askClarifyingDirective = `\n\n## IMPORTANT: Ask Clarifying Questions First\nBefore using any GENERATE_* tool (GENERATE_PPT, GENERATE_IMAGE, GENERATE_HTML, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CHART, GENERATE_CSV):\n- If the user's request lacks critical details (title, theme, structure, layout, purpose, content), ask clarifying questions FIRST\n- Do NOT immediately jump to generation with vague or insufficient information\n- Ask 2-4 specific, targeted questions to get the details you need\n- Only use the GENERATE_* tool AFTER the user has provided sufficient context\n- This ensures the output matches what the user actually wants\n- Wait for the user's response before proceeding with generation`;
     const toolLines = [
-      '1. Web Search: [WEB_SEARCH:query="your search query"]',
+      ...(forceWebSearch ? ['1. Web Search: [WEB_SEARCH:query="your search query"]'] : []),
       '2. Generate Image (DALL-E 3): [GENERATE_IMAGE:prompt=detailed image description here]',
       '   - Use when the user asks you to generate, create, or draw an image/picture/photo',
       '   - Write the most descriptive prompt possible for best results',
@@ -825,6 +840,7 @@ ${page.text}`)
       user,
       topicId: resolvedTopicId,
       abortController,
+      forceWebSearch: Boolean(forceWebSearch),
     };
     if (onToolStatus) {
       processToolCallArgs.onStatus = onToolStatus;
@@ -840,6 +856,8 @@ ${page.text}`)
       deadlineAt: startTime + CHAT_TIME_BUDGET_MS,
       loggerPrefix: 'ChatPipeline',
       onStreamChunk,
+      onStreamReset,
+      onReasoningChunk,
     });
 
     if (loopResult.aborted) throw { name: 'AbortError' };
@@ -855,6 +873,7 @@ ${page.text}`)
     const cacheCreationTokens = loopResult.cacheCreationTokens || 0;
     const cacheReadTokens = loopResult.cacheReadTokens || 0;
     const generatedMediaFiles = loopResult.generatedMedia || [];
+    const reasoningText = loopResult.reasoningText || '';
 
     // Strip leftover tool-call syntax
     finalReply = stripToolTags(finalReply);
@@ -956,10 +975,29 @@ ${page.text}`)
         // Pass the array directly — JSONB column expects a JS array, not a stringified JSON.
         // Stringifying causes double-encoding, and on read the frontend gets a string, not an array.
         const generatedFilesValue = generatedMediaFiles.length > 0 ? generatedMediaFiles : [];
-        const { data: savedMessages, error: msgError } = await supabase.from('messages').insert([
+        const buildRows = (withReasoning) => [
           { topic_id: resolvedTopicId, user_id: user.id, role: 'user', content: message, model: modelId, tokens_used: estimatedInputTokens },
-          { topic_id: resolvedTopicId, user_id: user.id, role: 'assistant', content: finalReply, model: modelId, tokens_used: billableTokens, generated_files: generatedFilesValue },
-        ]).select('id, role');
+          {
+            topic_id: resolvedTopicId, user_id: user.id, role: 'assistant', content: finalReply,
+            model: modelId, tokens_used: billableTokens, generated_files: generatedFilesValue,
+            ...(withReasoning && reasoningText ? { reasoning: reasoningText } : {}),
+          },
+        ];
+
+        // `reasoning` ships as an opt-in migration
+        // (database/migration_add_reasoning_to_messages.sql). Until it is
+        // applied the column does not exist and PostgREST rejects the whole
+        // insert, which would take the chat down rather than just lose the
+        // thought process — so fall back once and remember for this process.
+        let { data: savedMessages, error: msgError } = await supabase
+          .from('messages').insert(buildRows(reasoningColumnExists)).select('id, role');
+
+        if (msgError && reasoningColumnExists && isMissingReasoningColumn(msgError)) {
+          console.warn('[ChatPipeline] messages.reasoning column not found — run database/migration_add_reasoning_to_messages.sql to persist reasoning. Saving without it.');
+          reasoningColumnExists = false;
+          ({ data: savedMessages, error: msgError } = await supabase
+            .from('messages').insert(buildRows(false)).select('id, role'));
+        }
 
         if (msgError) {
           persistError = msgError;

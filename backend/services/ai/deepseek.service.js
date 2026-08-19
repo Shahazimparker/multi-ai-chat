@@ -36,8 +36,12 @@ const calldeepseekAPI = async (model, apiKey, messages, signal = null, modelConf
     signal,
   });
 
+  const message = response.data.choices[0].message;
   return {
-    text: response.data.choices[0].message.content,
+    text: message.content,
+    // Thinking mode returns the chain of thought beside the answer, not inside
+    // it. Without this the reasoning tokens are billed and then discarded.
+    reasoning: message.reasoning_content || message.reasoning || '',
     tokensUsed: response.data.usage?.total_tokens || 0,
   };
 };
@@ -50,9 +54,11 @@ const calldeepseekAPI = async (model, apiKey, messages, signal = null, modelConf
  * @param {AbortSignal|null} signal
  * @param {object|null} modelConfig
  * @param {(text: string) => void} onChunk
- * @returns {Promise<{text: string, tokensUsed: number}>}
+ * @param {(text: string) => void} [onReasoning] — thinking-mode deltas, which
+ *   DeepSeek streams in full before the first answer token
+ * @returns {Promise<{text: string, reasoning: string, tokensUsed: number}>}
  */
-const calldeepseekAPIStream = async (model, apiKey, messages, signal = null, modelConfig = null, onChunk) => {
+const calldeepseekAPIStream = async (model, apiKey, messages, signal = null, modelConfig = null, onChunk, onReasoning) => {
   const body = buildDeepseekBody(model, messages, modelConfig);
   body.stream = true;
 
@@ -67,6 +73,7 @@ const calldeepseekAPIStream = async (model, apiKey, messages, signal = null, mod
 
   return new Promise((resolve, reject) => {
     let fullText = '';
+    let fullReasoning = '';
     let tokensUsed = 0;
     let buffer = '';
 
@@ -82,7 +89,15 @@ const calldeepseekAPIStream = async (model, apiKey, messages, signal = null, mod
         if (jsonStr === '[DONE]') continue;
         try {
           const parsed = JSON.parse(jsonStr);
-          const delta = parsed.choices?.[0]?.delta?.content;
+          const deltaObj = parsed.choices?.[0]?.delta || {};
+          // DeepSeek names this reasoning_content; vLLM and other
+          // OpenAI-compatible hosts settled on plain `reasoning`.
+          const reasoningDelta = deltaObj.reasoning_content || deltaObj.reasoning;
+          if (reasoningDelta) {
+            fullReasoning += reasoningDelta;
+            if (onReasoning) onReasoning(reasoningDelta);
+          }
+          const delta = deltaObj.content;
           if (delta) {
             fullText += delta;
             if (onChunk) onChunk(delta);
@@ -94,7 +109,7 @@ const calldeepseekAPIStream = async (model, apiKey, messages, signal = null, mod
       }
     });
 
-    response.data.on('end', () => resolve({ text: fullText, tokensUsed }));
+    response.data.on('end', () => resolve({ text: fullText, reasoning: fullReasoning, tokensUsed }));
     response.data.on('error', (err) => reject(err));
 
     if (signal) {

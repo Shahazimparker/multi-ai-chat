@@ -1,0 +1,101 @@
+/* ============================================================
+   FILE: frontend/src/components/chat/ReasoningPanel.css
+   PURPOSE: Collapsible thought-process panel.
+   ============================================================
+   Deliberately quieter than the answer: dimmer text, no gradient, monospace
+   body. The reasoning is supporting material, so it should never compete with
+   the reply it sits above. Follows the same light-theme override pattern as
+   .tool-status-pill in MessageBubble.css. */
+
+.reasoning-panel {
+  margin-bottom: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(148, 163, 184, 0.06);
+  overflow: hidden;
+}
+
+.reasoning-panel.is-thinking {
+  border-color: rgba(99, 102, 241, 0.32);
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.reasoning-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 11px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: left;
+  transition: color 0.15s ease;
+}
+
+.reasoning-toggle:hover { color: rgba(255, 255, 255, 0.9); }
+
+.reasoning-panel.is-thinking .reasoning-toggle { color: rgba(199, 210, 254, 0.95); }
+
+.reasoning-caret {
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+}
+.reasoning-caret.is-open { transform: rotate(90deg); }
+
+.reasoning-icon { flex-shrink: 0; opacity: 0.85; }
+
+/* Only pulse while thinking is live — a finished panel should sit still. */
+.reasoning-panel.is-thinking .reasoning-icon {
+  animation: reasoningPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes reasoningPulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reasoning-panel.is-thinking .reasoning-icon { animation: none; opacity: 0.85; }
+  .reasoning-caret { transition: none; }
+}
+
+.reasoning-label { letter-spacing: 0.01em; }
+
+.reasoning-body {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 2px 12px 11px 12px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.74rem;
+  line-height: 1.6;
+  /* The trace is plain text with meaningful newlines — never markdown. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: rgba(255, 255, 255, 0.55);
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+/* ── Light theme ─────────────────────────────────────────── */
+:root[data-theme="light"] .reasoning-panel {
+  border-color: rgba(100, 116, 139, 0.24);
+  background: rgba(100, 116, 139, 0.05);
+}
+
+:root[data-theme="light"] .reasoning-panel.is-thinking {
+  border-color: rgba(99, 102, 241, 0.24);
+  background: rgba(99, 102, 241, 0.06);
+}
+
+:root[data-theme="light"] .reasoning-toggle { color: rgba(51, 65, 85, 0.7); }
+:root[data-theme="light"] .reasoning-toggle:hover { color: rgba(15, 23, 42, 0.95); }
+:root[data-theme="light"] .reasoning-panel.is-thinking .reasoning-toggle { color: rgba(67, 56, 202, 0.95); }
+
+:root[data-theme="light"] .reasoning-body {
+  color: rgba(51, 65, 85, 0.75);
+  border-top-color: rgba(100, 116, 139, 0.18);
+}

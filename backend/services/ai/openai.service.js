@@ -31,7 +31,7 @@ const callOpenAI = async (modelName, apiKey, messages, signal = null) => {
  * @param {(text: string) => void} onChunk
  * @returns {Promise<{text: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number}>}
  */
-const callOpenAIStream = async (modelName, apiKey, messages, signal = null, onChunk) => {
+const callOpenAIStream = async (modelName, apiKey, messages, signal = null, onChunk, onReasoning) => {
   const client = new OpenAI({ apiKey });
 
   const stream = await client.chat.completions.create({
@@ -42,12 +42,19 @@ const callOpenAIStream = async (modelName, apiKey, messages, signal = null, onCh
   }, { signal });
 
   let fullText = '';
+  let fullReasoning = '';
   let promptTokens = 0;
   let completionTokens = 0;
   let cacheCreationTokens = 0;
   let cacheReadTokens = 0;
 
   for await (const chunk of stream) {
+    const reasoningDelta = chunk.choices?.[0]?.delta?.reasoning
+      || chunk.choices?.[0]?.delta?.reasoning_content;
+    if (reasoningDelta) {
+      fullReasoning += reasoningDelta;
+      if (onReasoning) onReasoning(reasoningDelta);
+    }
     const delta = chunk.choices?.[0]?.delta?.content;
     if (delta) {
       fullText += delta;
@@ -63,6 +70,7 @@ const callOpenAIStream = async (modelName, apiKey, messages, signal = null, onCh
 
   return {
     text: fullText,
+    reasoning: fullReasoning,
     tokensUsed: promptTokens + completionTokens,
     cacheCreationTokens,
     cacheReadTokens,

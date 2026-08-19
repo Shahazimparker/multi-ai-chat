@@ -44,7 +44,7 @@ export const useChatComposer = () => {
     setPendingImage(null);
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     return payload;
-  }, [input, pendingFiles, pendingImage]);
+  }, [input, pendingFiles, pendingImage, webEnabled]);
 
   const removePendingFile = useCallback((index) => {
     setPendingFiles((prev) => prev.filter((_, idx) => idx !== index));

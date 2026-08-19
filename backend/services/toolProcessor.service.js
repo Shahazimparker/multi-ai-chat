@@ -240,6 +240,7 @@ const processToolCall = async ({
   topicId,
   abortController,
   onStatus = null,
+  forceWebSearch = true,
 }) => {
   const searchMatch = findSearchFileMatch(reply);
   if (searchMatch) {
@@ -295,6 +296,17 @@ const processToolCall = async ({
 
   const webSearchMatch = findWebSearchMatch(reply);
   if (webSearchMatch) {
+    if (!forceWebSearch) {
+      return {
+        handled: true,
+        newMessages: [
+          { role: 'assistant', content: reply.replace(webSearchMatch[0], '').trim() || '[web search]' },
+          { role: 'user', content: '[WEB SEARCH RESULT]\nWeb search is disabled for this conversation. Please answer the user\'s question using your existing knowledge without searching the web.\n[END WEB SEARCH RESULT]' },
+        ],
+        embedTokens: 0,
+      };
+    }
+
     const query = webSearchMatch[1].trim();
     onStatus?.({
       type: 'status',

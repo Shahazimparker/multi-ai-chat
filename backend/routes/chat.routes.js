@@ -93,6 +93,11 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  // Reverse proxies in front of the app (nginx, and Vercel's edge) buffer a
+  // response body by default, which collects the whole stream and delivers it
+  // as one burst — exactly the symptom live streaming is meant to fix.
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
   res.write('data: {"status": "connected"}\n\n');
 
   // ── Run the shared pipeline ────────────────────────────────
@@ -120,6 +125,29 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
           res.write(`data: ${JSON.stringify({ type: 'chunk', text: chunk })}\n\n`);
         } catch (writeErr) {
           console.warn('[Stream] Failed to write chunk:', writeErr.message);
+        }
+      }
+    },
+    // Reasoning goes to its own panel, never the answer bubble. It arrives
+    // before the first answer token, so this is usually what breaks the silence
+    // on a slow model.
+    onReasoningChunk: (chunk) => {
+      if (!res.writableEnded && !res.destroyed) {
+        try {
+          res.write(`data: ${JSON.stringify({ type: 'reasoning', text: chunk })}\n\n`);
+        } catch (writeErr) {
+          console.warn('[Stream] Failed to write reasoning chunk:', writeErr.message);
+        }
+      }
+    },
+    // A round that streamed a preamble then turned out to be a tool call: the
+    // text on screen is not part of the answer, so tell the client to drop it.
+    onStreamReset: () => {
+      if (!res.writableEnded && !res.destroyed) {
+        try {
+          res.write(`data: ${JSON.stringify({ type: 'reset' })}\n\n`);
+        } catch (writeErr) {
+          console.warn('[Stream] Failed to write reset event:', writeErr.message);
         }
       }
     },

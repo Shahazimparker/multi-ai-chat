@@ -69,11 +69,12 @@ const callOpenAICompatible = async ({ baseURL, apiKey, modelName, messages, syst
  *  tools?: Array,
  *  toolChoice?: string|object,
  *  signal?: AbortSignal|null,
- *  onChunk: (text: string) => void
+ *  onChunk: (text: string) => void,
+ *  onReasoning?: (text: string) => void
  * }} options
- * @returns {Promise<{text: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number, toolCalls: Array}>}
+ * @returns {Promise<{text: string, reasoning: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number, toolCalls: Array}>}
  */
-const callOpenAICompatibleStream = async ({ baseURL, apiKey, modelName, messages, system, tools, toolChoice, signal, onChunk }) => {
+const callOpenAICompatibleStream = async ({ baseURL, apiKey, modelName, messages, system, tools, toolChoice, signal, onChunk, onReasoning }) => {
   const client = new OpenAIClient({
     apiKey,
     baseURL,
@@ -100,6 +101,7 @@ const callOpenAICompatibleStream = async ({ baseURL, apiKey, modelName, messages
   const stream = await client.chat.completions.create(requestBody, { signal });
 
   let fullText = '';
+  let fullReasoning = '';
   let promptTokens = 0;
   let completionTokens = 0;
   let cacheCreationTokens = 0;
@@ -108,6 +110,13 @@ const callOpenAICompatibleStream = async ({ baseURL, apiKey, modelName, messages
 
   for await (const chunk of stream) {
     const deltaObj = chunk.choices?.[0]?.delta || {};
+    // OpenRouter and vLLM use `reasoning`; DeepSeek-style hosts behind the same
+    // OpenAI-compatible surface use `reasoning_content`. Accept either.
+    const reasoningDelta = deltaObj.reasoning || deltaObj.reasoning_content;
+    if (reasoningDelta) {
+      fullReasoning += reasoningDelta;
+      if (onReasoning) onReasoning(reasoningDelta);
+    }
     const delta = deltaObj.content;
     if (delta) {
       fullText += delta;
@@ -154,6 +163,7 @@ const callOpenAICompatibleStream = async ({ baseURL, apiKey, modelName, messages
   const toolCalls = Array.from(toolCallsMap.values());
   return {
     text: fullText,
+    reasoning: fullReasoning,
     tokensUsed: promptTokens + completionTokens,
     cacheCreationTokens,
     cacheReadTokens,

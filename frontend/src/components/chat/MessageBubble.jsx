@@ -14,6 +14,7 @@ import { Bot, User, Copy, Check, Zap, Download, Clock, FileText, Image, ChevronD
 import api from '../../config/api';
 import ApprovalPrompt from './ApprovalPrompt';
 import ClarificationPrompt from './ClarificationPrompt';
+import ReasoningPanel from './ReasoningPanel';
 import './MessageBubble.css';
 
 // ── File languages that trigger file-card UI ─────────────────
@@ -303,6 +304,16 @@ const MessageBubble = ({ message, onSidebarRefresh, onApprovalComplete, onClarif
       </div>
       
       <div className="msg-bubble">
+        {/* Above the status pill and the answer: reasoning precedes both. */}
+        {message.role === 'assistant' && message.reasoning && (
+          <ReasoningPanel
+            reasoning={message.reasoning}
+            startedAt={message.reasoningStartedAt}
+            elapsedMs={message.reasoningElapsedMs}
+            done={message.reasoningDone !== false}
+          />
+        )}
+
         {message.statusMessage && (
           <div className="tool-status-pill">
             <span className="tool-status-spinner" />

@@ -348,6 +348,7 @@ export interface ProcessToolCallArgs {
   topicId?: string | null;
   abortController: AbortController;
   onStatus?: (event: unknown) => void;
+  forceWebSearch?: boolean;
 }
 
 export type ToolName =
