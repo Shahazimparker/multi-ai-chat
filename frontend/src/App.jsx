@@ -13,6 +13,7 @@ import ChatPage         from './pages/ChatPage';
 // Admin-only, and the sole consumer of recharts. Loading it lazily keeps that
 // chart library out of the bundle every non-admin user downloads.
 const AdminPage = lazy(() => import('./pages/AdminPage'));
+const KnowledgePage = lazy(() => import('./pages/KnowledgePage'));
 
 // ── Protected route wrapper ────────────────────────────────
 const ProtectedRoute = ({ children, adminOnly = false }) => {
@@ -28,6 +29,7 @@ const AppRoutes = () => (
     <Routes>
       <Route path="/login"     element={<LoginPage />} />
       <Route path="/chat"      element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
+      <Route path="/knowledge" element={<ProtectedRoute><KnowledgePage /></ProtectedRoute>} />
       <Route path="/admin"     element={<ProtectedRoute adminOnly><AdminPage /></ProtectedRoute>} />
       <Route path="*"          element={<Navigate to="/login" replace />} />
     </Routes>

@@ -10,7 +10,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Bot, User, Copy, Check, Zap, Download, Clock, FileText, Image, ChevronDown, ChevronUp } from 'lucide-react';
+import { Bot, User, Copy, Check, Zap, Download, Clock, FileText, Image, ChevronDown, ChevronUp, BookOpen, ExternalLink } from 'lucide-react';
 import api from '../../config/api';
 import ApprovalPrompt from './ApprovalPrompt';
 import ClarificationPrompt from './ClarificationPrompt';
@@ -174,6 +174,57 @@ const CodeBlock = ({ code, language, csvContent, onDownloadCSV }) => {
             <Download size={13} />
           </button>
         )}
+      </div>
+    </div>
+  );
+};
+
+// ── CitationsPanel — renders verified reference sources ───────
+const CitationsPanel = ({ citations }) => {
+  const [expandedId, setExpandedId] = React.useState(null);
+
+  if (!citations || citations.length === 0) return null;
+
+  return (
+    <div className="citations-panel">
+      <div className="citations-header">
+        <BookOpen size={13} />
+        <span>Sources & Citations ({citations.length})</span>
+      </div>
+      <div className="citations-chips">
+        {citations.map((c) => {
+          const isExpanded = expandedId === c.citationId;
+          return (
+            <div key={c.citationId} className="citation-chip-wrap">
+              <button
+                type="button"
+                className={`citation-chip ${isExpanded ? 'active' : ''}`}
+                onClick={() => setExpandedId(isExpanded ? null : c.citationId)}
+                title={c.documentTitle}
+              >
+                <span className="cite-num">[{c.citationId}]</span>
+                <span className="cite-name">{c.documentTitle}</span>
+                {c.confidence > 0 && <span className="cite-score">{c.confidence}%</span>}
+              </button>
+
+              {isExpanded && (
+                <div className="citation-popover">
+                  <div className="citation-popover-header">
+                    <span className="cite-pop-collection">{c.collectionName}</span>
+                    {c.sourceUrl && (
+                      <a href={c.sourceUrl} target="_blank" rel="noreferrer" className="cite-pop-link">
+                        Open URL <ExternalLink size={10} />
+                      </a>
+                    )}
+                  </div>
+                  <strong className="cite-pop-title">{c.documentTitle}</strong>
+                  {c.sectionTitle && <div className="cite-pop-section">§ {c.sectionTitle}</div>}
+                  <p className="cite-pop-snippet">{c.snippet}...</p>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -366,6 +417,11 @@ const MessageBubble = ({ message, onSidebarRefresh, onApprovalComplete, onClarif
               ))}
             </div>
           </div>
+        )}
+
+        {/* RAG 2.0 Citations section */}
+        {message.citations?.length > 0 && (
+          <CitationsPanel citations={message.citations} />
         )}
         
         {message.streaming && <span className="cursor">|</span>}

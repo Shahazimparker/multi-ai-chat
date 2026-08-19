@@ -77,6 +77,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
     historyLimit = 5,
     ragEnabled = false,
     forceWebSearch = false,
+    selectedCollectionIds = [],
     thinkingEnabled,
     reasoningEffort = null,
     history,
@@ -118,6 +119,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
     historyLimit,
     ragEnabled,
     forceWebSearch: Boolean(forceWebSearch),
+    selectedCollectionIds,
     // undefined, not a coerced boolean: an absent field must fall through to
     // the model's own default rather than silently meaning "on".
     thinkingEnabled: typeof thinkingEnabled === 'boolean' ? thinkingEnabled : undefined,
@@ -231,6 +233,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
     responseTime: Date.now() - startTime,
     persistError: result.persistError ? 'Failed to save messages' : undefined,
     generatedFiles: result.generatedMediaFiles?.length > 0 ? result.generatedMediaFiles : undefined,
+    citations: result.citations?.length > 0 ? result.citations : undefined,
   })}\n\n`);
 
   if (!res.writableEnded && !res.destroyed) {

@@ -23,6 +23,7 @@ const sendMessage = async (req, res) => {
     historyLimit = 5,
     ragEnabled = false,
     forceWebSearch = false,
+    selectedCollectionIds = [],
   } = req.body;
 
   // ── Setup Abort Controller ─────────────────────────────────
@@ -51,6 +52,7 @@ const sendMessage = async (req, res) => {
     historyLimit,
     ragEnabled,
     forceWebSearch: Boolean(forceWebSearch),
+    selectedCollectionIds,
 
     abortController,
 
@@ -86,6 +88,7 @@ const sendMessage = async (req, res) => {
     tokensUsed: result.billableTokens,
     topicId: result.resolvedTopicId,
     cacheHit: result.cacheHit,
+    citations: result.citations?.length > 0 ? result.citations : undefined,
     orchestratorBrain: result.orchestratorBrain ? {
       enabled: true,
       traceId: result.orchestratorBrain.traceId,

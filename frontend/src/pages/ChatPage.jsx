@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from '../components/chat/Sidebar';
 import MobileNav from '../components/chat/MobileNav';
 import ModelSelector from '../components/chat/ModelSelector';
+import KnowledgeSelector from '../components/chat/KnowledgeSelector';
 import TokenBar from '../components/layout/TokenBar';
 import { useAuth } from '../context/AuthContext';
 import './ChatPage.css';
@@ -93,6 +94,11 @@ const ChatPage = () => {
             reasoningEffort={session.reasoningEffort}
             setReasoningEffort={session.setReasoningEffort}
             thinkingEnabled={session.thinkingEnabled}
+          />
+
+          <KnowledgeSelector
+            selectedCollectionIds={session.selectedCollectionIds}
+            onSelectionChange={session.setSelectedCollectionIds}
           />
 
           {session.activeTopic && (

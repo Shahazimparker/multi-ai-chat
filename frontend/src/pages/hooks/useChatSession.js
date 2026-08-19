@@ -15,6 +15,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
   const [memoryMode, setMemoryMode] = useState('accurate');
   const [historyLimit, setHistoryLimit] = useState(8);
   const [ragEnabled, setRagEnabled] = useState(true);
+  const [selectedCollectionIds, setSelectedCollectionIds] = useState([]);
   const [unifiedProvider, setUnifiedProvider] = useState(null);
   const [providerModelId, setProviderModelId] = useState(null);
   const [messageQueue, setMessageQueue] = useState([]);
@@ -314,6 +315,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
           historyLimit: Number(historyLimit),
           ragEnabled,
           forceWebSearch: Boolean(forceWebSearch),
+          selectedCollectionIds,
           thinkingEnabled,
           reasoningEffort,
         }),
@@ -422,6 +424,21 @@ export const useChatSession = ({ refreshTokenStats }) => {
                     },
                     streaming: false,
                     statusMessage: null,
+                  };
+                }
+                return updated;
+              });
+              continue;
+            }
+
+            if (data.type === 'citations') {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last && last.role === 'assistant') {
+                  updated[updated.length - 1] = {
+                    ...last,
+                    citations: data.citations || [],
                   };
                 }
                 return updated;
@@ -538,7 +555,18 @@ export const useChatSession = ({ refreshTokenStats }) => {
         // Also stop the counter here: a turn that reasoned but produced no
         // answer text never hit the chunk branch, and would otherwise be left
         // ticking forever.
-        updated[updated.length - 1] = { ...updated[updated.length - 1], streaming: false, statusMessage: null, model: metadata.model, tokensUsed: metadata.tokensUsed, cacheHit: metadata.cacheHit, generatedFiles, reasoningDone: true };
+        const prevMsg = updated[updated.length - 1] || {};
+        updated[updated.length - 1] = {
+          ...prevMsg,
+          streaming: false,
+          statusMessage: null,
+          model: metadata.model,
+          tokensUsed: metadata.tokensUsed,
+          cacheHit: metadata.cacheHit,
+          generatedFiles,
+          reasoningDone: true,
+          citations: metadata.citations || prevMsg.citations || [],
+        };
         return updated;
       });
       if (generatedFiles.length > 0) setSidebarRefresh((prev) => prev + 1);
@@ -577,7 +605,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
       uploadSessionIdRef.current = null;
       sessionStorage.removeItem('uploadSessionId');
     }
-  }, [activeTopic, historyLimit, memoryMode, model, providerModelId, ragEnabled, refreshTokenStats, thinkingEnabled, reasoningEffort, uploadSingleFile]);
+  }, [activeTopic, historyLimit, memoryMode, model, providerModelId, ragEnabled, refreshTokenStats, selectedCollectionIds, thinkingEnabled, reasoningEffort, uploadSingleFile]);
 
   useEffect(() => {
     if (loading || messageQueue.length === 0) return;
@@ -671,6 +699,8 @@ export const useChatSession = ({ refreshTokenStats }) => {
     setHistoryLimit,
     ragEnabled,
     setRagEnabled,
+    selectedCollectionIds,
+    setSelectedCollectionIds,
     unifiedProvider,
     setUnifiedProvider,
     providerModelId,

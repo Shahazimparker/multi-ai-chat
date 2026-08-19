@@ -35,6 +35,8 @@ const { runToolLoop } = require('./toolLoop.service');
 const { stripToolTags, classifyError } = require('./chatCleanup.service');
 const { searchWeb } = require('./tools/webSearch.service');
 const { extractUrls, readUrls } = require('./tools/urlReader.service');
+const { extractCollectionMentions, searchKnowledgeCollections } = require('./rag2.service');
+const { listCollections } = require('./knowledgeCollection.service');
 const {
   createPromptBudget,
   createDynamicPromptBudget,
@@ -395,6 +397,7 @@ const makePipelineResult = (overrides = {}) => ({
   savedUserMessageId: null,
   savedAssistantMessageId: null,
   promptTokens: 0,
+  citations: [],
   err: null,
   errorType: null,
   userMessage: null,
@@ -419,6 +422,7 @@ const runChatPipeline = async (opts) => {
     historyLimit = 5,
     ragEnabled = false,
     forceWebSearch = false,
+    selectedCollectionIds = [],
     history,
     abortController,
 
@@ -747,6 +751,64 @@ ${page.text}`)
       });
     }
 
+    // ── 7.6 Knowledge Base Collections (RAG 2.0) ───────────────
+    let knowledgeBaseContext = '';
+    let citations = [];
+
+    if (user?.id) {
+      const mentionedNames = extractCollectionMentions(finalQuery);
+      let targetCollectionIds = Array.isArray(selectedCollectionIds) ? [...selectedCollectionIds] : [];
+
+      if (mentionedNames.length > 0) {
+        try {
+          const userCollections = await listCollections(user.id);
+          for (const name of mentionedNames) {
+            const matched = userCollections.find((c) =>
+              c.name.toLowerCase() === name.toLowerCase() ||
+              c.name.toLowerCase().replace(/[\s_-]+/g, '') === name.toLowerCase().replace(/[\s_-]+/g, '')
+            );
+            if (matched && !targetCollectionIds.includes(matched.id)) {
+              targetCollectionIds.push(matched.id);
+            }
+          }
+        } catch (err) {
+          console.warn('[ChatPipeline] Collection mention lookup failed:', err.message);
+        }
+      }
+
+      if (targetCollectionIds.length > 0) {
+        onToolStatus?.({
+          type: 'status',
+          tool: 'knowledge_search',
+          message: 'searching knowledge collections...',
+        });
+
+        try {
+          const rag2Result = await searchKnowledgeCollections({
+            query: finalQuery,
+            collectionIds: targetCollectionIds,
+            userId: user.id,
+            tokenBudget: promptBudget.ragTokens,
+            embedProvider,
+            signal: abortController.signal,
+          });
+
+          if (rag2Result.context) {
+            knowledgeBaseContext = rag2Result.context;
+            citations = rag2Result.citations || [];
+            if (citations.length > 0) {
+              onToolStatus?.({
+                type: 'citations',
+                citations,
+              });
+            }
+          }
+        } catch (rag2Err) {
+          console.warn('[ChatPipeline] Knowledge collection search error:', rag2Err.message);
+        }
+      }
+    }
+
     // ── 8. Build AI messages ──────────────────────────────────
     const aiMessages = [];
     const askClarifyingDirective = `\n\n## IMPORTANT: Ask Clarifying Questions First\nBefore using any GENERATE_* tool (GENERATE_PPT, GENERATE_IMAGE, GENERATE_HTML, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CHART, GENERATE_CSV):\n- If the user's request lacks critical details (title, theme, structure, layout, purpose, content), ask clarifying questions FIRST\n- Do NOT immediately jump to generation with vague or insufficient information\n- Ask 2-4 specific, targeted questions to get the details you need\n- Only use the GENERATE_* tool AFTER the user has provided sufficient context\n- This ensures the output matches what the user actually wants\n- Wait for the user's response before proceeding with generation`;
@@ -780,6 +842,7 @@ ${page.text}`)
     if (urlContext) systemSections.push(`## URL Context\n${urlContext}`);
     if (fileContext) systemSections.push(`## File Context\n${fileContext}`);
     if (memoryContext) systemSections.push(memoryContext);
+    if (knowledgeBaseContext) systemSections.push(knowledgeBaseContext);
     aiMessages.push({ role: 'system', content: systemSections.join('\n\n') });
 
     // History. The `history` fallback is client-supplied (anonymous sessions have
@@ -1102,6 +1165,7 @@ ${page.text}`)
       savedUserMessageId,
       savedAssistantMessageId,
       promptTokens,
+      citations,
     });
   } catch (err) {
     // Gracefully handle manual aborts

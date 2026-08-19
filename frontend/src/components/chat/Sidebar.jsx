@@ -5,7 +5,7 @@
 // ============================================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { PlusCircle, MessageSquare, Trash2, Pencil, Check, X, LogOut, Settings, FileText, Clock, ChevronRight, Search, Download } from 'lucide-react';
+import { PlusCircle, MessageSquare, Trash2, Pencil, Check, X, LogOut, Settings, FileText, Clock, ChevronRight, Search, Download, Database } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../../context/AuthContext';
 import ThemeToggle from '../layout/ThemeToggle';
@@ -216,6 +216,11 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
         <button className="new-chat-btn" onClick={onNewChat}>
           <PlusCircle size={16} />
           New Chat
+        </button>
+
+        <button className="knowledge-nav-btn" onClick={() => navigate('/knowledge')}>
+          <Database size={15} />
+          <span>Knowledge Bases</span>
         </button>
 
         {/* ── Chats section (collapsible) ── */}
