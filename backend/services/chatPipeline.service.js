@@ -20,7 +20,7 @@
 
 const supabase = require('../config/supabase');
 const { MODELS } = require('../config/models');
-const { CHAT_SEMANTIC_CACHE_THRESHOLD, ENABLE_ORCHESTRATOR_BRAIN } = require('../config/chatRuntime.config');
+const { CHAT_SEMANTIC_CACHE_THRESHOLD, ENABLE_ORCHESTRATOR_BRAIN, CHAT_TIME_BUDGET_MS } = require('../config/chatRuntime.config');
 const { compressPrompt } = require('./compress.service');
 const { getCachedResponse, getSemanticCachedResponse, setCachedResponse } = require('./cache.service');
 const { buildRAGContext, embedText } = require('./rag.service');
@@ -837,11 +837,17 @@ ${page.text}`)
       processToolCallArgs,
       promptBudget,
       maxToolRounds: MAX_TOOL_ROUNDS,
+      deadlineAt: startTime + CHAT_TIME_BUDGET_MS,
       loggerPrefix: 'ChatPipeline',
       onStreamChunk,
     });
 
     if (loopResult.aborted) throw { name: 'AbortError' };
+
+    console.log(
+      `[ChatPipeline] Tool loop done in ${Date.now() - startTime}ms ` +
+      `(rounds=${loopResult.roundsUsed}/${MAX_TOOL_ROUNDS}, budget=${CHAT_TIME_BUDGET_MS}ms, timedOut=${loopResult.timedOut})`
+    );
 
     finalReply = loopResult.finalReply;
     totalAITokens += loopResult.totalAITokens || 0;
@@ -852,6 +858,26 @@ ${page.text}`)
 
     // Strip leftover tool-call syntax
     finalReply = stripToolTags(finalReply);
+
+    // The loop stopped on the time budget. If it broke right after a tool ran,
+    // the last reply was a tool call and strips to nothing — so fall back to a
+    // plain notice rather than persisting an empty assistant message.
+    if (loopResult.timedOut) {
+      const notice = 'I ran out of time before finishing this response. Please try again, or narrow the question so it needs fewer steps.';
+      const partialReply = finalReply.trim();
+      finalReply = partialReply ? `${partialReply}\n\n_${notice}_` : notice;
+
+      // The client builds the bubble purely from streamed chunks — `done`
+      // carries no text (chat.routes.js) — so a turn that streamed nothing
+      // renders empty. Today the budget check can only break right after a tool
+      // round cleared the buffer, so that is the live case; keying off
+      // streamedToClient rather than that invariant keeps this correct if the
+      // loop ever streams before continuing (e.g. via onNoToolCall), where
+      // re-sending the whole reply would duplicate text already on screen.
+      if (onStreamChunk) {
+        onStreamChunk(loopResult.streamedToClient ? `\n\n_${notice}_` : finalReply);
+      }
+    }
 
     const billableTokens = calculateBillableTokens({
       totalAITokens,

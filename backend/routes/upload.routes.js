@@ -148,10 +148,30 @@ const storage = multer.diskStorage({
   },
 });
 
+// Vercel Serverless Functions hard-cap the request body at ~4.5MB regardless of
+// this limit — anything larger never reaches multer, it's rejected by the
+// platform first. Keep a safety margin below that cap for multipart overhead.
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // 4MB
+
 const upload = multer({
   storage,
-  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB limit (increased from 50MB for large ZIPs)
+  limits: { fileSize: MAX_UPLOAD_BYTES },
 });
+
+// Wraps upload.single('file') so a MulterError (e.g. LIMIT_FILE_SIZE) returns a
+// clean 400 with a clear message instead of falling through to the generic
+// 500 handler in server.js.
+const uploadSingle = (req, res, next) => {
+  upload.single('file')(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({
+        error: `File is too large. Maximum upload size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`,
+      });
+    }
+    return res.status(400).json({ error: err.message || 'File upload failed' });
+  });
+};
 
 // ── Timeout middleware for upload routes ──
 // Large ZIPs can take several minutes to extract + embed
@@ -170,7 +190,7 @@ const uploadTimeout = (req, res, next) => {
  * POST /api/upload/file
  * Upload and process a file
  */
-router.post('/file', requireAuth, uploadHeavyLimiter, uploadTimeout, upload.single('file'), async (req, res) => {
+router.post('/file', requireAuth, uploadHeavyLimiter, uploadTimeout, uploadSingle, async (req, res) => {
   let sessionId = null;
   let abortController = null;
   let updateSession = null;

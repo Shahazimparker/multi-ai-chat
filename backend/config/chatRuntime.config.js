@@ -26,6 +26,22 @@ const parseBoolean = (name, fallback) => {
 // case its tokens are counted into the user's billable total.
 const ENABLE_ORCHESTRATOR_BRAIN = parseBoolean('ENABLE_ORCHESTRATOR_BRAIN', false);
 
+// Vercel kills an invocation at the project's Function Max Duration (300s here)
+// with no warning — the SSE stream just stops mid-reply and the user sees a
+// truncated answer. The tool loop bounds rounds but not wall-clock time, so a
+// slow provider or several tool rounds can run past that. This budget stops the
+// loop from starting another round once it is exceeded, leaving headroom for the
+// persistence and analytics steps that still have to run after the loop.
+const CHAT_TIME_BUDGET_MS = parseInteger('CHAT_TIME_BUDGET_MS', 240000, 10000, 3600000);
+
+// No provider SDK in services/ai/* sets its own request timeout, so a hung
+// upstream call blocks until the platform kills the whole invocation. This caps
+// a single provider call: total wall-clock for non-streaming, idle time between
+// chunks for streaming (a healthy long stream keeps resetting it). Set to 0 to
+// disable. Keep it below CHAT_TIME_BUDGET_MS so one bad call cannot spend the
+// entire turn's budget.
+const AI_CALL_TIMEOUT_MS = parseInteger('AI_CALL_TIMEOUT_MS', 120000, 0, 600000);
+
 const CHAT_MAX_DB_QUERIES = parseInteger('CHAT_MAX_DB_QUERIES', 12, 1, 100);
 const CHAT_MAX_CONSECUTIVE_ZERO_RESULTS = parseInteger('CHAT_MAX_CONSECUTIVE_ZERO_RESULTS', 4, 1, 20);
 const CHAT_TOOL_RESERVE_RATIO = parseFloatNumber('CHAT_TOOL_RESERVE_RATIO', 0.15, 0.05, 0.6);
@@ -33,6 +49,8 @@ const CHAT_SEMANTIC_CACHE_THRESHOLD = parseFloatNumber('CHAT_SEMANTIC_CACHE_THRE
 
 module.exports = {
   ENABLE_ORCHESTRATOR_BRAIN,
+  CHAT_TIME_BUDGET_MS,
+  AI_CALL_TIMEOUT_MS,
   CHAT_MAX_DB_QUERIES,
   CHAT_MAX_CONSECUTIVE_ZERO_RESULTS,
   CHAT_TOOL_RESERVE_RATIO,

@@ -9,6 +9,7 @@ const runToolLoop = async ({
   processToolCallArgs,
   promptBudget,
   maxToolRounds,
+  deadlineAt = null,
   loggerPrefix = 'Tool',
   onBeforeDispatch = null,
   onAfterDispatch = null,
@@ -22,11 +23,14 @@ const runToolLoop = async ({
     }
   };
 
+  // Returns whether anything was actually emitted, so callers can tell an empty
+  // buffer apart from a flushed one.
   const streamBufferedReplyAsTokens = (chunks, emitChunk) => {
     const fullText = chunks.join('');
-    if (!fullText) return;
+    if (!fullText) return false;
     const tokenLikeParts = fullText.match(/\S+\s*|\s+/g) || [fullText];
     for (const part of tokenLikeParts) emitChunk(part);
+    return true;
   };
 
   let reply;
@@ -37,6 +41,11 @@ const runToolLoop = async ({
   let cacheCreationTokens = 0;
   let cacheReadTokens = 0;
   let finalReply = '';
+  let timedOut = false;
+  let roundsUsed = 0;
+  // Whether any reply text has reached the client. Callers compensating for a
+  // short-circuited loop need this to avoid re-sending text already streamed.
+  let streamedToClient = false;
   const generatedMedia = [];
 
   const toolRoundStart = aiMessages.length;
@@ -56,6 +65,20 @@ const runToolLoop = async ({
   };
 
   for (let round = 0; round < maxToolRounds; round++) {
+    // Stop before starting a round the invocation probably cannot finish — being
+    // killed mid-round truncates the SSE stream with no error. Round 0 always
+    // runs: without it there is no reply to return at all.
+    if (round > 0 && deadlineAt && Date.now() >= deadlineAt) {
+      timedOut = true;
+      console.warn(`[${loggerPrefix}] Time budget exhausted after ${round} round(s) — stopping loop early`);
+      emitStatus({
+        type: 'status',
+        tool: 'tool_loop',
+        message: 'Taking too long — wrapping up with what I have...',
+      });
+      break;
+    }
+    roundsUsed = round + 1;
     console.log(`[${loggerPrefix}] Round ${round}/${maxToolRounds}`);
     emitStatus({
       type: 'status',
@@ -129,7 +152,8 @@ const runToolLoop = async ({
     }
 
     if (onStreamChunk && streamedChunks.length > 0) {
-      streamBufferedReplyAsTokens(streamedChunks, onStreamChunk);
+      const emitted = streamBufferedReplyAsTokens(streamedChunks, onStreamChunk);
+      streamedToClient = streamedToClient || emitted;
     }
 
     if (onNoToolCall) {
@@ -160,6 +184,9 @@ const runToolLoop = async ({
     cacheReadTokens,
     finalReply,
     generatedMedia,
+    timedOut,
+    roundsUsed,
+    streamedToClient,
   };
 };
 
