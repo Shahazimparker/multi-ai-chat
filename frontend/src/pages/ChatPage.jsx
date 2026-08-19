@@ -90,6 +90,9 @@ const ChatPage = () => {
             selectedModel={session.model}
             onModelChange={handleModelChange}
             onUnifiedProviderSelect={session.setUnifiedProvider}
+            reasoningEffort={session.reasoningEffort}
+            setReasoningEffort={session.setReasoningEffort}
+            thinkingEnabled={session.thinkingEnabled}
           />
 
           {session.activeTopic && (

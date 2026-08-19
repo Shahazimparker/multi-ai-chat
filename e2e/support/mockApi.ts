@@ -64,7 +64,7 @@ const defaultAnalytics = {
   },
   modelCounts: {
     'deepseek-v4-flash': 8,
-    'claude-sonnet': 4,
+    'claude-sonnet-5': 4,
   },
   dailyUsage: [
     { created_at: '2026-06-01T10:00:00.000Z', tokens_used: 120 },

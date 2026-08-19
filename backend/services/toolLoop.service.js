@@ -126,6 +126,7 @@ const runToolLoop = async ({
   onStreamChunk = null,
   onStreamReset = null,
   onReasoningChunk = null,
+  reasoningRequest = {},
 }) => {
   const emitStatus = (payload) => {
     if (typeof processToolCallArgs?.onStatus === 'function') {
@@ -209,7 +210,8 @@ const runToolLoop = async ({
         // on models that reason before answering.
         onReasoningChunk
           ? (chunk) => { reasoningText += chunk; onReasoningChunk(chunk); }
-          : null
+          : null,
+        reasoningRequest
       );
       aiResponse = streamResult;
       reply = streamResult.text;

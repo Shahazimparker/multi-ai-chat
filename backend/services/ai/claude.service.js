@@ -1,5 +1,36 @@
 const Anthropic = require('@anthropic-ai/sdk');
 
+const { resolveReasoning } = require('./reasoning.service');
+
+// Minimum Anthropic accepts for a thinking budget on pre-4.6 models.
+const HAIKU_THINKING_BUDGET_TOKENS = 4000;
+
+/**
+ * Map a resolved decision onto Anthropic's request shape.
+ *
+ * Two generations coexist here. Sonnet 4.6 and later take adaptive thinking
+ * plus output_config.effort, and reject budget_tokens with a 400. Haiku 4.5
+ * predates both: it needs {type:'enabled', budget_tokens} and errors on effort.
+ * The registry distinguishes them by whether it lists any effort levels.
+ *
+ * `display` matters as much as `type`: it defaults to "omitted" on Sonnet 5 and
+ * Opus 4.8, which streams thinking blocks with empty text — the reasoning panel
+ * would sit there blank without an explicit "summarized".
+ */
+const buildClaudeThinkingParams = (decision) => {
+  if (!decision.supported) return {};
+  if (!decision.enabled) return { thinking: { type: 'disabled' } };
+
+  if (!decision.effort) {
+    return { thinking: { type: 'enabled', budget_tokens: HAIKU_THINKING_BUDGET_TOKENS } };
+  }
+
+  return {
+    thinking: { type: 'adaptive', display: 'summarized' },
+    output_config: { effort: decision.effort },
+  };
+};
+
 /**
  * Shared helper: build system param and chat messages from the full messages array.
  */
@@ -47,24 +78,18 @@ const callClaude = async (modelName, apiKey, messages, signal = null) => {
  *   config/models.js to turn thinking on; omitted means no thinking, as before
  * @returns {Promise<{text: string, reasoning: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number}>}
  */
-const callClaudeStream = async (modelName, apiKey, messages, signal = null, onChunk, onReasoning, modelConfig = null) => {
+const callClaudeStream = async (modelName, apiKey, messages, signal = null, onChunk, onReasoning, modelConfig = null, reasoningRequest = {}) => {
   const client = new Anthropic({ apiKey });
   const { system, chatMessages } = extractClaudeParams(messages);
 
-  // Extended thinking is opt-in per model. `budget_tokens` is rejected with a
-  // 400 on Sonnet 5 / Opus 4.8 — adaptive thinking replaces it. `display`
-  // defaults to "omitted" on those models, which streams thinking blocks with
-  // empty text, so it has to be set explicitly for the reasoning UI to show
-  // anything at all.
-  const thinking = modelConfig?.reasoning
-    ? { type: 'adaptive', display: 'summarized' }
-    : null;
+  const decision = resolveReasoning(modelConfig, reasoningRequest);
+  const params = buildClaudeThinkingParams(decision);
 
   const stream = await client.messages.create({
     model: modelName,
     max_tokens: 16000,
     ...(system ? { system } : {}),
-    ...(thinking ? { thinking } : {}),
+    ...params,
     messages: chatMessages,
     stream: true,
   }, { signal });

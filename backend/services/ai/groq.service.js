@@ -4,6 +4,7 @@
 // ============================================================
 
 const Groq = require('groq-sdk');
+const { resolveReasoning } = require('./reasoning.service');
 
 const callGroq = async (modelName, apiKey, messages, signal = null) => {
   const client   = new Groq({ apiKey });
@@ -28,14 +29,18 @@ const callGroq = async (modelName, apiKey, messages, signal = null) => {
  * @param {(text: string) => void} onChunk
  * @returns {Promise<{text: string, tokensUsed: number}>}
  */
-const callGroqStream = async (modelName, apiKey, messages, signal = null, onChunk, onReasoning) => {
+const callGroqStream = async (modelName, apiKey, messages, signal = null, onChunk, onReasoning, modelConfig = null, reasoningRequest = {}) => {
   const client = new Groq({ apiKey });
+  // Groq has no "disabled" value — thinking is turned off by leaving
+  // reasoning_effort out of the request entirely.
+  const decision = resolveReasoning(modelConfig, reasoningRequest);
   const stream = await client.chat.completions.create({
     model:       modelName,
     messages:    messages.map(m => ({ role: m.role, content: m.content })),
     max_tokens:  4000,
     temperature: 0.7,
     stream:      true,
+    ...(decision.enabled && decision.effort ? { reasoning_effort: decision.effort } : {}),
   }, { signal });
 
   let fullText = '';

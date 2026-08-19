@@ -139,12 +139,14 @@ const dispatchToAI = async (modelConfig, messages, signal = null) => {
  * @param {Array}  messages
  * @param {AbortSignal} signal
  * @param {(text: string) => void} onChunk  called with each text delta
+ * @param {{thinkingEnabled?: boolean, reasoningEffort?: string|null}} [reasoningRequest]
+ *   the user's thinking choice; validated per model in reasoning.service.js
  * @param {(text: string) => void} [onReasoning]  called with each reasoning /
  *   thinking delta, for providers that expose one. Reasoning is never part of
  *   the answer, so callers render it separately.
  * @returns {Promise<{text: string, reasoning?: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number}>}
  */
-const dispatchToAIStream = async (modelConfig, messages, signal = null, onChunk, onReasoning) => {
+const dispatchToAIStream = async (modelConfig, messages, signal = null, onChunk, onReasoning, reasoningRequest = {}) => {
   const { provider, model, apiKey } = modelConfig;
 
   if (!apiKey) {
@@ -165,16 +167,16 @@ const dispatchToAIStream = async (modelConfig, messages, signal = null, onChunk,
       : onReasoning;
 
     switch (provider) {
-      case 'gemini': return callGeminiStream(model, apiKey, messages, s, tick);
-      case 'groq': return callGroqStream(model, apiKey, messages, s, tick, reasoningTick);
+      case 'gemini': return callGeminiStream(model, apiKey, messages, s, tick, modelConfig, reasoningRequest);
+      case 'groq': return callGroqStream(model, apiKey, messages, s, tick, reasoningTick, modelConfig, reasoningRequest);
       case 'mistral': return callMistralStream(model, apiKey, messages, s, tick);
       case 'cohere': return callCohereStream(model, apiKey, messages, s, tick);
       case 'openai': return callOpenAIStream(model, apiKey, messages, s, tick, reasoningTick);
-      case 'claude': return callClaudeStream(model, apiKey, messages, s, tick, reasoningTick, modelConfig);
+      case 'claude': return callClaudeStream(model, apiKey, messages, s, tick, reasoningTick, modelConfig, reasoningRequest);
       case 'openrouter': return callOpenRouterStream(model, apiKey, messages, s, tick, reasoningTick);
       case 'together': return callTogetherStream(model, apiKey, messages, s, tick);
       case 'anyapi': return callAnyAPIStream(model, apiKey, messages, s, tick);
-      case 'deepseek': return calldeepseekAPIStream(model, apiKey, messages, s, modelConfig, tick, reasoningTick);
+      case 'deepseek': return calldeepseekAPIStream(model, apiKey, messages, s, modelConfig, tick, reasoningTick, reasoningRequest);
       default:
         throw new Error(`Unknown AI provider: ${provider}`);
     }

@@ -2,11 +2,11 @@ const axios = require('axios');
 
 /**
  * Searches the web with provider fallback in this order:
- * 1) Tavily
- * 2) Firecrawl
- * 3) Exa
+ * 1) Firecrawl
+ * 2) Exa
+ * 3) Tavily
  * 4) SerpAPI
- * LangSearch is always queried for aggregation enhancement.
+ * LangSearch and Parallel Search are always queried in parallel for aggregation enhancement.
  * Falls back on error, timeout, rate-limit, or empty results.
  * @param {string} query
  * @returns {Promise<Array>} Array of { title, snippet, url }
@@ -221,6 +221,34 @@ const searchWeb = async (query) => {
     }));
   };
 
+  const parallelSearch = async () => {
+    const apiKey = process.env.PARALLEL_API_KEY;
+    if (!apiKey) return [];
+
+    const response = await axios.post(
+      'https://api.parallel.ai/v1/search',
+      {
+        objective: query,
+        search_queries: [query],
+      },
+      {
+        timeout,
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': userAgent,
+          'x-api-key': apiKey,
+        },
+      }
+    );
+
+    const items = Array.isArray(response?.data?.results) ? response.data.results : [];
+    return items.map((item) => ({
+      title: item?.title || item?.url || query,
+      snippet: Array.isArray(item?.excerpts) ? item.excerpts.join(' ') : (item?.excerpts || ''),
+      url: item?.url || '',
+    }));
+  };
+
   const providers = [
     { name: 'Firecrawl', fn: firecrawlSearch },
     { name: 'Exa', fn: exaSearch },
@@ -228,26 +256,31 @@ const searchWeb = async (query) => {
     { name: 'SerpAPI', fn: serpApiSearch },
   ];
 
-  let primaryResults = null;
-  let primaryProvider = null;
-  for (const provider of providers) {
-    debugLog(`[WebSearch] Primary fallback: trying ${provider.name}`);
-    const results = await safeProviderCall(provider.name, provider.fn);
-    if (results) {
-      primaryResults = results;
-      primaryProvider = provider.name;
-      debugLog(`[WebSearch] Primary selected: ${provider.name}`);
-      break;
+  // Run primary fallback chain + always-on providers in parallel
+  const primaryPromise = (async () => {
+    for (const provider of providers) {
+      debugLog(`[WebSearch] Primary fallback: trying ${provider.name}`);
+      const results = await safeProviderCall(provider.name, provider.fn);
+      if (results) {
+        debugLog(`[WebSearch] Primary selected: ${provider.name}`);
+        return { results, provider: provider.name };
+      }
     }
-  }
+    return { results: null, provider: null };
+  })();
 
-  debugLog('[WebSearch] Aggregate providers: trying LangSearch');
-  const langResults = await safeProviderCall('LangSearch', langSearch);
+  debugLog('[WebSearch] Always-on providers: querying LangSearch + Parallel in parallel');
+  const [primary, langResults, parallelResults] = await Promise.all([
+    primaryPromise,
+    safeProviderCall('LangSearch', langSearch),
+    safeProviderCall('Parallel', parallelSearch),
+  ]);
 
-  const base = primaryResults || [];
+  const base = primary.results || [];
   const langExtra = langResults || [];
-  const finalResults = aggregateResults(base, langExtra);
-  debugLog(`[WebSearch] Final aggregated: ${finalResults.length} results (primary: ${primaryProvider || 'none'}, base: ${base.length}, lang: ${langExtra.length})`);
+  const parallelExtra = parallelResults || [];
+  const finalResults = aggregateResults(base, langExtra, parallelExtra);
+  debugLog(`[WebSearch] Final aggregated: ${finalResults.length} results (primary: ${primary.provider || 'none'}, base: ${base.length}, lang: ${langExtra.length}, parallel: ${parallelExtra.length})`);
 
   if (finalResults.length > 0) {
     return finalResults;

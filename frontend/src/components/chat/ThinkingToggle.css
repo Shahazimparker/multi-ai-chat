@@ -1,0 +1,202 @@
+/* ============================================================
+   FILE: frontend/src/components/chat/ThinkingToggle.css
+   PURPOSE: Thinking toggle + effort submenu.
+   ============================================================
+   Matches .web-toggle-btn in ChatPage.css (34px tall, 12px radius, same
+   tokens) so the two controls read as a pair — both icon-only, both glowing
+   the same blue when on. They are told apart by their icon, not their colour. */
+
+.thinking-toggle {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* The toggle and its caret are one visual control split into two hit areas,
+   so the level menu can open without flipping thinking off. */
+.thinking-group {
+  display: inline-flex;
+  align-items: stretch;
+  height: 34px;
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+/* Blue glow is the whole on-signal now that there is no text. The shadow sits
+   on the group so it wraps the caret too, not just the icon. */
+.thinking-group.active {
+  border-color: rgba(56, 189, 248, 0.85);
+  background: rgba(14, 165, 233, 0.22);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35), 0 0 12px rgba(14, 165, 233, 0.45);
+}
+
+/* Icon-only, so the box is driven by the icon rather than by text. Square at
+   rest; the level chip widens it only when thinking is on. */
+.thinking-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 34px;
+  padding: 0 9px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.thinking-group.active .thinking-btn { color: #bae6fd; }
+
+.thinking-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* Two different disabled meanings share one look, and the tooltip on the
+   button explains which applies: the model cannot think, or thinking cannot
+   be switched off. */
+.thinking-btn:disabled { cursor: not-allowed; }
+
+.thinking-group.unsupported {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+/* Locked-on (Gemini): still reads as active, but not clickable. */
+.thinking-group.active .thinking-btn:disabled {
+  opacity: 1;
+  color: #bae6fd;
+}
+
+.thinking-icon { flex-shrink: 0; }
+
+.thinking-level-chip {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.thinking-caret-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.thinking-group.active .thinking-caret-btn { color: #bae6fd; }
+.thinking-caret-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.1); }
+.thinking-caret-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.thinking-caret { transition: transform 0.18s ease; }
+.thinking-caret.open { transform: rotate(180deg); }
+
+/* Opens upward — the control sits at the bottom of the viewport. */
+.thinking-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  min-width: 172px;
+  padding: 5px;
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  background: var(--bg-tertiary);
+  box-shadow: 0 12px 32px var(--shadow-lg);
+}
+
+.thinking-menu-header {
+  padding: 5px 9px 7px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.thinking-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.79rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.thinking-menu-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.thinking-menu-item.active {
+  background: rgba(14, 165, 233, 0.22);
+  color: #bae6fd;
+  font-weight: 700;
+}
+
+.thinking-menu-default {
+  font-size: 0.63rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-group,
+  .thinking-btn,
+  .thinking-caret,
+  .thinking-caret-btn,
+  .thinking-menu-item { transition: none; }
+}
+
+/* ── Light theme ─────────────────────────────────────────── */
+:root[data-theme="light"] .thinking-group.active {
+  border-color: rgba(2, 132, 199, 0.6);
+  background: rgba(14, 165, 233, 0.14);
+  box-shadow: 0 0 0 1px rgba(2, 132, 199, 0.2), 0 0 10px rgba(14, 165, 233, 0.3);
+}
+
+:root[data-theme="light"] .thinking-group.active .thinking-btn,
+:root[data-theme="light"] .thinking-group.active .thinking-caret-btn {
+  color: #0369a1;
+}
+
+:root[data-theme="light"] .thinking-level-chip {
+  background: rgba(2, 132, 199, 0.16);
+  color: #0369a1;
+}
+
+:root[data-theme="light"] .thinking-caret-btn {
+  border-left-color: rgba(15, 23, 42, 0.12);
+}
+
+:root[data-theme="light"] .thinking-menu-item.active {
+  background: rgba(14, 165, 233, 0.16);
+  color: #0369a1;
+}

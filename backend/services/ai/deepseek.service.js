@@ -4,13 +4,14 @@
 // ============================================================
 
 const axios = require('axios');
+const { resolveReasoning } = require('./reasoning.service');
 
 const DEEPSEEK_URL = 'https://api.deepseek.com/v1/chat/completions';
 
 /**
  * Shared helper to build Deepseek request body.
  */
-function buildDeepseekBody(model, messages, modelConfig) {
+function buildDeepseekBody(model, messages, modelConfig, reasoningRequest) {
   const body = {
     model,
     messages,
@@ -18,19 +19,20 @@ function buildDeepseekBody(model, messages, modelConfig) {
     temperature: modelConfig?.temperature ?? 0.7,
   };
 
-  if (modelConfig?.reasoning) {
-    if (modelConfig.reasoning.thinking) {
-      body.thinking = { type: modelConfig.reasoning.thinking };
-    }
-    if (modelConfig.reasoning.reasoningEffort) {
-      body.reasoning_effort = modelConfig.reasoning.reasoningEffort;
+  // V4 wants both fields together: `thinking` switches the mode, and
+  // `reasoning_effort` grades it. Sending effort without the mode is ignored.
+  const decision = resolveReasoning(modelConfig, reasoningRequest);
+  if (decision.supported) {
+    body.thinking = { type: decision.enabled ? 'enabled' : 'disabled' };
+    if (decision.enabled && decision.effort) {
+      body.reasoning_effort = decision.effort;
     }
   }
   return body;
 }
 
-const calldeepseekAPI = async (model, apiKey, messages, signal = null, modelConfig = null) => {
-  const body = buildDeepseekBody(model, messages, modelConfig);
+const calldeepseekAPI = async (model, apiKey, messages, signal = null, modelConfig = null, reasoningRequest = {}) => {
+  const body = buildDeepseekBody(model, messages, modelConfig, reasoningRequest);
   const response = await axios.post(DEEPSEEK_URL, body, {
     headers: { 'Authorization': `Bearer ${apiKey}` },
     signal,
@@ -58,8 +60,8 @@ const calldeepseekAPI = async (model, apiKey, messages, signal = null, modelConf
  *   DeepSeek streams in full before the first answer token
  * @returns {Promise<{text: string, reasoning: string, tokensUsed: number}>}
  */
-const calldeepseekAPIStream = async (model, apiKey, messages, signal = null, modelConfig = null, onChunk, onReasoning) => {
-  const body = buildDeepseekBody(model, messages, modelConfig);
+const calldeepseekAPIStream = async (model, apiKey, messages, signal = null, modelConfig = null, onChunk, onReasoning, reasoningRequest = {}) => {
+  const body = buildDeepseekBody(model, messages, modelConfig, reasoningRequest);
   body.stream = true;
 
   const response = await axios.post(DEEPSEEK_URL, body, {

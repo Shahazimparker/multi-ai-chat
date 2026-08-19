@@ -1,8 +1,9 @@
 import React from 'react';
-import { Send, StopCircle } from 'lucide-react';
+import { Globe, Send, StopCircle } from 'lucide-react';
 import FileUpload from './FileUpload';
 import ChatMemoryControls from './ChatMemoryControls';
 import ChatQueuePopover from './ChatQueuePopover';
+import ThinkingToggle from './ThinkingToggle';
 
 const ChatInputPanel = ({
   session,
@@ -76,16 +77,30 @@ const ChatInputPanel = ({
         </div>
       )}
 
+      {/* Icon-only, like the thinking toggle beside it. The label lives in the
+          tooltip and aria-label since there is no visible text. */}
       <button
         type="button"
         className={`web-toggle-btn ${composer.webEnabled ? 'active' : ''}`}
         onClick={() => composer.setWebEnabled((prev) => !prev)}
         disabled={session.loading || !session.model}
-        title="Enable web search for this query"
+        title={composer.webEnabled
+          ? 'Web search on for this query — click to turn off'
+          : 'Web search off — click to search the web for this query'}
+        aria-pressed={composer.webEnabled}
+        aria-label="Web search"
       >
-        <span className={`web-toggle-dot ${composer.webEnabled ? 'on' : 'off'}`} />
-        Web
+        <Globe size={15} />
       </button>
+
+      <ThinkingToggle
+        model={session.model}
+        thinkingEnabled={session.thinkingEnabled}
+        setThinkingEnabled={session.setThinkingEnabled}
+        reasoningEffort={session.reasoningEffort}
+        setReasoningEffort={session.setReasoningEffort}
+        disabled={session.loading || !session.model}
+      />
 
       <button
         className={`send-btn ${session.loading ? 'stop-btn' : ''}`}

@@ -19,7 +19,7 @@
 // ============================================================
 
 const supabase = require('../config/supabase');
-const { MODELS } = require('../config/models');
+const { MODELS, RETIRED_MODELS } = require('../config/models');
 const { CHAT_SEMANTIC_CACHE_THRESHOLD, ENABLE_ORCHESTRATOR_BRAIN, CHAT_TIME_BUDGET_MS } = require('../config/chatRuntime.config');
 const { compressPrompt } = require('./compress.service');
 const { getCachedResponse, getSemanticCachedResponse, setCachedResponse } = require('./cache.service');
@@ -79,6 +79,9 @@ const {
  * @param {() => void} [opts.onStreamReset]  — discard text already streamed for
  *   this turn; fired when a round turns out to be a tool call after a preamble
  *   was forwarded, so the client's bubble must be cleared before the next round
+ * @param {boolean} [opts.thinkingEnabled]  — user's thinking choice; when
+ *   omitted the model's own enabledByDefault applies
+ * @param {string|null} [opts.reasoningEffort]   — requested effort level
  * @param {(chunk: string) => void} [opts.onReasoningChunk] — reasoning /
  *   thinking deltas, for models that expose a chain of thought
  * @param {(event: object) => void} [opts.onToolStatus]
@@ -405,7 +408,7 @@ const runChatPipeline = async (opts) => {
 
   // ── destructure with defaults ──────────────────────────────
   const {
-    modelId = 'claude-sonnet',
+    modelId = 'claude-sonnet-5',
     message,
     image,
     topicId,
@@ -436,6 +439,10 @@ const runChatPipeline = async (opts) => {
     onStreamReset,
     onReasoningChunk,
     onToolStatus,
+
+    // the user's thinking choice for this request
+    thinkingEnabled,
+    reasoningEffort = null,
   } = opts;
 
   let resolvedTopicId = topicId;
@@ -449,10 +456,18 @@ const runChatPipeline = async (opts) => {
       ? { ...modelConfig, model: providerModelId }
       : modelConfig;
     if (!modelConfig) {
+      // A retired id gets a message naming its replacement instead of a bare
+      // "unknown model" — the common case is an old topic whose model was
+      // folded into a base model plus an effort level.
+      const replacement = RETIRED_MODELS[modelId];
+      const message = replacement
+        ? `Model "${modelId}" has been retired. Use "${MODELS[replacement]?.label || replacement}" and pick a reasoning effort instead.`
+        : `Unknown model: ${modelId}`;
       return makePipelineResult({
-        err: new Error(`Unknown model: ${modelId}`),
+        err: new Error(message),
         errorType: 'invalid_model',
-        userMessage: `Unknown model: ${modelId}`,
+        userMessage: message,
+        recommendedModelId: replacement || null,
       });
     }
 
@@ -858,6 +873,7 @@ ${page.text}`)
       onStreamChunk,
       onStreamReset,
       onReasoningChunk,
+      reasoningRequest: { thinkingEnabled, reasoningEffort },
     });
 
     if (loopResult.aborted) throw { name: 'AbortError' };

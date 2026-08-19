@@ -15,7 +15,25 @@ const PROVIDER_META = {
 
 const MOBILE_BREAKPOINT = 768;
 
-const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }) => {
+// Display only — the server validates the level against the model, so a new
+// provider vocabulary shows through as-is rather than being dropped.
+const LEVEL_LABELS = {
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Med',
+  high: 'High',
+  xhigh: 'X-High',
+  max: 'Max',
+};
+
+const ModelSelector = ({
+  selectedModel,
+  onModelChange,
+  onUnifiedProviderSelect,
+  reasoningEffort,
+  setReasoningEffort,
+  thinkingEnabled,
+}) => {
   const [models, setModels] = useState([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -121,19 +139,48 @@ const ModelSelector = ({ selectedModel, onModelChange, onUnifiedProviderSelect }
             <span>{meta.label}</span>
           </div>
 
-          {providerModels.map((model) => (
-            <button
-              key={model.id}
-              type="button"
-              className={`model-option ${selectedModel?.id === model.id ? 'active' : ''}`}
-              onClick={() => handleSelect(model)}
-            >
-              <span className="option-label">{model.label}</span>
-              <span className={`model-badge sm ${model.paid ? 'paid' : 'free'}`}>
-                {model.paid ? 'Paid' : 'Free'}
-              </span>
-            </button>
-          ))}
+          {providerModels.map((model) => {
+            const isSelected = selectedModel?.id === model.id;
+            const levels = model.reasoning?.levels || [];
+            // The submenu belongs to the chosen model: showing every model's
+            // levels at once would be a wall of chips. It also stays visible
+            // when thinking is off, so the level can be set before enabling.
+            const showLevels = isSelected && levels.length > 0;
+            const activeLevel = reasoningEffort || model.reasoning?.default || null;
+
+            return (
+              <div key={model.id} className="model-option-row">
+                <button
+                  type="button"
+                  className={`model-option ${isSelected ? 'active' : ''}`}
+                  onClick={() => handleSelect(model)}
+                >
+                  <span className="option-label">{model.label}</span>
+                  {model.reasoning && <span className="model-think-tag">Thinks</span>}
+                  <span className={`model-badge sm ${model.paid ? 'paid' : 'free'}`}>
+                    {model.paid ? 'Paid' : 'Free'}
+                  </span>
+                </button>
+
+                {showLevels && (
+                  <div className={`model-levels ${thinkingEnabled === false ? 'muted' : ''}`}>
+                    <span className="model-levels-label">Effort</span>
+                    {levels.map((level) => (
+                      <button
+                        key={level}
+                        type="button"
+                        className={`model-level-chip ${activeLevel === level ? 'active' : ''}`}
+                        onClick={() => setReasoningEffort?.(level)}
+                        title={`Set reasoning effort to ${level}`}
+                      >
+                        {LEVEL_LABELS[level] || level}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       );
     });

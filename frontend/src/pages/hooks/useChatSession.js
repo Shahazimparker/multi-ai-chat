@@ -20,6 +20,36 @@ export const useChatSession = ({ refreshTokenStats }) => {
   const [messageQueue, setMessageQueue] = useState([]);
   const [queuePopoverOpen, setQueuePopoverOpen] = useState(false);
   const [failedMessage, setFailedMessage] = useState(null);
+  // Thinking is a property of the model, not of one message — unlike the Web
+  // toggle, which is a per-query intent and lives in the composer. Both maps
+  // are keyed by model id so each model keeps its own setting as the user
+  // switches. Session only: everything resets to the model's documented
+  // default on reload.
+  const [thinkingByModel, setThinkingByModel] = useState({});
+  const [effortByModel, setEffortByModel] = useState({});
+
+  // null means "use the model's default", which the server resolves. Storing
+  // per model id keeps each model's choice separate as the user switches.
+  const reasoningEffort = model ? (effortByModel[model.id] ?? null) : null;
+  const setReasoningEffort = useCallback((level) => {
+    if (!model) return;
+    setEffortByModel((prev) => ({ ...prev, [model.id]: level }));
+  }, [model]);
+
+  // Until the user touches the toggle for a model, follow the default the
+  // server reports. That is off everywhere except providers with no off switch
+  // (Gemini), so reasoning is always a deliberate choice where it can be one.
+  const modelThinkingDefault = Boolean(model?.reasoning?.enabledByDefault);
+  const thinkingEnabled = model
+    ? (thinkingByModel[model.id] ?? modelThinkingDefault)
+    : false;
+  const setThinkingEnabled = useCallback((next) => {
+    if (!model) return;
+    setThinkingByModel((prev) => ({
+      ...prev,
+      [model.id]: typeof next === 'function' ? next(prev[model.id] ?? modelThinkingDefault) : next,
+    }));
+  }, [model, modelThinkingDefault]);
 
   const abortControllerRef = useRef(null);
   const uploadAbortRef = useRef(null);
@@ -284,6 +314,8 @@ export const useChatSession = ({ refreshTokenStats }) => {
           historyLimit: Number(historyLimit),
           ragEnabled,
           forceWebSearch: Boolean(forceWebSearch),
+          thinkingEnabled,
+          reasoningEffort,
         }),
         signal: controller.signal,
       });
@@ -545,7 +577,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
       uploadSessionIdRef.current = null;
       sessionStorage.removeItem('uploadSessionId');
     }
-  }, [activeTopic, historyLimit, memoryMode, model, providerModelId, ragEnabled, refreshTokenStats, uploadSingleFile]);
+  }, [activeTopic, historyLimit, memoryMode, model, providerModelId, ragEnabled, refreshTokenStats, thinkingEnabled, reasoningEffort, uploadSingleFile]);
 
   useEffect(() => {
     if (loading || messageQueue.length === 0) return;
@@ -623,6 +655,10 @@ export const useChatSession = ({ refreshTokenStats }) => {
     loading,
     model,
     setModel,
+    thinkingEnabled,
+    setThinkingEnabled,
+    reasoningEffort,
+    setReasoningEffort,
     activeTopic,
     sidebarRefresh,
     error,

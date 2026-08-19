@@ -5,11 +5,12 @@
 // ============================================================
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { resolveReasoning } = require('./reasoning.service');
 
 /**
  * Shared helper to build Gemini model params from messages.
  */
-function buildGeminiModel(genAI, modelName, messages) {
+function buildGeminiModel(genAI, modelName, messages, modelConfig = null, reasoningRequest = {}) {
   const systemMessages = messages.filter(m => m.role === 'system');
   const systemInstruction = systemMessages.length > 0
     ? systemMessages.map(m => m.content).join('\n')
@@ -20,6 +21,17 @@ function buildGeminiModel(genAI, modelName, messages) {
     modelParams.systemInstruction = {
       role: 'system',
       parts: [{ text: systemInstruction }],
+    };
+  }
+  // Gemini 3 replaced thinking_budget with thinking_level and has no off
+  // switch, so resolveReasoning always reports enabled here — the level is the
+  // only control. Sending a thinking_budget to a Gemini 3 model is an error and
+  // vice versa, so only the level is ever set.
+  const decision = resolveReasoning(modelConfig, reasoningRequest);
+  if (decision.enabled && decision.effort) {
+    modelParams.generationConfig = {
+      ...(modelParams.generationConfig || {}),
+      thinkingConfig: { thinkingLevel: decision.effort },
     };
   }
   return genAI.getGenerativeModel(modelParams);
@@ -105,9 +117,9 @@ function buildGeminiRequest(messages) {
  * @param {AbortSignal} signal  optional signal for cancellation
  * @returns {Object}          {text, tokensUsed}
  */
-const callGemini = async (modelName, apiKey, messages, signal = null) => {
+const callGemini = async (modelName, apiKey, messages, signal = null, modelConfig = null, reasoningRequest = {}) => {
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = buildGeminiModel(genAI, modelName, messages);
+  const model = buildGeminiModel(genAI, modelName, messages, modelConfig, reasoningRequest);
 
   const { history, message } = buildGeminiRequest(messages);
 
@@ -138,9 +150,9 @@ const callGemini = async (modelName, apiKey, messages, signal = null) => {
  * @param {(text: string) => void} onChunk
  * @returns {Promise<{text: string, tokensUsed: number}>}
  */
-const callGeminiStream = async (modelName, apiKey, messages, signal = null, onChunk) => {
+const callGeminiStream = async (modelName, apiKey, messages, signal = null, onChunk, modelConfig = null, reasoningRequest = {}) => {
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = buildGeminiModel(genAI, modelName, messages);
+  const model = buildGeminiModel(genAI, modelName, messages, modelConfig, reasoningRequest);
 
   const { history, message } = buildGeminiRequest(messages);
 

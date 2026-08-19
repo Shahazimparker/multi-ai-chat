@@ -13,6 +13,7 @@ const { MODELS } = require('../config/models');
 const { getProviderModels } = require('../services/modelCatalog.service');
 const { classifyError } = require('../services/chatCleanup.service');
 const { CANONICAL_CHAT_PIPELINE_FLAGS, runChatPipeline } = require('../services/chatPipeline.service');
+const { describeReasoning } = require('../services/ai/reasoning.service');
 const { optionalAuth } = require('../middleware/auth');
 
 // Rate limit: 30 requests/minute per IP
@@ -31,6 +32,8 @@ router.get('/models', (req, res) => {
     paid: cfg.paid,
     unified: !!cfg.unified,
     models: cfg.models || [],
+    // null when the model cannot think — the UI greys the Thinking button out.
+    reasoning: describeReasoning(cfg),
   }));
   res.json({ models });
 });
@@ -68,12 +71,14 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
     message,
     image,
     topicId,
-    modelId = 'claude-sonnet',
+    modelId = 'claude-sonnet-5',
     providerModelId,
     memoryMode = 'accurate',
     historyLimit = 5,
     ragEnabled = false,
     forceWebSearch = false,
+    thinkingEnabled,
+    reasoningEffort = null,
     history,
   } = req.body;
 
@@ -113,6 +118,10 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
     historyLimit,
     ragEnabled,
     forceWebSearch: Boolean(forceWebSearch),
+    // undefined, not a coerced boolean: an absent field must fall through to
+    // the model's own default rather than silently meaning "on".
+    thinkingEnabled: typeof thinkingEnabled === 'boolean' ? thinkingEnabled : undefined,
+    reasoningEffort: typeof reasoningEffort === 'string' ? reasoningEffort : null,
     history,
     abortController,
 

@@ -302,3 +302,85 @@
     font-size: 0.82rem;
   }
 }
+
+/* ── Reasoning effort submenu ──────────────────────────────
+   Rendered under the selected model only. Kept visible when thinking is off
+   (dimmed) so the level can be chosen before switching thinking on. */
+
+.model-option-row {
+  display: flex;
+  flex-direction: column;
+}
+
+.model-think-tag {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  background: rgba(99, 102, 241, 0.14);
+  color: #c7d2fe;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.model-levels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px 9px 22px;
+}
+
+.model-levels.muted { opacity: 0.5; }
+
+.model-levels-label {
+  margin-right: 2px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.model-level-chip {
+  padding: 3px 9px;
+  border: 1px solid var(--border-primary);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.model-level-chip:hover {
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
+.model-level-chip.active {
+  border-color: rgba(99, 102, 241, 0.7);
+  background: rgba(99, 102, 241, 0.24);
+  color: #e0e7ff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-level-chip { transition: none; }
+}
+
+:root[data-theme="light"] .model-think-tag {
+  border-color: rgba(99, 102, 241, 0.35);
+  background: rgba(99, 102, 241, 0.1);
+  color: #3730a3;
+}
+
+:root[data-theme="light"] .model-level-chip.active {
+  border-color: rgba(99, 102, 241, 0.5);
+  background: rgba(99, 102, 241, 0.14);
+  color: #3730a3;
+}
