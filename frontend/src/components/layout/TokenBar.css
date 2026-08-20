@@ -4,21 +4,44 @@
 .token-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 14px;
+  gap: 8px;
+  padding: 6px 14px;
   background: var(--bg-input);
   border-bottom: 1px solid var(--border-primary);
   font-size: 0.75rem;
   font-family: 'Inter', sans-serif;
-  flex-wrap: wrap;
   flex-shrink: 0;
   transition: all 0.3s ease;
+  width: 100%;
+  box-sizing: border-box;
 }
-.token-icon  { color: #fbbf24; flex-shrink:0; }
-.token-label { color: var(--text-secondary); flex-shrink:0; }
+
+.token-bar-addon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+@media (min-width: 769px) {
+  .token-bar-addon {
+    display: none !important;
+  }
+}
+
+.token-bar-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.token-icon  { color: #fbbf24; flex-shrink: 0; }
+.token-label { color: var(--text-secondary); flex-shrink: 0; }
 
 .token-track {
-  width: 120px; height: 5px;
+  width: 120px;
+  height: 5px;
   background: var(--bg-hover);
   border-radius: 999px;
   overflow: hidden;
@@ -30,20 +53,26 @@
   transition: width 0.5s ease, background 0.5s ease;
 }
 
-.token-stat { color: var(--text-secondary); font-weight:500; }
+.token-stat { color: var(--text-secondary); font-weight: 500; }
 .token-stat.used  { color: var(--text-primary); font-weight: 600; }
 .token-stat.total { color: var(--text-tertiary); }
 .token-sep        { color: var(--text-tertiary); }
-.token-remaining  { font-weight:600; font-size:0.72rem; color: var(--text-primary); }
+.token-remaining  { font-weight: 600; font-size: 0.72rem; color: var(--text-primary); }
+
 @media (max-width: 768px) {
   .token-bar {
-    padding: 4px 10px;
-    gap: 4px;
+    padding: 6px 10px;
+    gap: 8px;
     font-size: 0.7rem;
+    min-height: 44px;
+  }
+
+  .token-bar-stats {
+    gap: 4px;
   }
   
   .token-track {
-    width: 80px;
+    width: 70px;
   }
 
   .token-stat {
@@ -52,5 +81,16 @@
 
   .token-remaining {
     font-size: 0.65rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .token-bar {
+    padding: 5px 8px;
+    gap: 6px;
+  }
+  
+  .token-track {
+    width: 50px;
   }
 }

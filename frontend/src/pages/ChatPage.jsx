@@ -90,22 +90,14 @@ const ChatPage = () => {
       />
 
       <main className="chat-main">
-        <div className="chat-toolbar">
+        <TokenBar>
           <MobileNav
             activeTopic={session.activeTopic}
             onTopicSelect={session.handleTopicSelect}
             onNewChat={session.handleNewChat}
             refreshTrigger={session.sidebarRefresh}
           />
-
-          {session.activeTopic && (
-            <span className="topic-hint">
-              Continuing topic · {session.messages.length} messages
-            </span>
-          )}
-        </div>
-
-        <TokenBar />
+        </TokenBar>
 
         {session.loading && (
           <div className="ai-loading-overlay">

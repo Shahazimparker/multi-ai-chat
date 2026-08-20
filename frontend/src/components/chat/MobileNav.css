@@ -7,18 +7,18 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 42px;
-  height: 42px;
+  width: 32px;
+  height: 32px;
   background: linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(124, 58, 237, 0.2));
   border: 1px solid rgba(236, 72, 153, 0.35);
-  border-radius: 13px;
+  border-radius: 8px;
   color: rgba(255, 255, 255, 0.95);
   cursor: pointer;
   z-index: 1002;
   flex-shrink: 0;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   -webkit-tap-highlight-color: transparent;
-  box-shadow: 0 4px 12px rgba(236, 72, 153, 0.2);
+  box-shadow: 0 2px 8px rgba(236, 72, 153, 0.2);
 }
 
 .mobile-menu-toggle svg {
@@ -587,12 +587,7 @@
   box-shadow: 0 1px 4px rgba(239, 68, 68, 0.25);
 }
 
-@media (max-width: 600px) {
-  .mobile-menu-toggle {
-    width: 38px;
-    height: 38px;
-  }
-}
+
 
 @media (min-width: 769px) {
   .mobile-menu-toggle,

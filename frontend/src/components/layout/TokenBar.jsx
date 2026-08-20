@@ -9,7 +9,7 @@ import { Zap } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import './TokenBar.css';
 
-const TokenBar = () => {
+const TokenBar = ({ children }) => {
   const { user } = useAuth();
   if (!user) return null;
 
@@ -27,23 +27,27 @@ const TokenBar = () => {
 
   return (
     <div className="token-bar">
-      <Zap size={13} className="token-icon" />
-      <span className="token-label">Tokens:</span>
+      {children && <div className="token-bar-addon">{children}</div>}
 
-      <div className="token-track">
-        <div
-          className="token-fill"
-          style={{ width: `${pct}%`, background: barColor }}
-        />
+      <div className="token-bar-stats">
+        <Zap size={13} className="token-icon" />
+        <span className="token-label">Tokens:</span>
+
+        <div className="token-track">
+          <div
+            className="token-fill"
+            style={{ width: `${pct}%`, background: barColor }}
+          />
+        </div>
+
+        <span className="token-stat used">{used.toLocaleString()}</span>
+        <span className="token-sep">/</span>
+        <span className="token-stat total">{total.toLocaleString()}</span>
+
+        <span className="token-remaining" style={{ color: barColor }}>
+          ({remaining.toLocaleString()} left)
+        </span>
       </div>
-
-      <span className="token-stat used">{used.toLocaleString()}</span>
-      <span className="token-sep">/</span>
-      <span className="token-stat total">{total.toLocaleString()}</span>
-
-      <span className="token-remaining" style={{ color: barColor }}>
-        ({remaining.toLocaleString()} left)
-      </span>
     </div>
   );
 };

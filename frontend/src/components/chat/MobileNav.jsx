@@ -165,7 +165,7 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
                 title={isOpen ? 'Close menu' : 'Open menu'}
                 aria-label={isOpen ? 'Close menu' : 'Open menu'}
             >
-                {isOpen ? <X size={22} /> : <Menu size={22} />}
+                {isOpen ? <X size={17} /> : <Menu size={17} />}
             </button>
 
             {isOpen && (
