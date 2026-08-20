@@ -36,6 +36,7 @@ const { stripToolTags, classifyError } = require('./chatCleanup.service');
 const { searchWeb } = require('./tools/webSearch.service');
 const { extractUrls, readUrls } = require('./tools/urlReader.service');
 const { extractCollectionMentions, searchKnowledgeCollections } = require('./rag2.service');
+const { DEFAULT_PROVIDER, spaceForProvider } = require('../config/embedding');
 const { listCollections } = require('./knowledgeCollection.service');
 const {
   createPromptBudget,
@@ -622,8 +623,12 @@ const runChatPipeline = async (opts) => {
 
     // ── 5.5 Generate query embedding once ─────────────────────
     // Use explicit embedding provider, or default to 'openrouter' for cheap embeddings
-    const embedProvider = embeddingProviderOpt || 'openrouter';
+    const embedProvider = embeddingProviderOpt || DEFAULT_PROVIDER;
     let queryVector = null;
+    // The model that actually produced queryVector. Every downstream vector
+    // search filters on this, so it must come from the embed result rather
+    // than from embedProvider — failover can serve a request from a sibling.
+    let queryVectorSpace = spaceForProvider(embedProvider);
     let totalEmbeddingTokens = 0;
 
     if (effectiveRagEnabled) {
@@ -631,12 +636,13 @@ const runChatPipeline = async (opts) => {
       const embedResult = await embedText(finalQuery, embedProvider, 3, abortController.signal, user?.id);
       if (embedResult) {
         queryVector = embedResult.vector;
+        queryVectorSpace = embedResult.space;
         totalEmbeddingTokens += embedResult.tokensUsed;
       }
 
       // Semantic cache lookup (same embedding vector)
       {
-        const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, CHAT_SEMANTIC_CACHE_THRESHOLD, user?.id, resolvedTopicId);
+        const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, CHAT_SEMANTIC_CACHE_THRESHOLD, user?.id, resolvedTopicId, queryVectorSpace);
         if (semanticCachedReply) {
           return makePipelineResult({
             finalReply: semanticCachedReply,
@@ -672,7 +678,7 @@ const runChatPipeline = async (opts) => {
           embedProvider,
           abortController.signal,
           queryVector,
-          { tokenBudget: promptBudget.ragTokens, topicId: resolvedTopicId, userId: user?.id }
+          { tokenBudget: promptBudget.ragTokens, topicId: resolvedTopicId, userId: user?.id, embeddingSpace: queryVectorSpace }
         ),
         listUserFiles(user?.id, resolvedTopicId),
       ]);
@@ -748,16 +754,21 @@ ${page.text}`)
         excludeTopicId: resolvedTopicId,
         topK: 5,
         threshold: 0.5,
+        embeddingSpace: queryVectorSpace,
       });
     }
 
     // ── 7.6 Knowledge Base Collections (RAG 2.0) ───────────────
     let knowledgeBaseContext = '';
     let citations = [];
+    // Hoisted out of the block below: the tool loop needs the same resolved
+    // collection set so SEARCH_KB searches exactly what the pre-search did,
+    // including any @Collection mentions resolved from the prompt.
+    let targetCollectionIds = [];
 
     if (user?.id) {
       const mentionedNames = extractCollectionMentions(finalQuery);
-      let targetCollectionIds = Array.isArray(selectedCollectionIds) ? [...selectedCollectionIds] : [];
+      targetCollectionIds = Array.isArray(selectedCollectionIds) ? [...selectedCollectionIds] : [];
 
       if (mentionedNames.length > 0) {
         try {
@@ -803,6 +814,28 @@ ${page.text}`)
               });
             }
           }
+
+          // ── Corrective retrieval (CRAG) ─────────────────────
+          // The cross-encoder relevance gate has already graded these passages
+          // on a calibrated scale, so no extra LLM grading call is needed —
+          // zero surviving chunks IS the "retrieval was insufficient" signal.
+          //
+          // What was missing is the corrective half. Previously this state just
+          // told the model to ask the user which document to look in, which is
+          // a dead end when the answer is simply not in the documents. Now it
+          // routes to the tools that can actually recover: a re-query with
+          // different terms, or the open web when the topic is out of scope.
+          if (rag2Result.chunkCount === 0) {
+            const recoveryOptions = [
+              'Re-run [SEARCH_KB:query="..."] with different wording — the first attempt used the original phrasing verbatim, and these documents may name the concept differently.',
+              ...(forceWebSearch
+                ? ['If the topic is genuinely outside these documents, use [WEB_SEARCH:query="..."] instead.']
+                : ['If the topic is genuinely outside these documents, say so plainly and answer from your own knowledge, making clear it is not from the attached sources.']),
+              'Do not claim the knowledge base is empty or missing — it is attached and listed above.',
+            ];
+            knowledgeBaseContext += `\n\n## RETRIEVAL WAS INSUFFICIENT\nNo passage cleared the relevance bar for this query. Before answering:\n${recoveryOptions.map((line, i) => `${i + 1}. ${line}`).join('\n')}`;
+            console.log('[ChatPipeline] KB retrieval returned nothing relevant; corrective directive injected.');
+          }
         } catch (rag2Err) {
           console.warn('[ChatPipeline] Knowledge collection search error:', rag2Err.message);
         }
@@ -812,7 +845,21 @@ ${page.text}`)
     // ── 8. Build AI messages ──────────────────────────────────
     const aiMessages = [];
     const askClarifyingDirective = `\n\n## IMPORTANT: Ask Clarifying Questions First\nBefore using any GENERATE_* tool (GENERATE_PPT, GENERATE_IMAGE, GENERATE_HTML, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CHART, GENERATE_CSV):\n- If the user's request lacks critical details (title, theme, structure, layout, purpose, content), ask clarifying questions FIRST\n- Do NOT immediately jump to generation with vague or insufficient information\n- Ask 2-4 specific, targeted questions to get the details you need\n- Only use the GENERATE_* tool AFTER the user has provided sufficient context\n- This ensures the output matches what the user actually wants\n- Wait for the user's response before proceeding with generation`;
+    // Only advertised when a knowledge base is actually attached — offering a
+    // tool that cannot return anything just invites wasted rounds.
+    const kbToolLines = targetCollectionIds.length > 0
+      ? [
+        '0. Search Knowledge Base: [SEARCH_KB:query="your search query"]',
+        '   - An automatic search on the original wording already ran; its results are above',
+        '   - Use this to search AGAIN with better terms once you know what you are looking for,',
+        '     or to look up a second topic the first search did not cover',
+        '   - Prefer it over web search for anything the attached documents would cover',
+        '   - Do not repeat a query that already returned nothing; rephrase or say it is not covered',
+      ]
+      : [];
+
     const toolLines = [
+      ...kbToolLines,
       ...(forceWebSearch ? ['1. Web Search: [WEB_SEARCH:query="your search query"]'] : []),
       '2. Generate Image (DALL-E 3): [GENERATE_IMAGE:prompt=detailed image description here]',
       '   - Use when the user asks you to generate, create, or draw an image/picture/photo',
@@ -919,6 +966,22 @@ ${page.text}`)
       topicId: resolvedTopicId,
       abortController,
       forceWebSearch: Boolean(forceWebSearch),
+      // Lets the model re-query the knowledge base mid-answer via SEARCH_KB,
+      // instead of being limited to the single automatic pre-search above.
+      collectionIds: targetCollectionIds,
+      embedProvider,
+      ragTokenBudget: promptBudget.ragTokens,
+      // Citations discovered by a tool call have to reach the same array the
+      // pre-search populates, or the UI shows sources for only the first pass.
+      onCitations: (toolCitations) => {
+        const seen = new Set(citations.map((c) => `${c.documentId}:${c.snippet}`));
+        for (const c of toolCitations) {
+          const key = `${c.documentId}:${c.snippet}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          citations.push({ ...c, citationId: citations.length + 1 });
+        }
+      },
     };
     if (onToolStatus) {
       processToolCallArgs.onStatus = onToolStatus;
@@ -991,7 +1054,7 @@ ${page.text}`)
 
     // ── 10. Cache the response ────────────────────────────────
     if (cacheResponse && !isIdentityQuestion) {
-      await setCachedResponse(finalQuery, modelId, finalReply, queryVector, user?.id, resolvedTopicId);
+      await setCachedResponse(finalQuery, modelId, finalReply, queryVector, user?.id, resolvedTopicId, queryVectorSpace);
     }
 
     // ── 11. Persist to DB ─────────────────────────────────────

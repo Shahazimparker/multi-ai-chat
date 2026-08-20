@@ -8,6 +8,7 @@ const { processToolCall } = require('./toolProcessor.service');
 // can perceive is bounded by this list, not by the reply length.
 const TOOL_MARKER_OPENINGS = [
   '[SEARCH_FILES:',
+  '[SEARCH_KB:',
   '[GET_FILE:',
   '[WEB_SEARCH:',
   '[GENERATE_IMAGE:',

@@ -7,6 +7,7 @@
 // ============================================================
 
 const supabase = require('../config/supabase');
+const { DEFAULT_PROVIDER, spaceForProvider } = require('../config/embedding');
 
 /**
  * Base VectorStore interface
@@ -56,6 +57,11 @@ class PgVectorStore extends VectorStore {
     this.tableName = options.tableName || 'documents';
     this.similarityThreshold = options.similarityThreshold || 0.0;
     this.supabase = options.supabase || supabase;
+    // Which embedding model this store's vectors were produced by. Every
+    // search filters on it — a query vector scored against another model's
+    // rows returns plausible numbers rather than an error.
+    this.embedProvider = options.embedProvider || DEFAULT_PROVIDER;
+    this.embeddingSpace = options.embeddingSpace || spaceForProvider(this.embedProvider);
   }
 
   /**
@@ -107,8 +113,10 @@ class PgVectorStore extends VectorStore {
     try {
       let query = this.supabase.rpc('match_documents', {
         query_embedding: queryEmbedding,
+        provider_param: this.embedProvider,
         match_count: topK,
         match_threshold: threshold,
+        space_param: this.embeddingSpace,
       });
 
       const { data, error } = await query;

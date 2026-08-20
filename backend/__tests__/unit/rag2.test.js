@@ -3,7 +3,13 @@
 // PURPOSE: Unit tests for RAG 2.0 Engine & Crawler
 // ============================================================
 
+// setup.js loads the real .env, so COHERE_API_KEY is present during unit tests
+// and the reranker inside searchKnowledgeCollections would make a live API call.
+// Stub the module so these tests stay offline and deterministic; the reranker's
+// own behaviour is covered in rerank.test.js.
 const supabase = require('../../config/supabase');
+const queryTransform = require('../../services/queryTransform.service');
+const cohereService = require('../../services/ai/cohere.service');
 const ragService = require('../../services/rag.service');
 const rag2Service = require('../../services/rag2.service');
 const {
@@ -39,9 +45,32 @@ const mockCollectionScope = (rows, documents = []) =>
     };
   });
 
+// Query expansion runs before every knowledge-base search and calls a real
+// model; setup.js loads the live .env, so these tests would otherwise make paid
+// network calls. Stubbed with spyOn rather than vi.mock: this is a CommonJS
+// module and a vi.mock factory does NOT intercept the require here — it fails
+// open, silently leaving the real implementation in place.
+// Expansion behaviour is covered on its own in queryTransform.test.js.
+// Same reason as queryTransform: a vi.mock factory does not intercept this
+// CommonJS require, so the reranker would reach the live Cohere API on the real
+// key that setup.js loads. Reranking is covered in rerank.test.js.
+const stubReranker = () => {
+  vi.spyOn(cohereService, 'rerankDocuments')
+    .mockRejectedValue(new Error('rerank stubbed out in unit tests'));
+};
+
+const stubQueryTransform = () => {
+  vi.spyOn(queryTransform, 'expandQuery')
+    .mockImplementation(async (q) => ({ queries: [q], tokensUsed: 0, expanded: false }));
+  vi.spyOn(queryTransform, 'generateHypotheticalAnswer')
+    .mockResolvedValue({ hypothetical: null, tokensUsed: 0 });
+};
+
 describe('RAG 2.0 Engine', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  stubQueryTransform();
+  stubReranker();
   });
 
   describe('createParentChildChunks', () => {
@@ -172,13 +201,24 @@ Each chunk retains a pointer to its surrounding parent context so the LLM receiv
       const providersUsed = embedSpy.mock.calls.map((call) => call[1]);
       expect(providersUsed).toEqual(['openrouter', 'gemini']);
 
+      // Assert on the dense RPC specifically. Retrieval also fires a sparse
+      // full-text pass, which is not per-provider and would otherwise make a
+      // raw call count meaningless here.
+      const denseCalls = rpcSpy.mock.calls.filter((call) => call[0] === 'match_knowledge_chunks');
+
       // Both groups come back empty, which triggers one relaxed retry pass, so
       // each group is queried twice — once at the floor, once at the fallback.
-      expect(rpcSpy).toHaveBeenCalledTimes(4);
-      const groups = rpcSpy.mock.calls.map((call) => call[1].collection_ids);
+      expect(denseCalls).toHaveLength(4);
+      const groups = denseCalls.map((call) => call[1].collection_ids);
       expect(groups).toEqual([[VALID_UUID_1], [VALID_UUID_2], [VALID_UUID_1], [VALID_UUID_2]]);
-      const thresholds = rpcSpy.mock.calls.map((call) => call[1].match_threshold);
+      const thresholds = denseCalls.map((call) => call[1].match_threshold);
       expect(thresholds).toEqual([0.25, 0.25, 0, 0]);
+
+      // The sparse pass runs once for all collections, not once per provider:
+      // it matches text, so the embedding model is irrelevant to it.
+      const ftsCalls = rpcSpy.mock.calls.filter((call) => call[0] === 'match_knowledge_chunks_fts');
+      expect(ftsCalls).toHaveLength(1);
+      expect(ftsCalls[0][1].collection_ids).toEqual([VALID_UUID_1, VALID_UUID_2]);
     });
 
     // One provider being down must not take the other collections with it.
@@ -201,9 +241,16 @@ Each chunk retains a pointer to its surrounding parent context so the LLM receiv
       });
 
       // Only the healthy group is searched — twice, since it matched nothing.
-      expect(rpcSpy).toHaveBeenCalledTimes(2);
-      expect(rpcSpy.mock.calls[0][1].collection_ids).toEqual([VALID_UUID_1]);
-      expect(rpcSpy.mock.calls[1][1].collection_ids).toEqual([VALID_UUID_1]);
+      const denseCalls = rpcSpy.mock.calls.filter((call) => call[0] === 'match_knowledge_chunks');
+      expect(denseCalls).toHaveLength(2);
+      expect(denseCalls[0][1].collection_ids).toEqual([VALID_UUID_1]);
+      expect(denseCalls[1][1].collection_ids).toEqual([VALID_UUID_1]);
+
+      // The sparse pass is embedding-independent, so the collection whose
+      // embedding failed is still searched by keyword rather than dropped.
+      const ftsCalls = rpcSpy.mock.calls.filter((call) => call[0] === 'match_knowledge_chunks_fts');
+      expect(ftsCalls).toHaveLength(1);
+      expect(ftsCalls[0][1].collection_ids).toEqual([VALID_UUID_1, VALID_UUID_2]);
     });
 
     // An overview question ("what is in here?") shares no vocabulary with the

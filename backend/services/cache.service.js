@@ -8,6 +8,7 @@
 const crypto   = require('crypto');
 const supabase = require('../config/supabase');
 const { CHAT_SEMANTIC_CACHE_THRESHOLD } = require('../config/chatRuntime.config');
+const { LEGACY_SPACE } = require('../config/embedding');
 
 /**
  * hashQuery — normalize and hash query+model for cache key.
@@ -60,7 +61,7 @@ const getCachedResponse = async (query, modelId, userId = null, topicId = null) 
  * Filters by userId/topicId for topic-scoped isolation.
  * Works after the schema has query_embedding + match_query_cache; otherwise it no-ops.
  */
-const getSemanticCachedResponse = async (queryEmbedding, modelId, threshold = CHAT_SEMANTIC_CACHE_THRESHOLD, userId = null, topicId = null) => {
+const getSemanticCachedResponse = async (queryEmbedding, modelId, threshold = CHAT_SEMANTIC_CACHE_THRESHOLD, userId = null, topicId = null, embeddingSpace = LEGACY_SPACE) => {
   if (!queryEmbedding) return null;
 
   try {
@@ -71,6 +72,9 @@ const getSemanticCachedResponse = async (queryEmbedding, modelId, threshold = CH
       match_count: 1,
       user_id_param: userId,
       topic_id_param: topicId,
+      // Without this a vector from one model can clear the 0.92 similarity bar
+      // against a cache row from another and serve an unrelated answer.
+      space_param: embeddingSpace || LEGACY_SPACE,
     });
 
     if (error || !data?.length) return null;
@@ -99,7 +103,7 @@ const getSemanticCachedResponse = async (queryEmbedding, modelId, threshold = CH
  * Skips very short or error responses.
  * Stores userId and topicId for topic-scoped isolation.
  */
-const setCachedResponse = async (query, modelId, response, queryEmbedding = null, userId = null, topicId = null) => {
+const setCachedResponse = async (query, modelId, response, queryEmbedding = null, userId = null, topicId = null, embeddingSpace = LEGACY_SPACE) => {
   if (!response || response.length < 20) return; // skip trivial responses
 
   const hash = hashQuery(query, modelId, userId, topicId);
@@ -114,7 +118,12 @@ const setCachedResponse = async (query, modelId, response, queryEmbedding = null
 
   if (userId)   payload.user_id = userId;
   if (topicId)  payload.topic_id = topicId;
-  if (queryEmbedding) payload.query_embedding = queryEmbedding;
+  if (queryEmbedding) {
+    payload.query_embedding = queryEmbedding;
+    // Stored beside the vector so a later lookup can refuse to compare it
+    // against a vector from a different model.
+    payload.embedding_space = embeddingSpace || LEGACY_SPACE;
+  }
 
   const { error } = await supabase
     .from('query_cache')
@@ -123,6 +132,7 @@ const setCachedResponse = async (query, modelId, response, queryEmbedding = null
   // Existing databases may not have query_embedding yet. Keep exact cache working.
   if (error && queryEmbedding) {
     delete payload.query_embedding;
+    delete payload.embedding_space;
     await supabase
       .from('query_cache')
       .upsert(payload, { onConflict: 'query_hash' });

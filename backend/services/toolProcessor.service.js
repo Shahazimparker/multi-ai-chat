@@ -11,6 +11,9 @@ const { generateHTML } = require('./htmlGeneration.service');
 const { generateJSON } = require('./jsonGeneration.service');
 const { generateMarkdown } = require('./markdownGeneration.service');
 const { approvalManager } = require('./approvalManager.shared');
+// Late-bound: rag2 requires toolProcessor's siblings, and a namespace import
+// also keeps this stubbable in tests.
+const rag2Service = require('./rag2.service');
 
 /**
  * Wait for approval with polling (non-blocking runtime compatibility)
@@ -198,6 +201,7 @@ const buildFileContext = (fileResults, totalFileCount) => {
 };
 
 const findSearchFileMatch = (reply) => reply.match(/\[SEARCH_FILES:query=([^\]]+)\]/);
+const findSearchKBMatch = (reply) => reply.match(/\[SEARCH_KB:query=(?:"|')([^"']+)(?:"|')\]/i) || reply.match(/\[SEARCH_KB:query=([^\]]+)\]/i);
 const findGetFileMatch = (reply) => reply.match(/\[GET_FILE:id=([^\]]+)\]/);
 const findWebSearchMatch = (reply) => reply.match(/\[WEB_SEARCH:query=(?:"|')([^"']+)(?:"|')\]/i) || reply.match(/\[WEB_SEARCH:([^\]]+)\]/i);
 const findGenerateImageMatch = (reply) => reply.match(/\[GENERATE_IMAGE:prompt=([^\]]+)\]/i);
@@ -241,6 +245,10 @@ const processToolCall = async ({
   abortController,
   onStatus = null,
   forceWebSearch = true,
+  collectionIds = [],
+  embedProvider = 'openrouter',
+  ragTokenBudget = 2500,
+  onCitations = null,
 }) => {
   const searchMatch = findSearchFileMatch(reply);
   if (searchMatch) {
@@ -292,6 +300,92 @@ const processToolCall = async ({
       ],
       embedTokens: 0,
     };
+  }
+
+  // ── SEARCH_KB handler ─────────────────────────────────────
+  //
+  // Retrieval as a TOOL rather than a fixed pre-step. The pipeline still runs
+  // one automatic knowledge-base search before generation, but that search only
+  // ever sees the user's original wording. This lets the model come back with a
+  // better query once it knows what it is actually looking for — the difference
+  // between one-shot retrieval and agentic retrieval.
+  const searchKBMatch = findSearchKBMatch(reply);
+  if (searchKBMatch) {
+    const query = searchKBMatch[1].trim();
+    const strippedReply = reply.replace(searchKBMatch[0], '').trim() || '[searching knowledge base]';
+
+    if (!collectionIds || collectionIds.length === 0) {
+      return {
+        handled: true,
+        newMessages: [
+          { role: 'assistant', content: strippedReply },
+          { role: 'user', content: `[KNOWLEDGE BASE RESULT]
+No knowledge base is attached to this conversation, so there is nothing to search. Answer from the conversation and your own knowledge instead, and do not call SEARCH_KB again.
+[END KNOWLEDGE BASE RESULT]` },
+        ],
+        embedTokens: 0,
+      };
+    }
+
+    onStatus?.({
+      type: 'status',
+      tool: 'knowledge_search',
+      message: `searching knowledge base: ${query.slice(0, 60)}`,
+    });
+    console.log(`[Tool] Knowledge base search requested: "${query.slice(0, 80)}"`);
+
+    try {
+      const kbResult = await rag2Service.searchKnowledgeCollections({
+        query,
+        collectionIds,
+        userId: user?.id,
+        tokenBudget: ragTokenBudget,
+        embedProvider,
+        signal: abortController?.signal,
+      });
+
+      const citations = kbResult.citations || [];
+      if (citations.length > 0) {
+        onStatus?.({ type: 'citations', citations });
+        onCitations?.(citations);
+      }
+
+      // A zero-result search is a real answer, not a failure. Saying so plainly
+      // stops the model from calling the tool again with the same query.
+      const resultBlock = kbResult.chunkCount > 0
+        ? `[KNOWLEDGE BASE RESULT for "${query}"]
+${kbResult.context}
+[END KNOWLEDGE BASE RESULT]
+
+Now answer the user's question using these sources.`
+        : `[KNOWLEDGE BASE RESULT for "${query}"]
+No passage in the attached knowledge base matched this query well enough to cite. Either rephrase with different terms, or tell the user the knowledge base does not cover it — do not repeat this exact query.
+[END KNOWLEDGE BASE RESULT]`;
+
+      console.log(`[Tool] Knowledge base search returned ${kbResult.chunkCount} chunk(s)`);
+
+      return {
+        handled: true,
+        newMessages: [
+          { role: 'assistant', content: strippedReply },
+          { role: 'user', content: resultBlock },
+        ],
+        embedTokens: kbResult.tokensUsed || 0,
+      };
+    } catch (err) {
+      if (err?.name === 'AbortError' || err?.name === 'CanceledError') throw err;
+      console.warn('[Tool] Knowledge base search failed:', err.message);
+      return {
+        handled: true,
+        newMessages: [
+          { role: 'assistant', content: strippedReply },
+          { role: 'user', content: `[KNOWLEDGE BASE RESULT]
+The knowledge base search failed. Answer from the context you already have and tell the user the knowledge base was unreachable.
+[END KNOWLEDGE BASE RESULT]` },
+        ],
+        embedTokens: 0,
+      };
+    }
   }
 
   const webSearchMatch = findWebSearchMatch(reply);
@@ -685,6 +779,7 @@ module.exports = {
   processToolCall,
   // Exported for testing
   findSearchFileMatch,
+  findSearchKBMatch,
   findGetFileMatch,
   findWebSearchMatch,
   findGenerateImageMatch,

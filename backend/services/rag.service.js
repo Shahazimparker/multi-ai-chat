@@ -10,6 +10,13 @@ const crypto = require('crypto');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const supabase = require('../config/supabase');
 const { trimTextByTokens, estimateTokens } = require('./tokenBudget.service');
+const {
+  DEFAULT_PROVIDER,
+  getProviderSpec,
+  spaceForProvider,
+  resolveProviderChain,
+  padVector,
+} = require('../config/embedding');
 const RAG_HYBRID_THRESHOLD = 0.52;
 const RAG_RRF_K = 60;
 
@@ -192,9 +199,11 @@ if (cleanupTimerAny && typeof cleanupTimerAny.unref === 'function') {
   cleanupTimerAny.unref(); // avoid keeping Node alive in long-running servers
 }
 
-const getCacheKey = (text, provider, userId = null) => {
+// Keyed by embedding SPACE rather than provider, so an openrouter and an
+// openai request for the same text share one entry — they are the same model.
+const getCacheKey = (text, space, userId = null) => {
   const hash = crypto.createHash('sha256').update(text).digest('hex');
-  return `${userId || 'anon'}:${provider}:${hash}`;
+  return `${userId || 'anon'}:${space}:${hash}`;
 };
 
 const getCachedEmbedding = (key) => {
@@ -225,209 +234,225 @@ const clearEmbeddingCache = () => {
 };
 
 const isMaxContextError = (message = '') => /maximum context length|context length|too many tokens|invalid 'input'/i.test(String(message));
+/** Reject the outstanding promise as soon as the caller aborts. */
+const raceAbort = (promise, signal) => {
+  if (!signal) return promise;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      if (signal.aborted) {
+        reject({ name: 'AbortError' });
+        return;
+      }
+      signal.addEventListener('abort', () => reject({ name: 'AbortError' }), { once: true });
+    }),
+  ]);
+};
+
 /**
- * embedText — creates vector embedding using the selected provider
- * NOW RETURNS { vector, tokensUsed } instead of just the vector array
- * @param {string} text
- * @param {string} provider 'openrouter' 'mistral', 'gemini', or 'openai' (default: 'openrouter')
- * @param {number} retries
- * @param {AbortSignal} signal
- * @param {string|null} userId - for cache isolation across users
- * @returns {Promise<Object|null>} { vector: number[], tokensUsed: number } or null on failure
+ * Normalize a provider error before it reaches the failover loop.
+ * Cancellation and over-length input pass through untouched: neither is worth
+ * retrying, and callers key off EMBED_INPUT_TOO_LONG to split the text.
+ * @returns {never}
  */
-const embedText = async (text, provider = 'openrouter', retries = 3, signal = null, userId = null) => {
-  // Immediate check if already aborted
-  throwIfAborted(signal);
+const rethrowAsEmbeddingError = (err) => {
+  if (err?.name === 'AbortError' || err?.name === 'CanceledError') throw err;
+  if (err?.code === 'EMBED_INPUT_TOO_LONG') throw err;
 
-  // Estimate tokens for this embedding call (used if cached or as fallback)
-  const estimatedTokens = estimateTokens(text);
-
-  // Check cache first
-  const cacheKey = getCacheKey(text, provider, userId);
-  const cachedVector = getCachedEmbedding(cacheKey);
-  if (cachedVector) {
-    return { vector: cachedVector, tokensUsed: 0 }; // cached = no new tokens consumed
-  }
-
-  if (provider === 'openrouter') {
-    if (!process.env.OPENROUTER_API_KEY) {
-      console.error('[RAG] Error: OPENROUTER_API_KEY is not defined.');
-      return null;
+  const apiError = err?.response?.data?.error;
+  if (apiError) {
+    const details = typeof apiError === 'string' ? apiError : JSON.stringify(apiError);
+    if (isMaxContextError(details)) {
+      throw Object.assign(new Error('Embedding input exceeds provider context limit'), { code: 'EMBED_INPUT_TOO_LONG' });
     }
+    // Keep .response so the rate-limit check downstream can still see the status.
+    throw Object.assign(new Error(details), { response: err.response });
+  }
+  throw err;
+};
+
+const isRetriableRateLimit = (err) => {
+  const status = err?.response?.status || err?.status;
+  if (status === 429) return true;
+  return /\b429\b|rate.?limit/i.test(String(err?.message || ''));
+};
+
+/**
+ * One entry per provider. Each resolves { vector, tokensUsed } with the vector
+ * at its NATIVE width, or throws. Padding, caching and failover are the chain's
+ * job in embedText, not each provider's.
+ */
+const providerCalls = {
+  async openrouter(text, { signal, estimatedTokens }) {
     try {
       const response = await axios.post(
         'https://openrouter.ai/api/v1/embeddings',
-        {
-          model: 'openai/text-embedding-3-small',
-          input: text,
-        },
+        { model: getProviderSpec('openrouter').model, input: text },
         {
           headers: {
             Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            'HTTP-Referer': 'http://localhost:3000',
+            'HTTP-Referer': process.env.FRONTEND_URL || 'http://localhost:3000',
             'X-Title': 'MultiAI Chat',
           },
           timeout: 30000,
-          signal: signal
+          signal,
         }
       );
 
+      // OpenRouter has shipped more than one response shape for this endpoint.
       const payload = response?.data;
       const vector = payload?.data?.[0]?.embedding
         || payload?.embeddings?.[0]?.embedding
         || payload?.embeddings?.[0]
         || null;
+
       if (!Array.isArray(vector) || vector.length === 0) {
-        const keys = payload && typeof payload === 'object' ? Object.keys(payload).join(',') : typeof payload;
         const payloadError = payload?.error
           ? (typeof payload.error === 'string' ? payload.error : JSON.stringify(payload.error))
           : null;
-        if (payloadError) {
-          console.error(`[RAG] OpenRouter Embedding payload.error: ${payloadError}`);
-          if (isMaxContextError(payloadError)) {
-            throw Object.assign(new Error('Embedding input exceeds provider context limit'), { code: 'EMBED_INPUT_TOO_LONG' });
-          }
-        }
-        console.error(`[RAG] OpenRouter Embedding invalid payload shape. keys=${keys || 'none'}`);
-        return null;
-      }
-      // Try to get actual tokens from API response, fall back to estimate
-      const actualTokens = payload?.usage?.prompt_tokens || estimatedTokens;
-
-      if (vector.length < 1536) {
-        vector.push(...new Array(1536 - vector.length).fill(0));
-      }
-      setCachedEmbedding(cacheKey, vector);
-      return { vector, tokensUsed: actualTokens };
-    } catch (err) {
-      if (err.name === 'AbortError' || err.name === 'CanceledError') throw err;
-      if (err?.code === 'EMBED_INPUT_TOO_LONG') throw err;
-      const apiError = err?.response?.data?.error;
-      if (apiError) {
-        const details = typeof apiError === 'string' ? apiError : JSON.stringify(apiError);
-        console.error(`[RAG] OpenRouter Embedding API error details: ${details}`);
-        if (isMaxContextError(details)) {
+        if (payloadError && isMaxContextError(payloadError)) {
           throw Object.assign(new Error('Embedding input exceeds provider context limit'), { code: 'EMBED_INPUT_TOO_LONG' });
         }
+        const keys = payload && typeof payload === 'object' ? Object.keys(payload).join(',') : typeof payload;
+        throw new Error(payloadError || 'invalid payload shape (keys=' + (keys || 'none') + ')');
       }
-      console.error('[RAG] OpenRouter Embedding failed:', err.message);
-      return null;
-    }
-  }
-  if (provider === 'mistral') {
-    const { embedWithMistral } = require('./ai/mistral.service');
-    if (!process.env.MISTRAL_API_KEY) {
-      console.error('[RAG] Error: MISTRAL_API_KEY is not defined.');
-      return null;
-    }
-    try {
-      const result = await embedWithMistral(text, process.env.MISTRAL_API_KEY);
-      // embedWithMistral now returns { vector, tokensUsed }
-      setCachedEmbedding(cacheKey, result.vector);
-      return { vector: result.vector, tokensUsed: result.tokensUsed };
-    } catch (err) {
-      if (err.name === 'AbortError' || err.name === 'CanceledError') throw err;
-      console.error('[RAG] Mistral Embedding failed:', err.message);
-      return null;
-    }
-  }
 
-  if (provider === 'gemini') {
-    if (!process.env.GEMINI_API_KEY) {
-      console.error('[RAG] Error: GEMINI_API_KEY is not defined.');
-      return null;
+      return { vector, tokensUsed: payload?.usage?.prompt_tokens || estimatedTokens };
+    } catch (err) {
+      rethrowAsEmbeddingError(err);
     }
+  },
+
+  async openai(text, { signal, estimatedTokens }) {
+    try {
+      const response = await axios.post(
+        'https://api.openai.com/v1/embeddings',
+        { input: text, model: getProviderSpec('openai').model },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          },
+          timeout: 30000,
+          signal,
+        }
+      );
+      return {
+        vector: response?.data?.data?.[0]?.embedding,
+        tokensUsed: response?.data?.usage?.prompt_tokens || estimatedTokens,
+      };
+    } catch (err) {
+      rethrowAsEmbeddingError(err);
+    }
+  },
+
+  async gemini(text, { signal, estimatedTokens }) {
     try {
       const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-      // Use text-embedding-004 which is the current state-of-the-art for Gemini embeddings
-      const model = genAI.getGenerativeModel({ model: "embedding-001" });
-      // Race the Gemini embedding call against the abort signal
-      const result = await Promise.race([
-        model.embedContent(text),
-        new Promise((_, reject) => {
-          if (signal?.aborted) reject({ name: 'AbortError' });
-          signal?.addEventListener('abort', () => reject({ name: 'AbortError' }), { once: true });
-        })
-      ]);
-
-      let vector = result.embedding.values;
-      // Try to get actual tokens from Gemini response
-      const actualTokens = result.response?.usageMetadata?.totalTokenCount || estimatedTokens;
-      // Pad with zeros to match Supabase 1536-dimension columns if necessary
-      if (vector.length < 1536) {
-        vector = [...vector, ...new Array(1536 - vector.length).fill(0)];
-      }
-      // Cache the embedding
-      setCachedEmbedding(cacheKey, vector);
-      return { vector, tokensUsed: actualTokens };
+      const model = genAI.getGenerativeModel({ model: getProviderSpec('gemini').model });
+      const result = await raceAbort(model.embedContent(text), signal);
+      return {
+        vector: result?.embedding?.values,
+        tokensUsed: result?.response?.usageMetadata?.totalTokenCount || estimatedTokens,
+      };
     } catch (err) {
-      if (err.message?.includes('429') && retries > 0) {
-        throwIfAborted(signal);
-
-        const delay = (4 - retries) * 2000;
-        console.warn(`[RAG] Gemini Rate limited. Retrying in ${delay}ms...`);
-        await cancelableDelay(delay, signal);
-        throwIfAborted(signal);
-
-        // If we reach here, delay completed without abort, so proceed with retry
-        return embedText(text, provider, retries - 1, signal, userId);
-      }
-      if (err.name === 'AbortError' || err.name === 'CanceledError') throw err; // Re-throw AbortError/CanceledError immediately
-      console.error('[RAG] Gemini Embedding failed:', err.message);
-      return null;
+      rethrowAsEmbeddingError(err);
     }
+  },
+
+  async mistral(text, { signal, estimatedTokens }) {
+    try {
+      const { embedWithMistral } = require('./ai/mistral.service');
+      const result = await raceAbort(embedWithMistral(text, process.env.MISTRAL_API_KEY), signal);
+      return { vector: result?.vector, tokensUsed: result?.tokensUsed || estimatedTokens };
+    } catch (err) {
+      rethrowAsEmbeddingError(err);
+    }
+  },
+};
+
+/**
+ * embedText - embed `text`, failing over within the requested embedding space.
+ *
+ * Returns the SPACE and the provider that actually served the call. Callers
+ * that persist the vector must store `space` alongside it and filter on it at
+ * search time; a vector scored against a different space produces silent
+ * nonsense rather than an error. See backend/config/embedding.js.
+ *
+ * Failover never crosses a space boundary, so a fallback result is always
+ * comparable to rows already indexed under the requested space.
+ *
+ * @param {string} text
+ * @param {string} provider 'openrouter' | 'openai' | 'gemini' | 'mistral'
+ * @param {number} retries  per-provider retries, 429 only
+ * @param {AbortSignal} signal
+ * @param {string|null} userId - for cache isolation across users
+ * @returns {Promise<Object|null>} { vector, tokensUsed, provider, space } or null
+ */
+const embedText = async (text, provider = DEFAULT_PROVIDER, retries = 3, signal = null, userId = null) => {
+  throwIfAborted(signal);
+
+  const estimatedTokens = estimateTokens(text);
+  const space = spaceForProvider(provider);
+
+  // Keyed by space, not provider: an openai vector is a legitimate cache hit
+  // for an openrouter request because both are text-embedding-3-small.
+  const cacheKey = getCacheKey(text, space, userId);
+  const cachedVector = getCachedEmbedding(cacheKey);
+  if (cachedVector) {
+    return { vector: cachedVector, tokensUsed: 0, provider, space };
   }
 
-  // Default: OpenAI
-  if (!process.env.OPENAI_API_KEY) {
-    console.error('[RAG] Error: OPENAI_API_KEY is not defined.');
+  const chain = resolveProviderChain(provider);
+  if (chain.length === 0) {
+    console.error('[RAG] No API key configured for any provider in embedding space "' + space + '".');
     return null;
   }
 
-  try {
-    const response = await axios.post(
-      'https://api.openai.com/v1/embeddings',
-      {
-        input: text,
-        model: 'text-embedding-3-small',
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        },
-        signal: signal
-      }
-    );
-    const vector = response.data.data[0].embedding;
-    const actualTokens = response.data.usage?.prompt_tokens || estimatedTokens;
-    setCachedEmbedding(cacheKey, vector);
-    return { vector, tokensUsed: actualTokens };
-  } catch (err) {
-    if (err.name === 'CanceledError' || err.name === 'AbortError') {
-      throw err;
-    }
-    if (err.response?.status === 401) {
-      console.error('[RAG] Embedding failed: 401 Unauthorized. Check your OPENAI_API_KEY.');
-    }
-    if (err.response?.status === 429) {
-      if (retries > 0) {
-        throwIfAborted(signal);
+  let lastError = null;
 
-        const delay = (4 - retries) * 2000; // 2s, 4s, 6s...
-        console.warn(`[RAG] Rate limited (429). Retrying in ${delay}ms... (${retries} attempts left)`);
-        await cancelableDelay(delay, signal);
-        throwIfAborted(signal);
+  for (const candidate of chain) {
+    let attemptsLeft = Math.max(0, retries);
 
-        // If we reach here, delay completed without abort, so proceed with retry
-        return embedText(text, provider, retries - 1, signal, userId);
+    for (;;) {
+      throwIfAborted(signal);
+      try {
+        const result = await providerCalls[candidate](text, { signal, estimatedTokens });
+        const vector = result?.vector;
+        if (!Array.isArray(vector) || vector.length === 0) {
+          throw new Error('provider returned an empty vector');
+        }
+
+        const padded = padVector(vector);
+        setCachedEmbedding(cacheKey, padded);
+        if (candidate !== provider) {
+          console.warn('[RAG] "' + provider + '" unavailable; served by same-space fallback "' + candidate + '".');
+        }
+        return { vector: padded, tokensUsed: result.tokensUsed || 0, provider: candidate, space };
+      } catch (err) {
+        // The caller asked to stop, or the input is too long for every provider
+        // in this space. Neither is a failover case.
+        if (err?.name === 'AbortError' || err?.name === 'CanceledError') throw err;
+        if (err?.code === 'EMBED_INPUT_TOO_LONG') throw err;
+
+        lastError = err;
+
+        if (isRetriableRateLimit(err) && attemptsLeft > 0) {
+          const delay = (Math.max(1, retries) - attemptsLeft + 1) * 2000; // 2s, 4s, 6s
+          console.warn('[RAG] "' + candidate + '" rate limited. Retrying in ' + delay + 'ms (' + attemptsLeft + ' left)');
+          await cancelableDelay(delay, signal);
+          attemptsLeft--;
+          continue;
+        }
+
+        console.error('[RAG] Embedding via "' + candidate + '" failed: ' + err.message);
+        break; // fall through to the next provider in the same space
       }
-      console.error('[RAG] Embedding failed: 429 Too Many Requests. Rate limit exceeded. No more retries.');
     }
-    if (err.name === 'AbortError' || err.name === 'CanceledError') throw err; // Re-throw AbortError/CanceledError immediately
-    console.error('[RAG] Embedding failed:', err.message); // Log other errors
-    return null;
   }
+
+  console.error('[RAG] Every provider in space "' + space + '" failed. Last error: ' + (lastError?.message || 'unknown'));
+  return null;
 };
 
 /**
@@ -453,6 +478,10 @@ const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = '
   if (!embedResult) return [];
   const { vector: embedding, tokensUsed: embedTokens } = embedResult;
 
+  // Filter on the space the query vector ACTUALLY came from, not the one that
+  // was requested — failover may have served this from a sibling provider.
+  const embedSpace = embedResult.space;
+
   // Use topic-scoped search whenever possible for best isolation
   let rpcCall;
   if (topicId) {
@@ -461,6 +490,7 @@ const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = '
       p_topic_id: topicId,
       match_threshold: Math.max(0.2, threshold - 0.2),
       match_count: Math.max(topK * 4, topK),
+      space_param: embedSpace,
     });
   } else {
     rpcCall = supabase.rpc('match_documents', {
@@ -468,6 +498,7 @@ const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = '
       provider_param: provider,
       match_threshold: Math.max(0.2, threshold - 0.2),
       match_count: Math.max(topK * 4, topK),
+      space_param: embedSpace,
     });
   }
 
@@ -495,20 +526,30 @@ const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = '
  * @param {string} provider
  * @param {AbortSignal} signal
  * @param {Array} precomputedEmbedding
- * @param {Object} options - { tokenBudget, topicId }
+ * @param {Object} options - { tokenBudget, topicId, userId, embeddingSpace }
+ *
+ * `embeddingSpace` MUST accompany `precomputedEmbedding` — it names the model
+ * that produced the vector, and every RPC below filters stored rows on it.
+ * Without it, a caller that embedded with one model would score its vector
+ * against rows indexed by another and get plausible-looking nonsense.
  */
-const buildRAGContext = async (query, provider = 'openrouter', signal = null, precomputedEmbedding = null, options = {}) => {
+const buildRAGContext = async (query, provider = DEFAULT_PROVIDER, signal = null, precomputedEmbedding = null, options = {}) => {
   const topicId = options.topicId;
   const userId = options.userId;
   let embedding;
   let embedTokens = 0;
+  // Previously this hardcoded 'openrouter' while passing the caller's
+  // `provider` to the RPCs, so the two could disagree. Both now derive from
+  // the same value.
+  let embedSpace = options.embeddingSpace || spaceForProvider(provider);
   if (precomputedEmbedding) {
     embedding = precomputedEmbedding;
   } else {
-    const result = await embedText(query, 'openrouter', 3, signal, userId);
+    const result = await embedText(query, provider, 3, signal, userId);
     if (!result) return '';
     embedding = result.vector;
     embedTokens = result.tokensUsed;
+    embedSpace = result.space;
   }
 
   // Race the Supabase RPC call against the abort signal
@@ -520,6 +561,7 @@ const buildRAGContext = async (query, provider = 'openrouter', signal = null, pr
       p_topic_id: topicId,
       match_threshold: 0.2,
       match_count: 12,
+      space_param: embedSpace,
     });
 
   const { data: docs, error } = await Promise.race([
@@ -542,6 +584,7 @@ const buildRAGContext = async (query, provider = 'openrouter', signal = null, pr
         query_embedding: embedding,
         user_id_param: userId,
         provider_param: provider,
+        space_param: embedSpace,
         match_count: 5,
         topic_id_param: topicId,
       });

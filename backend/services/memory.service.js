@@ -14,6 +14,7 @@
 const { estimateTokens, trimTextByTokens } = require('./tokenBudget.service');
 const supabase = require('../config/supabase');
 const { embedText } = require('./rag.service');
+const { LEGACY_SPACE } = require('../config/embedding');
 
 // Token budget reserved for cross-chat memory block in the AI prompt.
 // Carved out separately — does not compete with historyTokens or ragTokens.
@@ -716,12 +717,15 @@ const embedAndStoreMessage = async ({ userId, topicId, messageId, role, content,
     if (!embedResult) return 0;
 
     const { vector, tokensUsed } = embedResult;
+    // Tag the row with the model that produced the vector, not the provider
+    // that was requested — failover may have served this from a sibling.
+    const embeddingSpace = embedResult.space || LEGACY_SPACE;
 
     // Insert the embedding; if message_id already exists (duplicate), silently skip
     const { error } = await supabase
       .from('message_embeddings')
       .insert(
-        { user_id: userId, topic_id: topicId, message_id: messageId, role, content, embedding: vector }
+        { user_id: userId, topic_id: topicId, message_id: messageId, role, content, embedding: vector, embedding_space: embeddingSpace }
       );
 
     if (error && !error.message?.includes('duplicate key')) {
@@ -754,7 +758,8 @@ const searchMemory = async (queryVector, userId, options = {}) => {
     excludeTopicId = null,
     topK = 5,
     threshold = 0.5,
-    tokenBudget = MEMORY_CONTEXT_TOKEN_BUDGET
+    tokenBudget = MEMORY_CONTEXT_TOKEN_BUDGET,
+    embeddingSpace = LEGACY_SPACE
   } = options;
 
   try {
@@ -764,6 +769,8 @@ const searchMemory = async (queryVector, userId, options = {}) => {
       p_exclude_topic: excludeTopicId || null,
       match_threshold: Math.max(0.2, threshold - 0.2),
       match_count: Math.max(topK * 4, topK),
+      // Only recall memories embedded by the same model as this query vector.
+      space_param: embeddingSpace || LEGACY_SPACE,
     });
 
     if (error) {

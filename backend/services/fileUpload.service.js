@@ -18,6 +18,7 @@ const { trimTextByTokens, estimateTokens } = require('./tokenBudget.service');
 const crypto = require('crypto');
 const { loadDocument } = require('./documentLoader.service');
 const { splitText } = require('./textSplitter.service');
+const { LEGACY_SPACE, DEFAULT_PROVIDER } = require('../config/embedding');
 
 /**
  * chunkContent — split text into token-aware overlapping chunks
@@ -292,6 +293,7 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
     if (ragEnabled) {
       const chunks = chunkContent(sanitizedContent, 2000, fileType);
       const chunkVectors = [];
+      let chunkSpace = null;
 
       const embedChunkWithRetry = async (text, chunkIndex, totalChunks) => {
         try {
@@ -343,11 +345,16 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
         if (signal?.aborted) throw new Error('Upload cancelled by user');
         if (result) {
           chunkVectors.push(result.vector);
+          if (!chunkSpace) chunkSpace = result.space;
           totalEmbedTokens += result.tokensUsed;
         } else chunkVectors.push(null);
       }
 
       const fileVector = chunkVectors.find(v => v !== null) || null;
+      // Every chunk here goes through the same embedText call, so one space
+      // describes them all. Recorded so search can refuse to score these rows
+      // against a query vector from a different model.
+      const embeddingSpace = chunkSpace || LEGACY_SPACE;
 
       const { data: ragData, error: ragError } = await supabase
         .rpc('insert_rag_document', {
@@ -356,6 +363,7 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
           p_file_type: fileType, p_original_content: sanitizedContent,
           p_llm_analysis: sanitizedAnalysis, p_embedding: fileVector,
           p_original_file_b64: fileBuffer ? fileBuffer.toString('base64') : null,
+          p_embedding_space: embeddingSpace,
         });
 
       if (ragError) throw ragError;
@@ -376,8 +384,8 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
           .from('uploaded_files').insert({
             user_id: userId, topic_id: topicId,
             file_name: fileName, file_type: fileType,
-            content_text: sanitizedContent, provider: 'openrouter',
-            embedding: fileVector,
+            content_text: sanitizedContent, provider: DEFAULT_PROVIDER,
+            embedding: fileVector, embedding_space: embeddingSpace,
           }).select('id').single();
 
         if (!fileErr && fr) {
@@ -385,7 +393,8 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
           const { error: chunkErr } = await supabase
             .from('rag_chunks').insert(chunks.map((text, i) => ({
               file_id: fileRecord.id, chunk_text: text,
-              provider: 'openrouter', embedding: chunkVectors[i] || fileVector,
+              provider: DEFAULT_PROVIDER, embedding: chunkVectors[i] || fileVector,
+              embedding_space: embeddingSpace,
               chunk_index: i,
             })));
           if (chunkErr) console.warn(`[FileUpload] rag_chunks error: ${chunkErr.message}`);
@@ -726,6 +735,7 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
     }
     const queryVector = embedResult.vector;
     const embedTokens = embedResult.tokensUsed;
+    const embedSpace = embedResult.space || LEGACY_SPACE;
 
     // Use DB-side vector search via IVFFLAT index (search_uploaded_files RPC)
     const { data, error } = await supabase.rpc('search_uploaded_files', {
@@ -734,6 +744,7 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
       provider_param: provider,
       match_count: 5,
       topic_id_param: topicId,
+      space_param: embedSpace,
     });
 
     if (error) {
