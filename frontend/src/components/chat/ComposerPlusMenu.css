@@ -1,0 +1,319 @@
+/* ============================================================
+   FILE: frontend/src/components/chat/ComposerPlusMenu.css
+   PURPOSE: The composer "+" trigger and its drop-up menu.
+   ============================================================ */
+
+.composer-plus {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Sized to match .upload-trigger.icon-pin next to it so the two read as a pair. */
+.composer-plus-btn {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, transform 0.2s;
+}
+
+.composer-plus-btn:hover:not(:disabled),
+.composer-plus-btn.open {
+  background: rgba(167, 139, 250, 0.15);
+  color: var(--accent-purple);
+}
+
+.composer-plus-btn.open {
+  transform: rotate(45deg);
+}
+
+.composer-plus-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* A knowledge base is attached but its name lives one pane down, so the
+   trigger carries a dot rather than a label. */
+.composer-plus-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4d6bfe;
+}
+
+.composer-plus-btn.open .composer-plus-dot {
+  display: none;
+}
+
+.composer-plus-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+}
+
+/* Painted opaque, not with --bg-secondary: that token is a translucent
+   gradient in both themes, and the chat behind would read through the menu. */
+.composer-plus-panel {
+  z-index: 10001;
+  background: #161b22;
+  border: 1px solid var(--border-primary);
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+:root[data-theme="light"] .composer-plus-panel {
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.2);
+}
+
+.plus-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 6px;
+}
+
+/* ── Root menu ───────────────────────────────────────────── */
+
+.plus-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.plus-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+.plus-item-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.plus-menu-item.active .plus-item-icon {
+  color: #4d6bfe;
+}
+
+.plus-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plus-item-count {
+  flex-shrink: 0;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(77, 107, 254, 0.18);
+  color: #60a5fa;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.plus-item-chevron {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+/* ── Knowledge pane ──────────────────────────────────────── */
+
+.plus-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 8px;
+  border-bottom: 1px solid var(--border-primary);
+  margin-bottom: 6px;
+}
+
+.plus-pane-header h4 {
+  flex: 1;
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.plus-back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.plus-back-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.plus-manage-link {
+  background: transparent;
+  border: none;
+  color: #4d6bfe;
+  font-size: 0.7rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.plus-manage-link:hover {
+  text-decoration: underline;
+}
+
+.plus-pane-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.plus-pane-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.plus-pane-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+
+:root[data-theme="light"] .plus-pane-list::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.15);
+}
+
+.plus-pane-empty {
+  padding: 16px;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.plus-pane-empty p {
+  margin: 0;
+}
+
+.plus-create-btn {
+  margin-top: 8px;
+  padding: 6px 12px;
+  background: #4d6bfe;
+  border: none;
+  border-radius: 6px;
+  color: #ffffff;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.plus-kb-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  font-family: 'Inter', sans-serif;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.plus-kb-item:hover {
+  background: var(--bg-hover);
+}
+
+.plus-kb-item.selected {
+  background: rgba(77, 107, 254, 0.12);
+}
+
+.plus-kb-checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-primary);
+  border-radius: 5px;
+  color: #ffffff;
+}
+
+.plus-kb-item.selected .plus-kb-checkbox {
+  background: #4d6bfe;
+  border-color: #4d6bfe;
+}
+
+.plus-kb-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.plus-kb-name {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plus-kb-meta {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+}
+
+.plus-pane-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 6px 2px;
+  border-top: 1px solid var(--border-primary);
+  margin-top: 6px;
+}
+
+.plus-clear-btn {
+  background: transparent;
+  border: none;
+  color: #ef4444;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.plus-clear-btn:hover {
+  text-decoration: underline;
+}

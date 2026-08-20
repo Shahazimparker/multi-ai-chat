@@ -12,9 +12,9 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background-color: var(--bg-secondary, #161b22);
-  border: 1px solid var(--border-color, #30363d);
-  color: var(--text-secondary, #8b949e);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  color: var(--text-secondary);
   padding: 6px 12px;
   border-radius: 8px;
   font-size: 13px;
@@ -24,13 +24,13 @@
 }
 
 .knowledge-trigger-btn:hover {
-  background-color: var(--bg-tertiary, #21262d);
-  color: var(--text-primary, #ffffff);
+  background: var(--bg-hover);
+  color: var(--text-primary);
   border-color: #4d6bfe;
 }
 
 .knowledge-trigger-btn.active {
-  background-color: rgba(77, 107, 254, 0.15);
+  background: rgba(77, 107, 254, 0.15);
   border-color: #4d6bfe;
   color: #60a5fa;
 }
@@ -52,12 +52,20 @@
   top: calc(100% + 8px);
   left: 0;
   width: 280px;
-  background-color: var(--bg-secondary, #161b22);
-  border: 1px solid var(--border-color, #30363d);
+  /* Painted opaque, not with --bg-secondary: that variable is a translucent
+     gradient in both themes, so the token bar underneath used to read straight
+     through this panel. */
+  background: #161b22;
+  border: 1px solid var(--border-primary);
   border-radius: 12px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
   z-index: 500;
   overflow: hidden;
+}
+
+:root[data-theme="light"] .knowledge-dropdown {
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
 }
 
 .dropdown-header {
@@ -65,14 +73,14 @@
   align-items: center;
   justify-content: space-between;
   padding: 12px 14px;
-  border-bottom: 1px solid var(--border-color, #21262d);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .dropdown-header h4 {
   font-size: 13px;
   font-weight: 600;
   margin: 0;
-  color: var(--text-primary, #ffffff);
+  color: var(--text-primary);
 }
 
 .manage-kb-btn {
@@ -101,12 +109,12 @@
   padding: 16px;
   text-align: center;
   font-size: 12px;
-  color: var(--text-secondary, #8b949e);
+  color: var(--text-secondary);
 }
 
 .create-first-btn {
   margin-top: 8px;
-  background-color: #4d6bfe;
+  background: #4d6bfe;
   color: #ffffff;
   border: none;
   padding: 6px 12px;
@@ -126,18 +134,18 @@
 }
 
 .dropdown-item:hover {
-  background-color: var(--bg-tertiary, #21262d);
+  background: var(--bg-hover);
 }
 
 .dropdown-item.selected {
-  background-color: rgba(77, 107, 254, 0.12);
+  background: rgba(77, 107, 254, 0.12);
 }
 
 .item-checkbox {
   width: 18px;
   height: 18px;
   border-radius: 4px;
-  border: 1px solid var(--border-color, #30363d);
+  border: 1px solid var(--border-primary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -146,7 +154,7 @@
 }
 
 .dropdown-item.selected .item-checkbox {
-  background-color: #4d6bfe;
+  background: #4d6bfe;
   border-color: #4d6bfe;
   color: #ffffff;
 }
@@ -160,7 +168,7 @@
 .item-name {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-primary, #ffffff);
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -168,12 +176,12 @@
 
 .item-meta {
   font-size: 11px;
-  color: var(--text-secondary, #8b949e);
+  color: var(--text-secondary);
 }
 
 .dropdown-footer {
   padding: 8px 14px;
-  border-top: 1px solid var(--border-color, #21262d);
+  border-top: 1px solid var(--border-primary);
   display: flex;
   justify-content: flex-end;
 }

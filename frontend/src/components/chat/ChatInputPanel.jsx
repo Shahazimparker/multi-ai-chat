@@ -1,5 +1,6 @@
 import React from 'react';
 import { Globe, Send, StopCircle } from 'lucide-react';
+import ComposerPlusMenu from './ComposerPlusMenu';
 import FileUpload from './FileUpload';
 import ChatMemoryControls from './ChatMemoryControls';
 import ChatQueuePopover from './ChatQueuePopover';
@@ -38,6 +39,14 @@ const ChatInputPanel = ({
     />
 
     <div className="input-box">
+      {/* Everything you can add to a message that is not the text itself, and
+          not a file — the paperclip keeps that one job. */}
+      <ComposerPlusMenu
+        selectedCollectionIds={session.selectedCollectionIds}
+        onSelectionChange={session.setSelectedCollectionIds}
+        disabled={session.loading || !session.model}
+      />
+
       <FileUpload
         topicId={session.activeTopic?.id}
         onFileSelect={(files) => composer.setPendingFiles((prev) => [...prev, ...files])}

@@ -18,13 +18,25 @@ const VALID_UUID_USER = '33333333-3333-3333-3333-333333333333';
 const VALID_UUID_2 = '44444444-4444-4444-4444-444444444444';
 
 // searchKnowledgeCollections first reads each collection’s embedding_provider
-// so it can group the search by model. Stub that lookup.
-const mockCollectionScope = (rows) =>
-  vi.spyOn(supabase, 'from').mockReturnValue({
-    select: () => ({
-      in: () => Promise.resolve({ data: rows, error: null }),
-      eq: () => Promise.resolve({ data: rows, error: null }),
-    }),
+// so it can group the search by model, then reads the indexed documents of those
+// collections for the prompt manifest. Stub both lookups.
+const mockCollectionScope = (rows, documents = []) =>
+  vi.spyOn(supabase, 'from').mockImplementation((table) => {
+    if (table === 'knowledge_documents') {
+      const chain = {
+        select: () => chain,
+        in: () => chain,
+        eq: () => chain,
+        limit: () => Promise.resolve({ data: documents, error: null }),
+      };
+      return chain;
+    }
+    return {
+      select: () => ({
+        in: () => Promise.resolve({ data: rows, error: null }),
+        eq: () => Promise.resolve({ data: rows, error: null }),
+      }),
+    };
   });
 
 describe('RAG 2.0 Engine', () => {
@@ -160,9 +172,13 @@ Each chunk retains a pointer to its surrounding parent context so the LLM receiv
       const providersUsed = embedSpy.mock.calls.map((call) => call[1]);
       expect(providersUsed).toEqual(['openrouter', 'gemini']);
 
-      expect(rpcSpy).toHaveBeenCalledTimes(2);
+      // Both groups come back empty, which triggers one relaxed retry pass, so
+      // each group is queried twice — once at the floor, once at the fallback.
+      expect(rpcSpy).toHaveBeenCalledTimes(4);
       const groups = rpcSpy.mock.calls.map((call) => call[1].collection_ids);
-      expect(groups).toEqual([[VALID_UUID_1], [VALID_UUID_2]]);
+      expect(groups).toEqual([[VALID_UUID_1], [VALID_UUID_2], [VALID_UUID_1], [VALID_UUID_2]]);
+      const thresholds = rpcSpy.mock.calls.map((call) => call[1].match_threshold);
+      expect(thresholds).toEqual([0.25, 0.25, 0, 0]);
     });
 
     // One provider being down must not take the other collections with it.
@@ -184,8 +200,44 @@ Each chunk retains a pointer to its surrounding parent context so the LLM receiv
         userId: VALID_UUID_USER,
       });
 
-      expect(rpcSpy).toHaveBeenCalledTimes(1);
+      // Only the healthy group is searched — twice, since it matched nothing.
+      expect(rpcSpy).toHaveBeenCalledTimes(2);
       expect(rpcSpy.mock.calls[0][1].collection_ids).toEqual([VALID_UUID_1]);
+      expect(rpcSpy.mock.calls[1][1].collection_ids).toEqual([VALID_UUID_1]);
+    });
+
+    // An overview question ("what is in here?") shares no vocabulary with the
+    // documents it asks about, so it can match nothing. The prompt must still
+    // say which collections are attached and what they hold, otherwise the model
+    // answers that it was given no knowledge base at all.
+    it('still describes the attached collections when nothing matches', async () => {
+      mockCollectionScope(
+        [{ id: VALID_UUID_1, name: 'TEST', embedding_provider: 'openrouter' }],
+        [{
+          id: VALID_UUID_DOC,
+          collection_id: VALID_UUID_1,
+          title: 'drawio-cheatsheet.md',
+          source_type: 'file',
+          source_url: null,
+          chunk_count: 12,
+        }],
+      );
+      vi.spyOn(ragService, 'embedText').mockResolvedValue({
+        vector: new Array(1536).fill(0.01),
+        tokensUsed: 25,
+      });
+      vi.spyOn(supabase, 'rpc').mockResolvedValue({ data: [], error: null });
+
+      const result = await rag2Service.searchKnowledgeCollections({
+        query: 'what do you see in this knowledge base',
+        collectionIds: [VALID_UUID_1],
+        userId: VALID_UUID_USER,
+      });
+
+      expect(result.chunkCount).toBe(0);
+      expect(result.context).toContain('Collection "TEST"');
+      expect(result.context).toContain('drawio-cheatsheet.md');
+      expect(result.context).toContain('You DO have access');
     });
   });
 });

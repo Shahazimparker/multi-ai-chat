@@ -4,37 +4,16 @@
 // ============================================================
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Database, Check, ChevronDown, X, Plus } from 'lucide-react';
+import { Database, Check, ChevronDown, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router';
-import api from '../../config/api';
+import { useKnowledgeCollections, toggleCollectionId } from './useKnowledgeCollections';
 import './KnowledgeSelector.css';
 
 const KnowledgeSelector = ({ selectedCollectionIds = [], onSelectionChange }) => {
-  const [collections, setCollections] = useState([]);
+  const { collections, loading } = useKnowledgeCollections();
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
   const wrapperRef = useRef(null);
   const navigate = useNavigate();
-
-  useEffect(() => {
-    let isMounted = true;
-    const fetchCollections = async () => {
-      try {
-        setLoading(true);
-        const res = await api.get('/knowledge/collections');
-        if (isMounted) {
-          setCollections(res.data?.collections || []);
-        }
-      } catch (err) {
-        console.warn('[KnowledgeSelector] Fetch collections error:', err);
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
-
-    fetchCollections();
-    return () => { isMounted = false; };
-  }, []);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -47,11 +26,7 @@ const KnowledgeSelector = ({ selectedCollectionIds = [], onSelectionChange }) =>
   }, []);
 
   const toggleCollection = (colId) => {
-    if (selectedCollectionIds.includes(colId)) {
-      onSelectionChange(selectedCollectionIds.filter((id) => id !== colId));
-    } else {
-      onSelectionChange([...selectedCollectionIds, colId]);
-    }
+    onSelectionChange(toggleCollectionId(selectedCollectionIds, colId));
   };
 
   const selectedCollections = collections.filter((c) =>

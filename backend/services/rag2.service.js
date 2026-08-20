@@ -16,6 +16,15 @@ const CHUNK_OVERLAP_CHARS = 150;     // ~40 tokens overlap
 const PARENT_WINDOW_CHUNKS = 3;       // 1 before, current, 1 after (~1000 tokens parent context)
 const RAG2_HYBRID_RRF_K = 60;
 
+// Similarity floor for the first retrieval pass. Kept modest on purpose: a user
+// who attaches a collection wants it consulted, and text-embedding-3-small puts
+// plainly-worded questions around 0.3 against their own source text.
+const RAG2_MATCH_THRESHOLD = 0.25;
+// Second pass when the first returns nothing at all - take the nearest chunks at
+// any score rather than hand the model an empty context.
+const RAG2_FALLBACK_THRESHOLD = 0.0;
+const MANIFEST_DOC_LIMIT = 50;
+
 /**
  * Split text into parent-child chunks
  * @param {string} text
@@ -208,7 +217,7 @@ const resolveCollectionScope = async (collectionIds, userId) => {
   if (collectionIds && collectionIds.length > 0) {
     const { data, error } = await supabase
       .from('knowledge_collections')
-      .select('id, embedding_provider')
+      .select('id, name, embedding_provider')
       .in('id', collectionIds);
     if (error) {
       console.warn('[RAG2] Collection provider lookup failed:', error.message);
@@ -219,8 +228,8 @@ const resolveCollectionScope = async (collectionIds, userId) => {
 
   // Two parameterised queries rather than one interpolated .or() filter.
   const [owned, publics] = await Promise.all([
-    supabase.from('knowledge_collections').select('id, embedding_provider').eq('user_id', userId),
-    supabase.from('knowledge_collections').select('id, embedding_provider').eq('is_public', true),
+    supabase.from('knowledge_collections').select('id, name, embedding_provider').eq('user_id', userId),
+    supabase.from('knowledge_collections').select('id, name, embedding_provider').eq('is_public', true),
   ]);
 
   if (owned.error || publics.error) {
@@ -235,6 +244,55 @@ const resolveCollectionScope = async (collectionIds, userId) => {
   return Array.from(merged.values());
 };
 /**
+ * List the indexed documents behind a set of collections.
+ *
+ * A question like "what do you see in this knowledge base?" shares almost no
+ * vocabulary with the documents it is asking about, so every chunk scores below
+ * the similarity floor, retrieval returns nothing, and the model is handed an
+ * empty context — at which point it truthfully answers that no knowledge base is
+ * attached. The manifest prevents that: whenever a collection is attached, the
+ * prompt at minimum names it and lists what it holds.
+ */
+const listCollectionDocuments = async (collectionIds) => {
+  if (!collectionIds || collectionIds.length === 0) return [];
+  try {
+    const { data, error } = await supabase
+      .from('knowledge_documents')
+      .select('id, collection_id, title, source_type, source_url, chunk_count')
+      .in('collection_id', collectionIds)
+      .eq('status', 'indexed')
+      .limit(MANIFEST_DOC_LIMIT);
+    if (error) {
+      console.warn('[RAG2] Document manifest lookup failed:', error.message);
+      return [];
+    }
+    return data || [];
+  } catch (err) {
+    console.warn('[RAG2] Document manifest lookup failed:', err.message);
+    return [];
+  }
+};
+
+const buildManifestLines = (scopeRows, documents) => {
+  const byCollection = new Map(scopeRows.map((row) => [row.id, []]));
+  for (const doc of documents) {
+    const bucket = byCollection.get(doc.collection_id);
+    if (bucket) bucket.push(doc);
+  }
+
+  const lines = [];
+  for (const row of scopeRows) {
+    const docs = byCollection.get(row.id) || [];
+    lines.push(`- Collection "${row.name || row.id}" — ${docs.length} indexed document(s)`);
+    for (const doc of docs) {
+      const source = doc.source_url ? `, ${doc.source_url}` : '';
+      lines.push(`  * ${doc.title} (${doc.source_type || 'file'}, ${doc.chunk_count || 0} chunks${source})`);
+    }
+  }
+  return lines;
+};
+
+/**
  * Search Knowledge Collections with Parent-Child resolution & structured citations
  */
 const searchKnowledgeCollections = async ({
@@ -242,7 +300,7 @@ const searchKnowledgeCollections = async ({
   collectionIds = [],
   userId,
   topK = 6,
-  matchThreshold = 0.35,
+  matchThreshold = RAG2_MATCH_THRESHOLD,
   tokenBudget = 2500,
   embedProvider = 'openrouter',
   signal = null,
@@ -269,42 +327,53 @@ const searchKnowledgeCollections = async ({
     byProvider.get(provider).push(row.id);
   }
 
-  // 2. One query embedding + RPC call per provider group, merged afterwards.
-  //    Every group scores by cosine, so the values stay comparable enough to
-  //    rank together, and the lexical term below further levels them out.
-  const candidates = [];
+  // 2. One query embedding per provider group, reused by both retrieval passes.
+  const groups = [];
   for (const [provider, ids] of byProvider) {
-    let queryVector;
     try {
       const embedRes = await ragService.embedText(query, provider, 3, signal, userId);
       if (!embedRes?.vector) continue;
-      queryVector = embedRes.vector;
+      groups.push({ ids, queryVector: embedRes.vector });
     } catch (err) {
       console.warn(`[RAG2] Query embedding failed for provider "${provider}":`, err.message);
-      continue;
     }
-
-    const { data: rawMatches, error: rpcError } = await supabase.rpc('match_knowledge_chunks', {
-      query_embedding: queryVector,
-      collection_ids: ids,
-      user_id_param: userId,
-      match_count: topK * 2, // oversample for hybrid reranking
-      match_threshold: matchThreshold,
-    });
-
-    if (rpcError) {
-      console.warn('[RAG2] match_knowledge_chunks RPC error:', rpcError.message);
-      continue;
-    }
-    candidates.push(...(rawMatches || []));
   }
 
-  if (candidates.length === 0) {
-    return { context: '', citations: [], chunkCount: 0 };
+  //    Every group scores by cosine, so the values stay comparable enough to
+  //    rank together, and the lexical term below further levels them out.
+  const runMatchPass = async (threshold) => {
+    const rows = [];
+    for (const { ids, queryVector } of groups) {
+      const { data: rawMatches, error: rpcError } = await supabase.rpc('match_knowledge_chunks', {
+        query_embedding: queryVector,
+        collection_ids: ids,
+        user_id_param: userId,
+        match_count: topK * 2, // oversample for hybrid reranking
+        match_threshold: threshold,
+      });
+
+      if (rpcError) {
+        console.error('[RAG2] match_knowledge_chunks RPC error:', rpcError.message);
+        continue;
+      }
+      rows.push(...(rawMatches || []));
+    }
+    return rows;
+  };
+
+  let candidates = await runMatchPass(matchThreshold);
+  if (candidates.length === 0 && groups.length > 0) {
+    // Nothing cleared the bar. The user attached these collections deliberately,
+    // so fall back to the nearest chunks at any score. Overview and meta
+    // questions never score near the text they are asking about.
+    candidates = await runMatchPass(RAG2_FALLBACK_THRESHOLD);
+    if (candidates.length > 0) {
+      console.log(`[RAG2] No chunk cleared threshold ${matchThreshold}; used relaxed fallback pass.`);
+    }
   }
 
   // 3. Hybrid scoring (Cosine similarity + Lexical Jaccard score)
-  const scored = candidates.map((item, idx) => {
+  const scored = candidates.map((item) => {
     const docTokens = tokenize(item.chunk_text);
     const setQ = new Set(qTokens);
     const setD = new Set(docTokens);
@@ -345,11 +414,30 @@ const searchKnowledgeCollections = async ({
     usedTokens += parentTokens;
   }
 
+  // 5. Manifest header. Emitted even when retrieval came back empty, so the
+  //    model can still answer "what is in this knowledge base?" and never denies
+  //    having one.
+  const documents = await listCollectionDocuments(scopeRows.map((row) => row.id));
+  const header = [
+    '## KNOWLEDGE BASE RETRIEVAL (RAG 2.0)',
+    'The user has attached the knowledge base(s) below to this conversation. You DO have access to their contents — never reply that no documents are attached, and never ask the user to upload these files again.',
+    '',
+    '### Attached knowledge bases',
+    ...buildManifestLines(scopeRows, documents),
+    '',
+  ];
+
   if (selected.length === 0) {
-    return { context: '', citations: [], chunkCount: 0 };
+    const context = [
+      ...header,
+      '### Retrieved passages',
+      'No passage from these documents scored high enough for this specific query. Answer from the document list above, and ask the user which document or topic to look into.',
+      '[END KNOWLEDGE BASE RETRIEVAL]',
+    ].join('\n');
+    return { context, citations: [], chunkCount: 0, tokensUsed: estimateTokens(context) };
   }
 
-  // 5. Generate structured citations for UI and LLM
+  // 6. Generate structured citations for UI and LLM
   const citations = selected.map((item, index) => ({
     citationId: index + 1,
     documentId: item.document_id,
@@ -363,7 +451,7 @@ const searchKnowledgeCollections = async ({
     sectionTitle: item.chunk_metadata?.sectionTitle || '',
   }));
 
-  // 6. Format RAG Context block with clear citation markers for the LLM
+  // 7. Format RAG Context block with clear citation markers for the LLM
   const contextParts = selected.map((item, index) => {
     const sourceLabel = item.source_url ? ` (${item.source_url})` : '';
     const sectionLabel = item.chunk_metadata?.sectionTitle ? ` § ${item.chunk_metadata.sectionTitle}` : '';
@@ -371,12 +459,13 @@ const searchKnowledgeCollections = async ({
   });
 
   const formattedContext = [
-    `## KNOWLEDGE BASE RETRIEVAL (RAG 2.0)`,
-    `Use the following verified reference sources to answer the user accurately.`,
-    `When using facts from a reference source, append its citation marker like [^1], [^2] at the end of the sentence.`,
+    ...header,
+    '### Retrieved passages',
+    'Use the following verified reference sources to answer the user accurately.',
+    'When using facts from a reference source, append its citation marker like [^1], [^2] at the end of the sentence.',
     '',
     ...contextParts,
-    `[END KNOWLEDGE BASE RETRIEVAL]`,
+    '[END KNOWLEDGE BASE RETRIEVAL]',
   ].join('\n');
 
   return {
