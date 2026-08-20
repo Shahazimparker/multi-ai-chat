@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from '../components/chat/Sidebar';
 import MobileNav from '../components/chat/MobileNav';
-import KnowledgeSelector from '../components/chat/KnowledgeSelector';
 import TokenBar from '../components/layout/TokenBar';
 import { useAuth } from '../context/AuthContext';
 import './ChatPage.css';
@@ -97,11 +96,6 @@ const ChatPage = () => {
             onTopicSelect={session.handleTopicSelect}
             onNewChat={session.handleNewChat}
             refreshTrigger={session.sidebarRefresh}
-          />
-
-          <KnowledgeSelector
-            selectedCollectionIds={session.selectedCollectionIds}
-            onSelectionChange={session.setSelectedCollectionIds}
           />
 
           {session.activeTopic && (
