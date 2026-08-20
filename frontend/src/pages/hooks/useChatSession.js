@@ -32,10 +32,18 @@ export const useChatSession = ({ refreshTokenStats }) => {
   // null means "use the model's default", which the server resolves. Storing
   // per model id keeps each model's choice separate as the user switches.
   const reasoningEffort = model ? (effortByModel[model.id] ?? null) : null;
+
+  // Addressed by id, for the case where the model and its effort are chosen in
+  // the same gesture: the level must land on the model being switched to, not
+  // on whichever one `model` still holds until React commits setModel.
+  const setReasoningEffortFor = useCallback((modelId, level) => {
+    if (!modelId) return;
+    setEffortByModel((prev) => ({ ...prev, [modelId]: level }));
+  }, []);
   const setReasoningEffort = useCallback((level) => {
     if (!model) return;
-    setEffortByModel((prev) => ({ ...prev, [model.id]: level }));
-  }, [model]);
+    setReasoningEffortFor(model.id, level);
+  }, [model, setReasoningEffortFor]);
 
   // Until the user touches the toggle for a model, follow the default the
   // server reports. That is off everywhere except providers with no off switch
@@ -51,6 +59,13 @@ export const useChatSession = ({ refreshTokenStats }) => {
       [model.id]: typeof next === 'function' ? next(prev[model.id] ?? modelThinkingDefault) : next,
     }));
   }, [model, modelThinkingDefault]);
+
+  // Same reason as setReasoningEffortFor. Takes a plain boolean only — there is
+  // no current value to build a functional update on for another model.
+  const setThinkingEnabledFor = useCallback((modelId, enabled) => {
+    if (!modelId) return;
+    setThinkingByModel((prev) => ({ ...prev, [modelId]: Boolean(enabled) }));
+  }, []);
 
   const abortControllerRef = useRef(null);
   const uploadAbortRef = useRef(null);
@@ -685,8 +700,10 @@ export const useChatSession = ({ refreshTokenStats }) => {
     setModel,
     thinkingEnabled,
     setThinkingEnabled,
+    setThinkingEnabledFor,
     reasoningEffort,
     setReasoningEffort,
+    setReasoningEffortFor,
     activeTopic,
     sidebarRefresh,
     error,

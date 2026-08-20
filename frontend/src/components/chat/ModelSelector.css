@@ -1,32 +1,35 @@
+/* ============================================================
+   ModelSelector — trigger, drop-up list, and the effort submenu.
+   The trigger lives in the composer footer, so everything opens upward.
+   ============================================================ */
+
 .model-selector {
   position: relative;
   z-index: 20;
-  flex: 1;
   min-width: 0;
 }
 
 .model-trigger {
-  width: 100%;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  background: var(--bg-input);
-  border: 1px solid var(--border-primary);
-  border-radius: 16px;
-  color: var(--text-primary);
-  font-size: 0.88rem;
+  gap: 8px;
+  max-width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
   white-space: nowrap;
   font-family: 'Inter', sans-serif;
-  box-shadow: 0 4px 12px var(--shadow-sm);
 }
 
-.model-trigger:hover {
+.model-trigger:hover:not(:disabled) {
   background: var(--bg-hover);
-  transform: translateY(-1px);
-  border-color: var(--border-hover);
+  border-color: var(--border-primary);
+  color: var(--text-primary);
 }
 
 .model-trigger:disabled {
@@ -35,9 +38,10 @@
 }
 
 .model-emoji {
-  font-size: 0.95rem;
-  width: 22px;
-  height: 22px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  width: 18px;
+  height: 18px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
@@ -46,13 +50,25 @@
   flex-shrink: 0;
 }
 
+:root[data-theme="light"] .model-emoji {
+  background: rgba(15, 23, 42, 0.08);
+}
+
 .model-name {
-  font-weight: 500;
-  flex: 1;
+  font-weight: 600;
+  color: var(--text-primary);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   text-align: left;
+}
+
+/* The level rides next to the name in dim text, the way the composer footer
+   shows it — readable at a glance, never competing with the model name. */
+.model-trigger-level {
+  color: var(--text-tertiary);
+  font-weight: 500;
+  flex-shrink: 0;
 }
 
 .model-badge {
@@ -95,23 +111,27 @@
   flex-shrink: 0;
 }
 
+/* Closed the caret points up (where the list will appear); open it points back
+   down at the trigger. */
 .chevron.open {
   transform: rotate(180deg);
 }
 
+/* ── Drop-up list ────────────────────────────────────────── */
+
 .model-dropdown {
   position: fixed;
   z-index: 10001;
-  min-width: 300px;
+  min-width: 320px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
-  border-radius: 20px;
-  padding: 12px;
+  border-radius: 16px;
+  padding: 8px;
+  -webkit-backdrop-filter: blur(18px);
   backdrop-filter: blur(18px);
-  box-shadow: 0 32px 90px var(--shadow-lg);
-  max-height: 420px;
+  box-shadow: 0 24px 70px var(--shadow-lg);
+  max-height: 440px;
   overflow-y: auto;
-  transition: all 0.3s ease;
 }
 
 .model-dropdown::-webkit-scrollbar,
@@ -126,7 +146,7 @@
 }
 
 .model-group {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .model-group:last-child {
@@ -138,46 +158,233 @@
   align-items: center;
   gap: 6px;
   padding: 6px 10px 4px;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   opacity: 0.85;
 }
 
-.model-option {
-  width: 100%;
+/* One row = one model. The option button fills it and the effort caret sits at
+   the trailing edge; both share the row's hover so the pair reads as one item. */
+.model-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.model-row:hover,
+.model-row.submenu-open {
+  background: var(--bg-hover);
+}
+
+.model-row.selected {
+  border-color: rgba(99, 102, 241, 0.65);
+  background: rgba(99, 102, 241, 0.12);
+}
+
+.model-option {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
   border: none;
-  border-radius: 12px;
+  border-radius: 10px;
   background: transparent;
   color: var(--text-secondary);
   font-size: 0.84rem;
   font-family: 'Inter', sans-serif;
   cursor: pointer;
   text-align: left;
-  transition: all 0.2s ease;
 }
 
-.model-option:hover {
-  background: var(--bg-hover);
+.model-option:hover,
+.model-option.active {
   color: var(--text-primary);
 }
 
 .model-option.active {
-  background: var(--gradient-secondary);
-  color: var(--text-primary);
   font-weight: 600;
 }
 
 .option-label {
-  flex: 1;
   min-width: 0;
-  padding-right: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+/* Dim, right after the name: the effort this model would run at. */
+.option-level {
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+/* --text-tertiary lands at 2.97:1 on the light theme's near-white panel, under
+   the 3:1 floor. The level is information, not decoration, so here it takes a
+   darker slate that still reads as secondary beside the model name. */
+:root[data-theme="light"] .option-level,
+:root[data-theme="light"] .model-trigger-level {
+  color: rgba(71, 85, 105, 0.95);
+}
+
+.model-option .model-badge {
+  margin-left: auto;
+}
+
+.model-level-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  align-self: stretch;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: 0 10px 10px 0;
+}
+
+.model-row:hover .model-level-caret,
+.model-row.submenu-open .model-level-caret {
+  color: var(--text-primary);
+}
+
+.model-level-caret .open {
+  transform: translateX(1px);
+}
+
+/* ── Effort flyout (desktop) ─────────────────────────────── */
+
+.model-level-menu {
+  position: fixed;
+  z-index: 10002;
+  padding: 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 14px;
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 20px 60px var(--shadow-lg);
+}
+
+.model-level-menu-header {
+  padding: 4px 10px 6px;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.model-level-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  margin-bottom: 2px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.model-level-item:last-child {
+  margin-bottom: 0;
+}
+
+.model-level-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.model-level-item.active {
+  background: rgba(99, 102, 241, 0.24);
+  color: #e0e7ff;
+  font-weight: 600;
+}
+
+:root[data-theme="light"] .model-level-item.active {
+  background: rgba(99, 102, 241, 0.14);
+  color: #3730a3;
+}
+
+.model-think-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  background: rgba(99, 102, 241, 0.14);
+  color: #c7d2fe;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+:root[data-theme="light"] .model-think-tag {
+  border-color: rgba(99, 102, 241, 0.35);
+  background: rgba(99, 102, 241, 0.1);
+  color: #3730a3;
+}
+
+.model-level-default {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* ── Effort list (mobile sheet) ──────────────────────────── */
+/* No hover and no room for a flyout, so the levels expand under the row. */
+
+.model-level-inline {
+  flex-basis: 100%;
+  padding: 2px 8px 8px;
+}
+
+.model-level-inline-label {
+  display: block;
+  padding: 0 2px 4px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.model-level-inline-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.model-level-inline .model-level-item {
+  width: auto;
+  height: 28px;
+  margin-bottom: 0;
+  border: 1px solid var(--border-primary);
+  border-radius: 999px;
+}
+
+/* ── Overlays and mobile sheet ───────────────────────────── */
 
 .dropdown-overlay {
   position: fixed;
@@ -204,6 +411,10 @@
   border: 1px solid var(--border-primary);
   border-bottom: none;
   box-shadow: 0 -24px 70px var(--shadow-lg);
+  /* --bg-secondary is translucent in both themes, and the sheet is tall enough
+     that page text would otherwise read straight through the model list. */
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
   padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
   max-height: 78vh;
   display: flex;
@@ -259,128 +470,50 @@
 
 .model-loading {
   color: var(--text-tertiary);
-  font-size: 0.84rem;
+  font-size: 0.8rem;
 }
 
 @media (max-width: 768px) {
-  .model-selector {
-    flex: 1;
-    min-width: 0;
-    max-width: none;
+  /* Only the sheet renders the inline level list, so only there does a row
+     need a second line. */
+  .model-row.submenu-open {
+    flex-wrap: wrap;
   }
 
   .model-trigger {
-    width: 100%;
-    min-width: 0;
-    padding: 10px 12px;
-    border-radius: 14px;
+    padding: 6px 8px;
+    gap: 6px;
   }
 
   .model-name {
-    display: block;
-    font-size: 0.78rem;
+    max-width: 140px;
+    font-size: 0.76rem;
   }
 
-  .model-badge {
+  .model-trigger .model-badge {
     display: none;
+  }
+
+  .model-level-caret {
+    width: 34px;
   }
 }
 
 @media (max-width: 480px) {
-  .model-trigger {
-    padding: 10px 12px;
-    gap: 8px;
-  }
-
   .model-name {
-    font-size: 0.76rem;
+    max-width: 108px;
   }
 
-  .model-emoji {
-    width: 20px;
-    height: 20px;
-    font-size: 0.82rem;
+  .model-trigger-level {
+    display: none;
   }
-}
-
-/* ── Reasoning effort submenu ──────────────────────────────
-   Rendered under the selected model only. Kept visible when thinking is off
-   (dimmed) so the level can be chosen before switching thinking on. */
-
-.model-option-row {
-  display: flex;
-  flex-direction: column;
-}
-
-.model-think-tag {
-  margin-left: auto;
-  padding: 1px 6px;
-  border-radius: 999px;
-  border: 1px solid rgba(99, 102, 241, 0.4);
-  background: rgba(99, 102, 241, 0.14);
-  color: #c7d2fe;
-  font-size: 0.6rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.model-levels {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 10px 9px 22px;
-}
-
-.model-levels.muted { opacity: 0.5; }
-
-.model-levels-label {
-  margin-right: 2px;
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-}
-
-.model-level-chip {
-  padding: 3px 9px;
-  border: 1px solid var(--border-primary);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 0.7rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.model-level-chip:hover {
-  border-color: var(--border-hover);
-  color: var(--text-primary);
-}
-
-.model-level-chip.active {
-  border-color: rgba(99, 102, 241, 0.7);
-  background: rgba(99, 102, 241, 0.24);
-  color: #e0e7ff;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .model-level-chip { transition: none; }
-}
-
-:root[data-theme="light"] .model-think-tag {
-  border-color: rgba(99, 102, 241, 0.35);
-  background: rgba(99, 102, 241, 0.1);
-  color: #3730a3;
-}
-
-:root[data-theme="light"] .model-level-chip.active {
-  border-color: rgba(99, 102, 241, 0.5);
-  background: rgba(99, 102, 241, 0.14);
-  color: #3730a3;
+  .model-trigger,
+  .model-row,
+  .model-level-item,
+  .chevron {
+    transition: none;
+  }
 }

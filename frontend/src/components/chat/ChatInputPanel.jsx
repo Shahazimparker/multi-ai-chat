@@ -4,6 +4,7 @@ import FileUpload from './FileUpload';
 import ChatMemoryControls from './ChatMemoryControls';
 import ChatQueuePopover from './ChatQueuePopover';
 import ThinkingToggle from './ThinkingToggle';
+import ModelSelector from './ModelSelector';
 
 const ChatInputPanel = ({
   session,
@@ -12,6 +13,8 @@ const ChatInputPanel = ({
   setShowAdvancedMemory,
   handleSend,
   handleKeyDown,
+  handleModelChange,
+  handleLevelSelect,
 }) => (
   <div className="input-area">
     {session.error && (
@@ -119,7 +122,21 @@ const ChatInputPanel = ({
       />
     </div>
 
-    <p className="input-hint">Enter to send · Shift+Enter for new line</p>
+    {/* The model lives under the composer, next to the controls that qualify it
+        (thinking, web), rather than in the page toolbar — it is a property of
+        the message being written. */}
+    <div className="input-footer">
+      <ModelSelector
+        selectedModel={session.model}
+        onModelChange={handleModelChange}
+        onUnifiedProviderSelect={session.setUnifiedProvider}
+        reasoningEffort={session.reasoningEffort}
+        onLevelSelect={handleLevelSelect}
+        thinkingEnabled={session.thinkingEnabled}
+      />
+
+      <p className="input-hint">Enter to send · Shift+Enter for new line</p>
+    </div>
   </div>
 );
 

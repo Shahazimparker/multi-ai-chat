@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from '../components/chat/Sidebar';
 import MobileNav from '../components/chat/MobileNav';
-import ModelSelector from '../components/chat/ModelSelector';
 import KnowledgeSelector from '../components/chat/KnowledgeSelector';
 import TokenBar from '../components/layout/TokenBar';
 import { useAuth } from '../context/AuthContext';
@@ -35,6 +34,19 @@ const ChatPage = () => {
     session.setModel(nextModel);
     session.setProviderModelId(null);
   }, [session.setModel, session.setProviderModelId]);
+
+  // Choosing an effort level from the model list picks the model too, so both
+  // writes must be addressed to that model by id: session.setReasoningEffort
+  // targets whichever model is selected *now*, which is still the old one until
+  // React commits setModel. Naming a level is also asking to think, so thinking
+  // comes on for models that let it be switched off.
+  const handleLevelSelect = useCallback((nextModel, level) => {
+    handleModelChange(nextModel);
+    session.setReasoningEffortFor(nextModel.id, level);
+    if (nextModel.reasoning?.canDisable !== false) {
+      session.setThinkingEnabledFor(nextModel.id, true);
+    }
+  }, [handleModelChange, session.setReasoningEffortFor, session.setThinkingEnabledFor]);
 
   const handleScroll = useCallback(() => {
     const el = messagesAreaRef.current;
@@ -87,15 +99,6 @@ const ChatPage = () => {
             refreshTrigger={session.sidebarRefresh}
           />
 
-          <ModelSelector
-            selectedModel={session.model}
-            onModelChange={handleModelChange}
-            onUnifiedProviderSelect={session.setUnifiedProvider}
-            reasoningEffort={session.reasoningEffort}
-            setReasoningEffort={session.setReasoningEffort}
-            thinkingEnabled={session.thinkingEnabled}
-          />
-
           <KnowledgeSelector
             selectedCollectionIds={session.selectedCollectionIds}
             onSelectionChange={session.setSelectedCollectionIds}
@@ -144,6 +147,8 @@ const ChatPage = () => {
           setShowAdvancedMemory={setShowAdvancedMemory}
           handleSend={handleSend}
           handleKeyDown={handleKeyDown}
+          handleModelChange={handleModelChange}
+          handleLevelSelect={handleLevelSelect}
         />
       </main>
 

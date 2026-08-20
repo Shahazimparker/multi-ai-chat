@@ -55,16 +55,6 @@ const MODELS = {
     maxTokens: 128000,
     reasoning: { levels: ['high', 'max'], default: 'high', canDisable: true },
   },
-  'deepseek-v4-pro-erp': {
-    label: 'DeepSeek V4 Pro — ERP',
-    provider: 'deepseek',
-    apiKey: process.env.DEEPSEEK_API_KEY,
-    model: 'deepseek-v4-pro',
-    paid: true,
-    maxTokens: 128000,
-    temperature: 0.2,
-    reasoning: { levels: ['high', 'max'], default: 'max', canDisable: true },
-  },
 
   // ── Groq / LLaMA ───────────────────────────────────────────
   // `groq-mixtral` (llama-3.1-8b-instant) and `groq-llama` (llama-3.3-70b-versatile)

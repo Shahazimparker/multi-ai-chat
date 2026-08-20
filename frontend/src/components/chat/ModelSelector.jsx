@@ -1,6 +1,17 @@
+// ============================================================
+// FILE: frontend/src/components/chat/ModelSelector.jsx
+// PURPOSE: Model picker plus the per-model reasoning-effort submenu.
+// ============================================================
+// The control sits under the composer, so the list opens upward. Every model
+// that exposes more than one effort level carries a caret on its row; hovering
+// it (tapping, on mobile) opens a flyout with that model's own levels, so the
+// model and the effort are picked in one gesture instead of two. The levels
+// come from the capability block the server reports — nothing about a provider
+// is hardcoded here beyond the display spelling of a level name.
+
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Zap, DollarSign, X } from 'lucide-react';
+import { ChevronUp, ChevronRight, Zap, DollarSign, X } from 'lucide-react';
 import api from '../../config/api';
 import './ModelSelector.css';
 
@@ -14,24 +25,28 @@ const PROVIDER_META = {
 };
 
 const MOBILE_BREAKPOINT = 768;
+const LEVEL_MENU_WIDTH = 168;
+const LEVEL_ITEM_HEIGHT = 34;
 
 // Display only — the server validates the level against the model, so a new
 // provider vocabulary shows through as-is rather than being dropped.
 const LEVEL_LABELS = {
   minimal: 'Minimal',
   low: 'Low',
-  medium: 'Med',
+  medium: 'Medium',
   high: 'High',
   xhigh: 'X-High',
   max: 'Max',
 };
+
+const levelLabel = (level) => LEVEL_LABELS[level] || level;
 
 const ModelSelector = ({
   selectedModel,
   onModelChange,
   onUnifiedProviderSelect,
   reasoningEffort,
-  setReasoningEffort,
+  onLevelSelect,
   thinkingEnabled,
 }) => {
   const [models, setModels] = useState([]);
@@ -39,7 +54,11 @@ const ModelSelector = ({
   const [loading, setLoading] = useState(true);
   const [dropdownStyle, setDropdownStyle] = useState({});
   const [isMobile, setIsMobile] = useState(window.innerWidth <= MOBILE_BREAKPOINT);
+  // { modelId, style } on desktop; { modelId } on mobile, where the levels
+  // expand inline under the row because a flyout has nowhere to go.
+  const [levelMenu, setLevelMenu] = useState(null);
   const wrapperRef = useRef(null);
+  const closeTimerRef = useRef(null);
 
   useEffect(() => {
     const handleResize = () => {
@@ -51,18 +70,20 @@ const ModelSelector = ({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Opens upward: the trigger lives at the bottom of the screen, so the list is
+  // pinned to the top edge of the trigger and grows into the space above it.
   const updateDropdownPosition = () => {
     if (!wrapperRef.current || isMobile) return;
 
     const rect = wrapperRef.current.getBoundingClientRect();
-    const top = rect.bottom + 8;
-    const maxHeight = Math.min(420, window.innerHeight - rect.bottom - 24);
+    const maxHeight = Math.max(180, Math.min(440, rect.top - 24));
+    const left = Math.max(12, Math.min(rect.left, window.innerWidth - 332));
 
     setDropdownStyle({
       position: 'fixed',
-      top: `${top}px`,
-      left: `${rect.left}px`,
-      minWidth: '300px',
+      bottom: `${Math.max(12, window.innerHeight - rect.top + 8)}px`,
+      left: `${left}px`,
+      minWidth: '320px',
       maxHeight: `${maxHeight}px`,
     });
   };
@@ -107,6 +128,65 @@ const ModelSelector = ({
     };
   }, [open, isMobile]);
 
+  // A flyout anchored to a row that is no longer on screen would float free, so
+  // the submenu never outlives the list it belongs to.
+  useEffect(() => {
+    if (!open) setLevelMenu(null);
+  }, [open]);
+
+  const cancelClose = () => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+
+  // The gap between a row and its flyout costs a mouseleave, so closing is
+  // deferred long enough for the pointer to cross it.
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimerRef.current = setTimeout(() => setLevelMenu(null), 160);
+  };
+
+  useEffect(() => cancelClose, []);
+
+  const levelsOf = (model) => model.reasoning?.levels || [];
+
+  // The selected model shows the level actually in force; the rest show the
+  // default they would start on, which is what picking them would apply.
+  const activeLevelOf = (model) => (
+    model.id === selectedModel?.id
+      ? (reasoningEffort || model.reasoning?.default || null)
+      : (model.reasoning?.default || null)
+  );
+
+  const openLevelMenu = (model, anchorEl) => {
+    cancelClose();
+    const levels = levelsOf(model);
+    if (levels.length === 0) {
+      setLevelMenu(null);
+      return;
+    }
+
+    if (isMobile) {
+      setLevelMenu((prev) => (prev?.modelId === model.id ? null : { modelId: model.id }));
+      return;
+    }
+
+    const rect = anchorEl.getBoundingClientRect();
+    const height = levels.length * LEVEL_ITEM_HEIGHT + 34;
+    const top = Math.max(12, Math.min(rect.top - 8, window.innerHeight - height - 12));
+    let left = rect.right + 8;
+    if (left + LEVEL_MENU_WIDTH > window.innerWidth - 12) {
+      left = Math.max(12, rect.left - LEVEL_MENU_WIDTH - 8);
+    }
+
+    setLevelMenu({
+      modelId: model.id,
+      style: { position: 'fixed', top: `${top}px`, left: `${left}px`, width: `${LEVEL_MENU_WIDTH}px` },
+    });
+  };
+
   const grouped = models.reduce((acc, model) => {
     if (!acc[model.provider]) acc[model.provider] = [];
     acc[model.provider].push(model);
@@ -114,6 +194,15 @@ const ModelSelector = ({
   }, {});
 
   const selectedMeta = selectedModel ? PROVIDER_META[selectedModel.provider] : null;
+  const selectedCapability = selectedModel?.reasoning || null;
+  // A model with no off switch (Gemini) is always thinking, so its level is
+  // always in force and worth showing on the trigger.
+  const selectedThinking = selectedCapability
+    ? (selectedCapability.canDisable === false || thinkingEnabled)
+    : false;
+  const triggerLevel = selectedThinking && (selectedCapability?.levels?.length || 0) > 0
+    ? (reasoningEffort || selectedCapability.default)
+    : null;
 
   const handleSelect = (model) => {
     if (model.unified) {
@@ -121,8 +210,37 @@ const ModelSelector = ({
     } else {
       onModelChange(model);
     }
+    setLevelMenu(null);
     setOpen(false);
   };
+
+  // Picking a level is also picking the model. The parent owns both writes so
+  // the effort lands on this model's key rather than on whichever model
+  // happened to be selected a moment earlier.
+  const handleLevelSelect = (model, level) => {
+    onLevelSelect?.(model, level);
+    setLevelMenu(null);
+    setOpen(false);
+  };
+
+  const renderLevelItems = (model) =>
+    levelsOf(model).map((level) => {
+      const active = activeLevelOf(model) === level;
+
+      return (
+        <button
+          key={level}
+          type="button"
+          role="menuitemradio"
+          aria-checked={active}
+          className={`model-level-item ${active ? 'active' : ''}`}
+          onClick={() => handleLevelSelect(model, level)}
+        >
+          <span>{levelLabel(level)}</span>
+          {model.reasoning?.default === level && <span className="model-level-default">default</span>}
+        </button>
+      );
+    });
 
   const renderGroups = () =>
     Object.entries(grouped).map(([provider, providerModels]) => {
@@ -141,41 +259,53 @@ const ModelSelector = ({
 
           {providerModels.map((model) => {
             const isSelected = selectedModel?.id === model.id;
-            const levels = model.reasoning?.levels || [];
-            // The submenu belongs to the chosen model: showing every model's
-            // levels at once would be a wall of chips. It also stays visible
-            // when thinking is off, so the level can be set before enabling.
-            const showLevels = isSelected && levels.length > 0;
-            const activeLevel = reasoningEffort || model.reasoning?.default || null;
+            const hasLevels = levelsOf(model).length > 0;
+            const level = activeLevelOf(model);
+            const submenuOpen = levelMenu?.modelId === model.id;
 
             return (
-              <div key={model.id} className="model-option-row">
+              <div
+                key={model.id}
+                className={`model-row ${isSelected ? 'selected' : ''} ${submenuOpen ? 'submenu-open' : ''}`}
+                onMouseEnter={(event) => { if (!isMobile) openLevelMenu(model, event.currentTarget); }}
+                onMouseLeave={() => { if (!isMobile) scheduleClose(); }}
+              >
                 <button
                   type="button"
                   className={`model-option ${isSelected ? 'active' : ''}`}
                   onClick={() => handleSelect(model)}
                 >
                   <span className="option-label">{model.label}</span>
-                  {model.reasoning && <span className="model-think-tag">Thinks</span>}
+                  {hasLevels && level && <span className="option-level">{levelLabel(level)}</span>}
+                  {/* A model that thinks at a single fixed depth has no level to
+                      show, so it says so in words instead. */}
+                  {model.reasoning && !hasLevels && <span className="model-think-tag">Thinks</span>}
                   <span className={`model-badge sm ${model.paid ? 'paid' : 'free'}`}>
                     {model.paid ? 'Paid' : 'Free'}
                   </span>
                 </button>
 
-                {showLevels && (
-                  <div className={`model-levels ${thinkingEnabled === false ? 'muted' : ''}`}>
-                    <span className="model-levels-label">Effort</span>
-                    {levels.map((level) => (
-                      <button
-                        key={level}
-                        type="button"
-                        className={`model-level-chip ${activeLevel === level ? 'active' : ''}`}
-                        onClick={() => setReasoningEffort?.(level)}
-                        title={`Set reasoning effort to ${level}`}
-                      >
-                        {LEVEL_LABELS[level] || level}
-                      </button>
-                    ))}
+                {hasLevels && (
+                  <button
+                    type="button"
+                    className="model-level-caret"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      openLevelMenu(model, event.currentTarget.parentElement);
+                    }}
+                    title={`Reasoning effort for ${model.label}`}
+                    aria-haspopup="menu"
+                    aria-expanded={submenuOpen}
+                    aria-label={`Reasoning effort for ${model.label}`}
+                  >
+                    <ChevronRight size={14} className={submenuOpen ? 'open' : ''} />
+                  </button>
+                )}
+
+                {isMobile && submenuOpen && hasLevels && (
+                  <div className="model-level-inline" role="menu">
+                    <span className="model-level-inline-label">Reasoning effort</span>
+                    <div className="model-level-inline-items">{renderLevelItems(model)}</div>
                   </div>
                 )}
               </div>
@@ -185,11 +315,29 @@ const ModelSelector = ({
       );
     });
 
+  const levelFlyoutModel = !isMobile && levelMenu
+    ? models.find((entry) => entry.id === levelMenu.modelId)
+    : null;
+
   const desktopDropdown = (
     <>
-      <div className="model-dropdown" style={dropdownStyle}>
+      <div className="model-dropdown" style={dropdownStyle} onScroll={() => setLevelMenu(null)}>
         {renderGroups()}
       </div>
+
+      {levelFlyoutModel && (
+        <div
+          className="model-level-menu"
+          style={levelMenu.style}
+          role="menu"
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
+        >
+          <div className="model-level-menu-header">Reasoning effort</div>
+          {renderLevelItems(levelFlyoutModel)}
+        </div>
+      )}
+
       <div className="dropdown-overlay" onClick={() => setOpen(false)} />
     </>
   );
@@ -229,6 +377,8 @@ const ModelSelector = ({
         className="model-trigger"
         onClick={() => setOpen((prev) => !prev)}
         disabled={loading}
+        aria-haspopup="menu"
+        aria-expanded={open}
       >
         {loading ? (
           <span className="model-loading">Loading models...</span>
@@ -236,6 +386,7 @@ const ModelSelector = ({
           <>
             <span className="model-emoji">{selectedMeta?.emoji}</span>
             <span className="model-name">{selectedModel.label}</span>
+            {triggerLevel && <span className="model-trigger-level">{levelLabel(triggerLevel)}</span>}
             <span className={`model-badge ${selectedModel.paid ? 'paid' : 'free'}`}>
               {selectedModel.paid ? (
                 <>
@@ -249,7 +400,7 @@ const ModelSelector = ({
                 </>
               )}
             </span>
-            <ChevronDown size={14} className={`chevron ${open ? 'open' : ''}`} />
+            <ChevronUp size={14} className={`chevron ${open ? 'open' : ''}`} />
           </>
         ) : (
           <span>Select Model</span>

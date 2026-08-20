@@ -77,16 +77,6 @@
 
 .thinking-icon { flex-shrink: 0; }
 
-.thinking-level-chip {
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.16);
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
 .thinking-caret-btn {
   display: inline-flex;
   align-items: center;
@@ -184,11 +174,6 @@
 
 :root[data-theme="light"] .thinking-group.active .thinking-btn,
 :root[data-theme="light"] .thinking-group.active .thinking-caret-btn {
-  color: #0369a1;
-}
-
-:root[data-theme="light"] .thinking-level-chip {
-  background: rgba(2, 132, 199, 0.16);
   color: #0369a1;
 }
 

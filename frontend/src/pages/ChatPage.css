@@ -73,11 +73,6 @@
   flex-shrink: 0;
 }
 
-.chat-toolbar .model-selector {
-  flex: 1;
-  min-width: 0;
-}
-
 .topic-hint {
   font-size: 0.75rem;
   color: var(--text-tertiary);
@@ -685,11 +680,28 @@
   }
 }
 
+/* Under the composer: the model on the left, the send hint on the right. The
+   model picker opens upward from here, so nothing above it may clip. */
+.input-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  min-width: 0;
+}
+
 .input-hint {
-  text-align: center;
   font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.35);
-  margin: 8px 0 0;
+  color: var(--text-tertiary);
+  margin: 0;
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .input-hint {
+    display: none;
+  }
 }
 
 @media (max-width: 768px) {

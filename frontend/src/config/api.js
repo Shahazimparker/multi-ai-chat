@@ -20,6 +20,12 @@ const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
+  if (config.data instanceof FormData) {
+    if (config.headers) {
+      delete config.headers['Content-Type'];
+      delete config.headers['content-type'];
+    }
+  }
   const csrfToken = sessionStorage.getItem('csrf_token');
   if (csrfToken && ['post', 'put', 'delete', 'patch'].includes(config.method)) {
     config.headers['X-CSRF-Token'] = csrfToken;

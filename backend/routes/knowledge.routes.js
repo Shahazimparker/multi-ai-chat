@@ -35,6 +35,33 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB per file
 });
 
+const handleMulterUpload = (req, res, next) => {
+  upload.single('file')(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'File size exceeds the 50MB limit' });
+      }
+      return res.status(400).json({ error: `File upload error: ${err.message}` });
+    } else if (err) {
+      return res.status(400).json({ error: err.message || 'File upload failed' });
+    }
+    next();
+  });
+};
+
+const sanitizeFilename = (name) => {
+  if (!name || typeof name !== 'string') return 'document.txt';
+  let clean = name
+    .replace(/[/\\]/g, '_')
+    .replace(/\0/g, '')
+    .replace(/[\r\n]/g, '')
+    .replace(/^[a-zA-Z]:/, '')
+    .replace(/\.\./g, '')
+    .replace(/["']/g, '');
+  clean = clean.replace(/_+/g, '_').replace(/^_|_$/g, '');
+  return clean || 'document.txt';
+};
+
 // All knowledge endpoints require authentication
 router.use(requireAuth);
 
@@ -96,14 +123,14 @@ router.delete('/collections/:id', async (req, res) => {
 });
 
 // ── POST /api/knowledge/collections/:id/documents/upload — upload file ──
-router.post('/collections/:id/documents/upload', upload.single('file'), async (req, res) => {
+router.post('/collections/:id/documents/upload', handleMulterUpload, async (req, res) => {
   if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded' });
+    return res.status(400).json({ error: 'No file uploaded. Please attach a supported file.' });
   }
 
   const collectionId = req.params.id;
   const tempPath = req.file.path;
-  const originalName = req.file.originalname || 'document.txt';
+  const originalName = sanitizeFilename(req.file.originalname);
 
   try {
     // 1. Verify collection access

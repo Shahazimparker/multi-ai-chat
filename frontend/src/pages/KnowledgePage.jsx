@@ -11,6 +11,7 @@ import {
 import { useNavigate } from 'react-router';
 import api from '../config/api';
 import { useAuth } from '../context/AuthContext';
+import ThemeToggle from '../components/layout/ThemeToggle';
 import './KnowledgePage.css';
 
 const KnowledgePage = () => {
@@ -39,6 +40,7 @@ const KnowledgePage = () => {
 
   // Ingestion form states
   const [uploadFile, setUploadFile] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [crawlUrl, setCrawlUrl] = useState('');
   const [crawlDepth, setCrawlDepth] = useState(2);
   const [crawlMaxPages, setCrawlMaxPages] = useState(15);
@@ -125,6 +127,28 @@ const KnowledgePage = () => {
     }
   };
 
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      setUploadFile(e.dataTransfer.files[0]);
+      setErrorMessage('');
+    }
+  };
+
   const handleUploadDocument = async (e) => {
     e.preventDefault();
     if (!uploadFile || !activeCollection) return;
@@ -137,7 +161,11 @@ const KnowledgePage = () => {
       setStatusMessage('Ingesting & generating Parent-Child vector embeddings...');
       setErrorMessage('');
 
-      await api.post(`/knowledge/collections/${activeCollection.id}/documents/upload`, formData);
+      await api.post(`/knowledge/collections/${activeCollection.id}/documents/upload`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
       setShowUploadModal(false);
       setUploadFile(null);
       setStatusMessage('');
@@ -251,23 +279,26 @@ const KnowledgePage = () => {
           </div>
         </div>
 
-        {!activeCollection && (
-          <div className="header-right">
-            <div className="search-wrap">
-              <Search size={16} className="search-icon" />
-              <input
-                type="text"
-                placeholder="Search collections..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-            <button className="primary-action-btn" onClick={() => setShowCreateModal(true)}>
-              <Plus size={16} />
-              <span>New Collection</span>
-            </button>
-          </div>
-        )}
+        <div className="header-right">
+          {!activeCollection && (
+            <>
+              <div className="search-wrap">
+                <Search size={16} className="search-icon" />
+                <input
+                  type="text"
+                  placeholder="Search collections..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <button className="primary-action-btn" onClick={() => setShowCreateModal(true)}>
+                <Plus size={16} />
+                <span>New Collection</span>
+              </button>
+            </>
+          )}
+          <ThemeToggle />
+        </div>
       </header>
 
       <main className="knowledge-main">
@@ -550,17 +581,25 @@ const KnowledgePage = () => {
               </button>
             </div>
             <form onSubmit={handleUploadDocument}>
-              <div className="dropzone">
+              <div
+                className={`dropzone ${isDragging ? 'dragging' : ''}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+              >
                 <input
                   type="file"
                   id="km-file-upload"
-                  onChange={(e) => setUploadFile(e.target.files[0] || null)}
-                  accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.md,.json,.js,.ts,.py,.html"
+                  onChange={(e) => {
+                    setUploadFile(e.target.files[0] || null);
+                    setErrorMessage('');
+                  }}
+                  accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.md,.json,.js,.ts,.tsx,.jsx,.py,.html,.css,.sql,.yaml,.yml,.zip"
                 />
                 <label htmlFor="km-file-upload" className="dropzone-label">
                   <Upload size={32} />
                   <span>{uploadFile ? uploadFile.name : 'Click to select or drag a file here'}</span>
-                  <small>Supports PDF, DOCX, CSV, Excel, TXT, Markdown, JSON, Code</small>
+                  <small>Supports PDF, DOCX, CSV, Excel, TXT, Markdown, JSON, Code, ZIP</small>
                 </label>
               </div>
               {statusMessage && <div className="km-status">{statusMessage}</div>}

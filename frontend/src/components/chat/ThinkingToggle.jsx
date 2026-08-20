@@ -98,13 +98,10 @@ const ThinkingToggle = ({
           aria-pressed={isOn}
           aria-label={featureName}
         >
+          {/* Icon only. The level in force is spelled out on the model picker
+              in the composer footer, an inch away, so repeating it here would
+              say the same thing twice. */}
           <Brain size={15} className="thinking-icon" />
-          {/* Icon-only when off. Once thinking is on, the level rides alongside
-              so the current setting is readable without opening the menu —
-              nothing else on screen would show it. */}
-          {isOn && hasLevels && activeLevel && (
-            <span className="thinking-level-chip">{levelLabel(activeLevel)}</span>
-          )}
         </button>
 
         {hasLevels && (
