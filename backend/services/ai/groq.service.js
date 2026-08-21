@@ -40,6 +40,9 @@ const callGroqStream = async (modelName, apiKey, messages, signal = null, onChun
     max_tokens:  4000,
     temperature: 0.7,
     stream:      true,
+    // Without this, Groq never emits a usage-bearing chunk during a stream —
+    // the call would silently bill 0 tokens.
+    stream_options: { include_usage: true },
     ...(decision.enabled && decision.effort ? { reasoning_effort: decision.effort } : {}),
   }, { signal });
 
@@ -59,8 +62,11 @@ const callGroqStream = async (modelName, apiKey, messages, signal = null, onChun
       fullText += delta;
       if (onChunk) onChunk(delta);
     }
-    if (chunk.usage?.total_tokens) {
-      tokensUsed = chunk.usage.total_tokens;
+    // Groq reports streaming usage under `chunk.x_groq.usage`, not the
+    // OpenAI-standard `chunk.usage` location — accept either.
+    const usage = chunk.usage || chunk.x_groq?.usage;
+    if (usage?.total_tokens) {
+      tokensUsed = usage.total_tokens;
     }
   }
 

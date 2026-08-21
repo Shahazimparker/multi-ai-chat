@@ -48,6 +48,14 @@ const callMistralStream = async (modelName, apiKey, messages, signal = null, onC
       max_tokens:  16000,
       temperature: 0.7,
       stream:      true,
+      // Deliberately NO `stream_options: { include_usage: true }` here, unlike
+      // the other OpenAI-compatible providers. Mistral validates its request
+      // body strictly and rejects the field outright:
+      //   422 extra_forbidden — "Extra inputs are not permitted"
+      //   loc: ['body', 'stream_options', 'include_usage']
+      // Sending it breaks Mistral streaming entirely. It is also unnecessary:
+      // Mistral already puts usage on the final chunk by default, which the
+      // reader below picks up.
     },
     {
       headers: {

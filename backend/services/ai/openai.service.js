@@ -39,6 +39,9 @@ const callOpenAIStream = async (modelName, apiKey, messages, signal = null, onCh
     max_tokens: 16000,
     messages,
     stream: true,
+    // Without this, OpenAI never emits a usage-bearing chunk during a
+    // stream — the call would silently bill 0 tokens.
+    stream_options: { include_usage: true },
   }, { signal });
 
   let fullText = '';

@@ -86,6 +86,9 @@ const callOpenAICompatibleStream = async ({ baseURL, apiKey, modelName, messages
     max_tokens: 16000,
     messages,
     stream: true,
+    // Without this opt-in, OpenAI-compatible hosts never emit a usage-bearing
+    // chunk during a stream — every streamed call would silently bill 0 tokens.
+    stream_options: { include_usage: true },
   };
 
   if (system) {
@@ -97,6 +100,11 @@ const callOpenAICompatibleStream = async ({ baseURL, apiKey, modelName, messages
     requestBody.tools = tools;
     requestBody.tool_choice = toolChoice || 'auto';
   }
+  // No OpenRouter-specific opt-in here: OpenRouter has deprecated both
+  // `usage: { include: true }` and `stream_options: { include_usage: true }`,
+  // and now always returns full usage in the final SSE message regardless.
+  // The `stream_options` above is kept because this same function serves other
+  // OpenAI-compatible hosts (AnyAPI, Together) that do still require it.
 
   const stream = await client.chat.completions.create(requestBody, { signal });
 

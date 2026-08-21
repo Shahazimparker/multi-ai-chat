@@ -12,7 +12,7 @@ describe('calculateBillableTokens', () => {
       compressTokens: 10,
       historySummaryTokens: 20,
     });
-    expect(result).toBe(680); // 500 + 100 + 50 + 10 + 20
+    expect(result).toBe(630); // 500 + 100 + 10 + 20 (estimatedInputTokens is NOT added — see double-count note)
   });
 
   it('falls back to promptTokens + estimate when totalAITokens is 0', () => {
@@ -23,8 +23,24 @@ describe('calculateBillableTokens', () => {
       totalEmbeddingTokens: 100,
       estimatedInputTokens: 50,
     });
-    expect(result).toBeGreaterThan(450);
-    expect(result).toBeLessThan(460);
+    // promptTokens (300) + estimate(finalReply) + totalEmbeddingTokens (100).
+    // estimatedInputTokens (50) must NOT land in the total — promptTokens
+    // already includes the user's message (aiMessages ends with it), so
+    // adding estimatedInputTokens on top would double-count it.
+    expect(result).toBeGreaterThan(400);
+    expect(result).toBeLessThan(410);
+  });
+
+  it('does not double-count estimatedInputTokens on top of totalAITokens', () => {
+    const withInput = calculateBillableTokens({
+      totalAITokens: 500,
+      estimatedInputTokens: 999,
+    });
+    const withoutInput = calculateBillableTokens({
+      totalAITokens: 500,
+    });
+    expect(withInput).toBe(withoutInput);
+    expect(withInput).toBe(500);
   });
 
   it('handles all-zero inputs gracefully', () => {

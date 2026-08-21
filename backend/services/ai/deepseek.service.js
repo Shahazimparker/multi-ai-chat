@@ -63,6 +63,9 @@ const calldeepseekAPI = async (model, apiKey, messages, signal = null, modelConf
 const calldeepseekAPIStream = async (model, apiKey, messages, signal = null, modelConfig = null, onChunk, onReasoning, reasoningRequest = {}) => {
   const body = buildDeepseekBody(model, messages, modelConfig, reasoningRequest);
   body.stream = true;
+  // Without this, DeepSeek never emits a usage-bearing chunk during a
+  // stream — the call would silently bill 0 tokens.
+  body.stream_options = { include_usage: true };
 
   const response = await axios.post(DEEPSEEK_URL, body, {
     headers: {

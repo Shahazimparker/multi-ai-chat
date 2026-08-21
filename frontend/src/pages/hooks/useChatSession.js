@@ -296,6 +296,15 @@ export const useChatSession = ({ refreshTokenStats }) => {
         uploadedResults.push(result);
       }
 
+      // Uploads deduct embedding tokens server-side (upload.routes.js) as
+      // soon as each file finishes — independent of whether the chat message
+      // below succeeds. Refresh here too (not just after the message at the
+      // end of this function) so the counter doesn't sit stale if the
+      // subsequent /chat/stream call fails or the user aborts the send.
+      if (uploadedResults.length > 0) {
+        await refreshTokenStats();
+      }
+
       sessionStorage.removeItem('uploadSessionId');
       setTimeout(() => {
         setUploadProgress(0);

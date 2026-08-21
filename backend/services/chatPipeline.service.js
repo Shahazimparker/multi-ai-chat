@@ -830,6 +830,13 @@ ${page.text}`)
             signal: abortController.signal,
           });
 
+          // Query rewriter + HyDE + embeddings all cost real provider tokens
+          // (see rag2.service.js's `tokensUsed` comment). The tool-triggered
+          // SEARCH_KB path already bills this via toolProcessor.service.js's
+          // `embedTokens: kbResult.tokensUsed` — without this line, the exact
+          // same work done automatically here was free.
+          totalEmbeddingTokens += rag2Result.tokensUsed || 0;
+
           if (rag2Result.context) {
             knowledgeBaseContext = rag2Result.context;
             citations = rag2Result.citations || [];
@@ -1213,6 +1220,14 @@ ${page.text}`)
     }
 
     // ── 12. Post-save memory embedding ───────────────────────
+    // This can only run after the assistant row exists (it embeds
+    // `savedAssistantMessageId`), which is after step 11 persisted that row
+    // with `billableTokens` computed at step 9 — before this cost was known.
+    // So: persist first with the pre-memory total, then once the
+    // memory-embedding cost is known, patch the persisted row and use the
+    // corrected total for everything downstream (DB increment, analytics,
+    // the log line, and the returned/streamed result), so all four agree.
+    let finalBillableTokens = billableTokens;
     if (postSaveEmbedding && !isAnonymous && resolvedTopicId && memoryMode === 'accurate') {
       const embedPromises = [];
       if (savedUserMessageId) {
@@ -1238,15 +1253,29 @@ ${page.text}`)
         const memoryEmbedTokens = results.reduce((sum, t) => sum + (t || 0), 0);
         if (memoryEmbedTokens > 0) {
           totalEmbeddingTokens += memoryEmbedTokens;
+          finalBillableTokens = billableTokens + memoryEmbedTokens;
           console.log(`[Memory] Embedding tokens: ${memoryEmbedTokens}`);
+
+          // The assistant row was already persisted (step 11) with the
+          // pre-memory total — patch it so tokens_used matches what actually
+          // gets billed below, instead of silently under-reporting it forever.
+          if (savedAssistantMessageId) {
+            const { error: patchErr } = await supabase
+              .from('messages')
+              .update({ tokens_used: finalBillableTokens })
+              .eq('id', savedAssistantMessageId);
+            if (patchErr) {
+              console.warn('[ChatPipeline] Failed to patch assistant message tokens_used after memory embedding:', patchErr.message);
+            }
+          }
         }
       }
     }
 
     // ── 13. Update user token usage ───────────────────────────
     if (user) {
-      console.log(`[TokenTracking] AI=${totalAITokens} Embedding=${totalEmbeddingTokens} InputMsg=${estimatedInputTokens} Total=${billableTokens}`);
-      await supabase.rpc('increment_user_tokens', { user_id: user.id, token_amount: billableTokens });
+      console.log(`[TokenTracking] AI=${totalAITokens} Embedding=${totalEmbeddingTokens} InputMsg=${estimatedInputTokens} Total=${finalBillableTokens}`);
+      await supabase.rpc('increment_user_tokens', { user_id: user.id, token_amount: finalBillableTokens });
     }
 
     // ── 14. Log analytics ─────────────────────────────────────
@@ -1254,7 +1283,7 @@ ${page.text}`)
       userId: user?.id,
       query: message,
       modelId,
-      tokensUsed: billableTokens,
+      tokensUsed: finalBillableTokens,
       isAnonymous,
       cacheHit: cacheReadTokens > 0,
       responseTimeMs: Date.now() - startTime,
@@ -1263,7 +1292,7 @@ ${page.text}`)
     // ── Return ────────────────────────────────────────────────
     return makePipelineResult({
       finalReply,
-      billableTokens,
+      billableTokens: finalBillableTokens,
       totalAITokens,
       totalEmbeddingTokens,
       orchestratorBrain,

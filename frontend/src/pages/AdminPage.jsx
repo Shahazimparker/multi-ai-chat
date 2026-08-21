@@ -18,7 +18,7 @@ import './AdminPage.css';
 const COLORS = ['#7c3aed', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#a78bfa'];
 
 const AdminPage = () => {
-  const { logout } = useAuth();
+  const { logout, refreshTokenStats } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [tab, setTab] = useState('users');   // 'users' | 'analytics'
@@ -86,7 +86,16 @@ const AdminPage = () => {
 
   const handleResetTokens = async (id) => {
     if (!window.confirm('Reset token usage to 0?')) return;
-    try { await api.post(`/admin/users/${id}/reset-tokens`); loadUsers(); }
+    try {
+      await api.post(`/admin/users/${id}/reset-tokens`);
+      loadUsers();
+      // loadUsers() only refreshes this page's own table. If the admin just
+      // reset their own account (self-service admin), the TokenBar in the
+      // layout reads from AuthContext's `user`, which loadUsers() never
+      // touches — refresh it too so the counter doesn't stay stale until the
+      // next message or a reload.
+      refreshTokenStats();
+    }
     catch { showToast('Reset failed'); }
   };
 

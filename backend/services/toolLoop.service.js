@@ -171,6 +171,19 @@ const runToolLoop = async ({
     }
   };
 
+  // A provider that withholds usage on a given round (streaming without the
+  // usage opt-in wired up, or a host that never sends it at all) used to bill
+  // that round as 0 tokens. In a multi-round tool loop that meant only the
+  // pipeline-level fallback (promptTokens computed once, before the loop)
+  // covered the gap — badly undercounting turns with several tool rounds.
+  // Estimate THIS round's cost from what was actually sent and received so
+  // per-round accounting stays correct even when a provider stays silent.
+  const estimateRoundTokens = (round, messages, replyText) => {
+    const estimated = estimateMessagesTokens(messages) + estimateTokens(replyText);
+    console.warn(`[${loggerPrefix}] Round ${round}: provider returned no token usage — estimating ~${estimated} tokens for this round`);
+    return estimated;
+  };
+
   for (let round = 0; round < maxToolRounds; round++) {
     // Stop before starting a round the invocation probably cannot finish — being
     // killed mid-round truncates the SSE stream with no error. Round 0 always
@@ -219,7 +232,7 @@ const runToolLoop = async ({
       tokensUsed = streamResult.tokensUsed;
       cacheCreationTokens += streamResult.cacheCreationTokens || 0;
       cacheReadTokens += streamResult.cacheReadTokens || 0;
-      totalAITokens += tokensUsed || 0;
+      totalAITokens += tokensUsed || estimateRoundTokens(round, aiMessages, reply);
     } else {
       const result = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
       aiResponse = result;
@@ -227,7 +240,7 @@ const runToolLoop = async ({
       tokensUsed = result.tokensUsed;
       cacheCreationTokens += result.cacheCreationTokens || 0;
       cacheReadTokens += result.cacheReadTokens || 0;
-      totalAITokens += tokensUsed || 0;
+      totalAITokens += tokensUsed || estimateRoundTokens(round, aiMessages, reply);
     }
 
     if (onAfterDispatch) {
