@@ -1,5 +1,14 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import api from '../config/api';
+import { useIdleLogout, markActivity, clearActivity, getLastActivity } from '../hooks/useIdleLogout';
+import { broadcastLogout } from '../utils/sessionBroadcast';
+
+// The backend slides the auth cookie forward whenever a request comes in, so a
+// user who is active but not triggering requests — reading a long answer, say —
+// could still let the cookie lapse. A cheap periodic ping keeps the two clocks
+// aligned. It only fires when there has actually been activity, so a genuinely
+// idle session is still allowed to expire on its own.
+const KEEPALIVE_INTERVAL_MS = 10 * 60 * 1000;
 
 const AuthContext = createContext(null);
 
@@ -9,7 +18,12 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     api.get('/auth/me')
-      .then((res) => setUser(res.data.user))
+      .then((res) => {
+        setUser(res.data.user);
+        // Restoring a session on reload counts as activity — otherwise a tab
+        // reopened after the deadline would be signed out before it renders.
+        markActivity();
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
@@ -18,15 +32,45 @@ export const AuthProvider = ({ children }) => {
     const res = await api.post('/auth/login', { username, password, rememberMe });
     const { csrfToken, user: userData } = res.data;
     if (csrfToken) sessionStorage.setItem('csrf_token', csrfToken);
+    markActivity();
     setUser(userData);
     return userData;
   }, []);
 
-  const logout = useCallback(() => {
-    api.post('/auth/logout').catch(() => {});
+  // Local state is dropped synchronously so existing `logout(); navigate(...)`
+  // callers behave exactly as before; the returned promise lets the idle path
+  // wait for the cookie to actually be cleared before it reloads the page.
+  const logout = useCallback((reason = 'manual') => {
+    const request = api.post('/auth/logout').catch(() => {});
     sessionStorage.removeItem('csrf_token');
+    clearActivity();
+    broadcastLogout(reason);
     setUser(null);
+    return request;
   }, []);
+
+  const handleIdle = useCallback(async () => {
+    await logout('idle');
+    sessionStorage.setItem('logout_reason', 'idle');
+    // Hard navigation rather than router navigation: AuthProvider sits outside
+    // BrowserRouter, and a full reload also discards any in-memory chat state.
+    window.location.href = '/login';
+  }, [logout]);
+
+  useIdleLogout(Boolean(user), handleIdle);
+
+  useEffect(() => {
+    if (!user) return undefined;
+
+    let lastPing = Date.now();
+    const id = setInterval(() => {
+      if (getLastActivity() <= lastPing) return;  // nothing happened; let it lapse
+      lastPing = Date.now();
+      api.get('/auth/me').catch(() => {});        // 401s are handled by the interceptor
+    }, KEEPALIVE_INTERVAL_MS);
+
+    return () => clearInterval(id);
+  }, [user]);
 
   const refreshTokenStats = useCallback(async () => {
     try {

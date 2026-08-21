@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { broadcastLogout, listenForLogout } from '../utils/sessionBroadcast';
 
 // Single source of truth for the backend origin. Exported because a few call
 // sites must use native XHR/fetch rather than this axios instance — upload
@@ -40,9 +41,13 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       sessionStorage.removeItem('csrf_token');
+      // Drop the shared idle clock too, so the next sign-in starts fresh
+      // instead of inheriting this session's deadline.
+      localStorage.removeItem('last_activity');
       if (window.location.pathname !== '/login' && !isRedirecting) {
         isRedirecting = true;
-        sessionStorage.setItem('logged_out', 'true');
+        broadcastLogout('expired');
+        sessionStorage.setItem('logout_reason', 'expired');
         window.location.href = '/login';
         setTimeout(() => { isRedirecting = false; }, 3000);
       }
@@ -51,12 +56,6 @@ api.interceptors.response.use(
   }
 );
 
-window.addEventListener('storage', (event) => {
-  if (event.key === 'logged_out' && event.newValue === 'true') {
-    if (window.location.pathname !== '/login') {
-      window.location.href = '/login';
-    }
-  }
-});
+listenForLogout();
 
 export default api;

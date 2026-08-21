@@ -203,6 +203,18 @@
 }
 
 /* ── Error ──────────────────────────────────────────── */
+.login-notice {
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  color: #7dd3fc;
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 0.85rem;
+  margin-bottom: 18px;
+  font-weight: 500;
+  animation: slideDown 0.3s ease;
+}
+
 .login-error {
   background: rgba(239, 68, 68, 0.12);
   border: 1px solid rgba(239, 68, 68, 0.35);

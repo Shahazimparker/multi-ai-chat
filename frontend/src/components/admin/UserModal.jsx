@@ -84,7 +84,8 @@ const UserModal = ({ user, onSave, onClose, saving }) => {
           </div>
 
           <div className="form-row">
-            <label>Session Duration (minutes)
+            <label title="Maximum idle time before the session ends. It slides forward while the user is active, so this is time between requests, not total session length."
+                   >Session Idle Timeout (minutes)
               <input type="number" min="5" value={form.session_minutes} onChange={e => set('session_minutes', +e.target.value)} />
             </label>
             <label>Account Expiry (blank = never)

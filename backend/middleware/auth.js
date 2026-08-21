@@ -7,7 +7,17 @@
 const jwt      = require('jsonwebtoken');
 const supabase = require('../config/supabase');
 const { getCookieValue } = require('../utils/cookies');
-const AUTH_COOKIE_NAME = 'auth_token';
+const {
+  AUTH_COOKIE_NAME,
+  getSessionSeconds,
+  issueAuthCookie,
+} = require('../utils/authCookie');
+
+// Re-mint the cookie once the token is past its half-life. Doing it on every
+// request would re-sign a JWT and rewrite a Set-Cookie header for no reason;
+// the half-life means it happens at most once per half session window, while
+// still leaving a wide margin before the old token would have expired.
+const REFRESH_AFTER_FRACTION = 0.5;
 
 // Columns safe to attach to req.user — never select '*' here, it pulls
 // the bcrypt password hash (and any future secret column) into the request.
@@ -58,6 +68,20 @@ const createAuthMiddleware = ({ optional = false } = {}) => async (req, res, nex
     }
 
     req.user = user;  // attach user to request object
+
+    // Sliding session: an active user should not be logged out mid-task just
+    // because a fixed clock started at login ran out. Only cookie-authenticated
+    // requests are refreshed — a Bearer caller holds its own token and would
+    // never see the new one.
+    if (!bearerToken && cookieToken) {
+      const secondsLeft = decoded.exp - Math.floor(Date.now() / 1000);
+      if (secondsLeft < getSessionSeconds(user) * REFRESH_AFTER_FRACTION) {
+        // Falsy for tokens minted before rememberMe was in the payload, which
+        // degrades to a session cookie rather than failing the request.
+        issueAuthCookie(res, user, decoded.rememberMe);
+      }
+    }
+
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {

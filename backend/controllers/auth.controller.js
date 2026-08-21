@@ -5,11 +5,8 @@
 // ============================================================
 
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const supabase = require('../config/supabase');
-const AUTH_COOKIE_NAME = 'auth_token';
-
-const parseRememberMe = (value) => value === true || value === 'true' || value === 1 || value === '1';
+const { issueAuthCookie, clearAuthCookie } = require('../utils/authCookie');
 
 // ── Login identifier validation ────────────────────────────
 // The identifier is interpolated into a PostgREST filter string, where `,`
@@ -199,28 +196,13 @@ const login = async (req, res) => {
     // Success — clear failed attempts for this account (in-memory + DB)
     await clearFailedAttempts(username, user.id);
 
-    // Create JWT — expires based on user's session_minutes setting
-    const expiresInSeconds = (user.session_minutes || 60) * 60;
-    const token = jwt.sign(
-      { userId: user.id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: expiresInSeconds }
-    );
+    // Mint the auth cookie. The window is the user's session_minutes and slides
+    // forward on each request from here on — see middleware/auth.js.
+    issueAuthCookie(res, user, rememberMe);
 
     // Generate CSRF token for defense-in-depth
     const { generateCsrfToken } = require('../middleware/csrf');
     const csrfToken = generateCsrfToken();
-
-    const maxAgeMs = (user.session_minutes || 60) * 60 * 1000;
-    const isProduction = process.env.NODE_ENV === 'production';
-    const cookieSameSite = isProduction ? 'none' : 'lax';
-    res.cookie(AUTH_COOKIE_NAME, token, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: cookieSameSite,
-      maxAge: parseRememberMe(rememberMe) ? maxAgeMs : undefined,
-      path: '/',
-    });
 
     res.json({
       csrfToken,
@@ -259,14 +241,7 @@ const getMe = async (req, res) => {
  * POST /api/auth/logout — client should discard JWT; we just confirm
  */
 const logout = (req, res) => {
-  const isProduction = process.env.NODE_ENV === 'production';
-  const cookieSameSite = isProduction ? 'none' : 'lax';
-  res.clearCookie(AUTH_COOKIE_NAME, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: cookieSameSite,
-    path: '/',
-  });
+  clearAuthCookie(res);
   res.json({ message: 'Logged out successfully' });
 };
 

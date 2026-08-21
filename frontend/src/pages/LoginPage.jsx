@@ -3,9 +3,10 @@
 // PURPOSE: Login form with "Continue Anonymously" option
 // ============================================================
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
+import { IDLE_TIMEOUT_MS } from '../hooks/useIdleLogout';
 import ThemeToggle from '../components/layout/ThemeToggle';
 import { Sparkles, Lock, User, Eye, EyeOff } from 'lucide-react';
 import './LoginPage.css';
@@ -17,11 +18,29 @@ const LoginPage = () => {
   const [showPwd, setShowPwd] = useState(false);
   const [remember, setRemember] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Set by whichever path ended the session just before it redirected here.
+  // Read once and clear, so a later manual visit to /login doesn't replay a
+  // stale message.
+  useEffect(() => {
+    const reason = sessionStorage.getItem('logout_reason');
+    sessionStorage.removeItem('logout_reason');
+
+    if (reason === 'idle') {
+      const minutes = Math.round(IDLE_TIMEOUT_MS / 60000);
+      setNotice(`You were signed out after ${minutes} minutes of inactivity.`);
+    } else if (reason === 'expired') {
+      setNotice('Your session expired. Please sign in again.');
+    } else if (reason === 'manual') {
+      setNotice('You were signed out in another tab.');
+    }
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError(''); setLoading(true);
+    setError(''); setNotice(''); setLoading(true);
     try {
       const user = await login(form.username, form.password, remember);
       navigate(user.role === 'admin' ? '/admin' : '/chat');
@@ -58,6 +77,7 @@ const LoginPage = () => {
           ))}
         </div>
 
+        {notice && <div className="login-notice">{notice}</div>}
         {error && <div className="login-error">{error}</div>}
 
         <form onSubmit={handleSubmit} className="login-form">
