@@ -103,9 +103,11 @@ const callWithTimeout = async (label, userSignal, invoke) => {
  * @param {Object} modelConfig  from config/models.js
  * @param {Array}  messages     [{role, content}]
  * @param {AbortSignal} signal  optional signal for cancellation
+ * @param {{disableTools?: boolean}} options  disableTools suppresses this app's
+ *   chat tool schema — for extraction callers that want text, not a tool call
  * @returns {Promise<Object>}   {text, tokensUsed}
  */
-const dispatchToAI = async (modelConfig, messages, signal = null) => {
+const dispatchToAI = async (modelConfig, messages, signal = null, options = {}) => {
   const { provider, model, apiKey } = modelConfig;
 
   if (!apiKey) {
@@ -120,7 +122,7 @@ const dispatchToAI = async (modelConfig, messages, signal = null) => {
       case 'cohere': return callCohere(model, apiKey, messages, s);
       case 'openai': return callOpenAI(model, apiKey, messages, s);
       case 'claude': return callClaude(model, apiKey, messages, s);
-      case 'openrouter': return callOpenRouter(model, apiKey, messages, s);
+      case 'openrouter': return callOpenRouter(model, apiKey, messages, s, options);
       case 'together': return callTogether(model, apiKey, messages, s);
       case 'anyapi': return callAnyAPI(model, apiKey, messages, s);
       case 'deepseek': return calldeepseekAPI(model, apiKey, messages, s, modelConfig);

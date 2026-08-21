@@ -1,0 +1,238 @@
+// ============================================================
+// FILE: backend/__tests__/unit/visionExtraction.test.js
+// PURPOSE: Vision extraction chain — free-first ordering, rate-limit cooldown,
+//          and the refusal to invent content.
+//
+//   Two invariants matter most here:
+//
+//   1. An unreadable image yields NULL, never a placeholder string. Whatever
+//      this returns gets embedded and can be cited to the user as a verified
+//      source, so "[Image: x] - could not read" must never enter the index.
+//
+//   2. A rate-limited provider is skipped for the rest of the burst. Ingest
+//      fires many images back to back; retrying a throttled free tier per
+//      image costs a 429 round-trip each time AND the paid call afterwards.
+// ============================================================
+
+const dispatcher = require('../../services/ai/dispatcher.service');
+const {
+  extractTextFromImage,
+  createVisionCallback,
+  visionChain,
+  clearCooldowns,
+} = require('../../services/visionExtraction.service');
+
+const IMAGE = Buffer.from('fake-png-bytes');
+const reply = (text, tokensUsed = 120) => ({ text, tokensUsed });
+
+const rateLimit = () => {
+  const err = new Error('Rate limit exceeded');
+  err.response = { status: 429 };
+  return err;
+};
+
+const ENV_SNAPSHOT = { ...process.env };
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+  clearCooldowns();
+  process.env = { ...ENV_SNAPSHOT };
+  process.env.OPENROUTER_API_KEY = 'test-openrouter';
+  process.env.MISTRAL_SUMMARY_API_KEY = 'test-mistral';
+  delete process.env.VISION_PREFER_FREE;
+});
+
+afterEach(() => {
+  process.env = { ...ENV_SNAPSHOT };
+  clearCooldowns();
+});
+
+describe('chain ordering', () => {
+  it('leads with the free provider by default', () => {
+    const chain = visionChain();
+    expect(chain[0].tier).toBe('free');
+    expect(chain[0].provider).toBe('mistral');
+    expect(chain.slice(1).every((c) => c.tier === 'paid')).toBe(true);
+  });
+
+  it('leads with the paid model when VISION_PREFER_FREE=false', () => {
+    process.env.VISION_PREFER_FREE = 'false';
+    const chain = visionChain();
+    expect(chain[0].tier).toBe('paid');
+    expect(chain[0].model).toContain('gemini');
+  });
+
+  it('reaches Mistral through the key that actually works', () => {
+    // The plain MISTRAL_API_KEY in this project returns 401; falling back to a
+    // dead credential would be indistinguishable from having no fallback.
+    delete process.env.MISTRAL_SUMMARY_API_KEY;
+    process.env.MISTRAL_API_KEY = 'legacy-key';
+    expect(visionChain().find((c) => c.provider === 'mistral').apiKey).toBe('legacy-key');
+
+    process.env.MISTRAL_SUMMARY_API_KEY = 'working-key';
+    expect(visionChain().find((c) => c.provider === 'mistral').apiKey).toBe('working-key');
+  });
+
+  it('drops providers with no key configured', () => {
+    delete process.env.OPENROUTER_API_KEY;
+    expect(visionChain().every((c) => c.provider !== 'openrouter')).toBe(true);
+  });
+});
+
+describe('extraction', () => {
+  it('returns text from the free provider without touching the paid one', async () => {
+    const dispatch = vi.spyOn(dispatcher, 'dispatchToAI')
+      .mockResolvedValue(reply('style=shape=mxgraph.flowchart.decision'));
+
+    const { text, provider, tokensUsed } = await extractTextFromImage(IMAGE, 'image/png');
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(provider).toContain('mistral');
+    expect(text).toContain('mxgraph.flowchart.decision');
+    expect(tokensUsed).toBe(120);
+  });
+
+  it('sends the image as an OpenAI-style content array', async () => {
+    const dispatch = vi.spyOn(dispatcher, 'dispatchToAI').mockResolvedValue(reply('ok'));
+
+    await extractTextFromImage(IMAGE, 'image/png');
+
+    const messages = dispatch.mock.calls[0][1];
+    const parts = messages[0].content;
+    expect(parts.find((p) => p.type === 'image_url').image_url.url).toMatch(/^data:image\/png;base64,/);
+    expect(parts.find((p) => p.type === 'text')).toBeTruthy();
+  });
+
+  it('falls through to the paid model when the free one fails', async () => {
+    const dispatch = vi.spyOn(dispatcher, 'dispatchToAI')
+      .mockRejectedValueOnce(new Error('mistral 500'))
+      .mockResolvedValueOnce(reply('recovered text'));
+
+    const { text, provider } = await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
+
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(provider).toContain('openrouter');
+    expect(text).toBe('recovered text');
+  });
+
+  it('returns null — not a placeholder — when the image has no legible content', async () => {
+    vi.spyOn(dispatcher, 'dispatchToAI').mockResolvedValue(reply('NO_LEGIBLE_CONTENT'));
+
+    const { text } = await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
+
+    // A placeholder here would be chunked, embedded, and citable as a source.
+    expect(text).toBeNull();
+  });
+
+  it('keeps a transcription that merely mentions the no-content marker', async () => {
+    // Substring matching used to throw this away: a screenshot of these very
+    // sources, or of a log line, legitimately contains the token.
+    const transcript = 'The service replies with exactly: NO_LEGIBLE_CONTENT when nothing is readable.';
+    vi.spyOn(dispatcher, 'dispatchToAI').mockResolvedValue(reply(transcript));
+
+    const { text } = await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
+
+    expect(text).toBe(transcript);
+  });
+
+  it('does not offer the chat tool schema on an extraction call', async () => {
+    // With tools attached and tool_choice 'auto', the model can answer a slide
+    // image with a generate_ppt call instead of text — a paid round-trip that
+    // arrives here as an empty response and reads as a failed provider.
+    const dispatch = vi.spyOn(dispatcher, 'dispatchToAI').mockResolvedValue(reply('ok'));
+
+    await extractTextFromImage(IMAGE, 'image/png');
+
+    expect(dispatch.mock.calls[0][3]).toEqual({ disableTools: true });
+  });
+
+  it('returns null when every provider fails and OCR is off', async () => {
+    vi.spyOn(dispatcher, 'dispatchToAI').mockRejectedValue(new Error('everything down'));
+
+    const { text, provider } = await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
+
+    expect(text).toBeNull();
+    expect(provider).toBeNull();
+  });
+
+  it('propagates cancellation instead of trying the next provider', async () => {
+    const dispatch = vi.spyOn(dispatcher, 'dispatchToAI').mockRejectedValue(
+      Object.assign(new Error('aborted'), { name: 'AbortError' })
+    );
+
+    await expect(extractTextFromImage(IMAGE, 'image/png')).rejects.toMatchObject({ name: 'AbortError' });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles an empty buffer without calling anything', async () => {
+    const dispatch = vi.spyOn(dispatcher, 'dispatchToAI');
+    const { text } = await extractTextFromImage(Buffer.alloc(0), 'image/png');
+    expect(text).toBeNull();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+});
+
+describe('rate-limit cooldown', () => {
+  it('stops retrying a throttled free tier across a burst of images', async () => {
+    const dispatch = vi.spyOn(dispatcher, 'dispatchToAI').mockImplementation(async (cfg) => {
+      if (cfg.provider === 'mistral') throw rateLimit();
+      return reply('paid extraction');
+    });
+
+    // Five images, as a bulk ingest would send.
+    for (let i = 0; i < 5; i++) {
+      const { provider } = await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
+      expect(provider).toContain('openrouter');
+    }
+
+    const mistralCalls = dispatch.mock.calls.filter((c) => c[0].provider === 'mistral');
+
+    // Only the first image should pay the 429 round-trip; the rest skip it.
+    expect(mistralCalls).toHaveLength(1);
+    expect(dispatch.mock.calls).toHaveLength(6); // 1 failed mistral + 5 paid
+  });
+
+  it('does not cool down a provider for an ordinary error', async () => {
+    const dispatch = vi.spyOn(dispatcher, 'dispatchToAI').mockImplementation(async (cfg) => {
+      if (cfg.provider === 'mistral') throw new Error('transient 500');
+      return reply('paid extraction');
+    });
+
+    await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
+    await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
+
+    // A one-off failure should not disable the free tier for the whole run.
+    expect(dispatch.mock.calls.filter((c) => c[0].provider === 'mistral')).toHaveLength(2);
+  });
+
+  it('clearCooldowns lets the free tier be tried again', async () => {
+    const dispatch = vi.spyOn(dispatcher, 'dispatchToAI').mockImplementation(async (cfg) => {
+      if (cfg.provider === 'mistral') throw rateLimit();
+      return reply('paid');
+    });
+
+    await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
+    clearCooldowns();
+    await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
+
+    expect(dispatch.mock.calls.filter((c) => c[0].provider === 'mistral')).toHaveLength(2);
+  });
+});
+
+describe('createVisionCallback', () => {
+  it('adapts to the base64 signature documentLoader expects', async () => {
+    vi.spyOn(dispatcher, 'dispatchToAI').mockResolvedValue(reply('extracted'));
+
+    const cb = createVisionCallback({ allowLocalOcr: false });
+    const out = await cb(IMAGE.toString('base64'), 'image/png');
+
+    expect(out).toBe('extracted');
+  });
+
+  it('returns null so the loader can treat the image as unreadable', async () => {
+    vi.spyOn(dispatcher, 'dispatchToAI').mockRejectedValue(new Error('down'));
+
+    const cb = createVisionCallback({ allowLocalOcr: false });
+    expect(await cb(IMAGE.toString('base64'), 'image/png')).toBeNull();
+  });
+});

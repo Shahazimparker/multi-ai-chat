@@ -19,6 +19,8 @@ const crypto = require('crypto');
 const { loadDocument } = require('./documentLoader.service');
 const { splitText } = require('./textSplitter.service');
 const { LEGACY_SPACE, DEFAULT_PROVIDER } = require('../config/embedding');
+const { createVisionCallback } = require('./visionExtraction.service');
+const { createPdfOcrCallback } = require('./pdfOcr.service');
 
 /**
  * chunkContent — split text into token-aware overlapping chunks
@@ -205,40 +207,14 @@ const extractTextFromBuffer = async (buffer, fileType, modelId, signal = null, f
   try {
     if (signal?.aborted) return '';
 
-    // Vision API wrapper for images
-    const visionApiCall = async (base64Image, mimeType) => {
-      if (fileType !== 'image') return null;
-
-      try {
-        const { callOpenRouter } = require('./ai/openrouter.service');
-        const result = await callOpenRouter(
-          'google/gemini-2.0-flash-001',
-          process.env.OPENROUTER_API_KEY,
-          [{
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: 'Extract all text and important information from this image. Be detailed.',
-              },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: `data:${mimeType};base64,${base64Image}`,
-                },
-              },
-            ],
-          }]
-        );
-        return result.text;
-      } catch (err) {
-        console.error('[Image] Vision API via OpenRouter failed:', err.message);
-        return null;
-      }
-    };
+    // Vision extraction is shared with the knowledge-base ingest path. This was
+    // an inline closure naming google/gemini-2.0-flash-001 — a model since
+    // retired from OpenRouter — so image uploads were silently failing here too.
+    const visionApiCall = fileType === 'image' ? createVisionCallback({ signal }) : null;
 
     // Use DocumentLoader for unified extraction
-    const doc = await loadDocument(buffer, fileName, visionApiCall);
+    const pdfOcrCall = fileType === 'pdf' ? createPdfOcrCallback({ signal }) : null;
+    const doc = await loadDocument(buffer, fileName, visionApiCall, pdfOcrCall);
     return doc.content;
   } catch (err) {
     console.error(`[DocumentLoader] Text extraction failed for ${fileName}:`, err.message);

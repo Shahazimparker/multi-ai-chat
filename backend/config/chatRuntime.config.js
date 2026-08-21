@@ -82,8 +82,27 @@ const RAG_QUERY_EXPANSION_COUNT = parseInteger('RAG_QUERY_EXPANSION_COUNT', 3, 1
 // deployment once you have measured it on your own corpus.
 const RAG_HYDE_ENABLED = parseBoolean('RAG_HYDE_ENABLED', false);
 
+// RAPTOR summary nodes are ranked alongside leaf chunks. A summary can tie or
+// beat the passage that actually contains a term, which is wrong for exact
+// lookups: synthesis should not displace primary text at equal relevance.
+// Subtracted from a summary's score to break those ties toward real passages.
+// Set 0 to rank summaries and leaves identically.
+const RAPTOR_SUMMARY_PENALTY = parseFloatNumber('RAPTOR_SUMMARY_PENALTY', 0.05, 0, 0.5);
+
+// Graph retrieval. Contributes a third candidate list to the same RRF fusion
+// as the dense and sparse passes, so it is another opinion about which chunks
+// matter rather than a separate pipeline. Contributes nothing when the graph
+// is empty or the migration has not been applied.
+const GRAPHRAG_ENABLED = parseBoolean('GRAPHRAG_ENABLED', true);
+// Hops out from the entities the query names. 1 covers "A relates to B"; more
+// pulls in loosely-connected material and dilutes the candidate set.
+const GRAPHRAG_MAX_HOPS = parseInteger('GRAPHRAG_MAX_HOPS', 1, 0, 3);
+
 module.exports = {
   ENABLE_ORCHESTRATOR_BRAIN,
+  GRAPHRAG_ENABLED,
+  GRAPHRAG_MAX_HOPS,
+  RAPTOR_SUMMARY_PENALTY,
   RAG_QUERY_EXPANSION_ENABLED,
   RAG_QUERY_EXPANSION_COUNT,
   RAG_HYDE_ENABLED,

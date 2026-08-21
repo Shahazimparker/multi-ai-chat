@@ -19,26 +19,36 @@ const estimateTokens = (text = '') => {
   return Math.ceil((charEstimate + wordEstimate) / 2);
 };
 
+// The dedicated *_SUMMARY_API_KEY variables let background work run on a
+// separate quota from user-facing chat, but they are optional and were absent
+// from .env.example — so a deployment can easily have only the primary keys.
+// Falling back to those keeps the chain usable instead of collapsing to the
+// naive truncation path.
+//
+// Verified against OpenRouter's live catalogue. The two OpenRouter entries here
+// previously named microsoft/phi-3-mini-128k-instruct and google/gemini-flash-1.5,
+// both of which have been retired — so every summarisation burned two failed
+// round-trips before reaching the Gemini entry that actually works.
 const SUMMARY_MODELS = [
   {
     provider: 'openrouter',
-    model: 'microsoft/phi-3-mini-128k-instruct',
+    model: 'google/gemini-2.5-flash-lite',
     apiKey: process.env.OPENROUTER_API_KEY,
   },
   {
     provider: 'openrouter',
-    model: 'google/gemini-flash-1.5',
+    model: 'mistralai/mistral-nemo',
     apiKey: process.env.OPENROUTER_API_KEY,
   },
   {
     provider: 'gemini',
     model: 'gemini-2.5-flash-lite',
-    apiKey: process.env.GEMINI_SUMMARY_API_KEY,
+    apiKey: process.env.GEMINI_SUMMARY_API_KEY || process.env.GEMINI_API_KEY,
   },
   {
     provider: 'mistral',
     model: 'mistral-small-latest',
-    apiKey: process.env.MISTRAL_SUMMARY_API_KEY,
+    apiKey: process.env.MISTRAL_SUMMARY_API_KEY || process.env.MISTRAL_API_KEY,
   },
   {
     provider: 'cerebras',

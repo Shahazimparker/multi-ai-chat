@@ -140,15 +140,77 @@ const CodeLoader = {
  * PDFLoader — extract text from PDF
  */
 const PDFLoader = {
-  async load(buffer, fileName) {
-    const data = await pdfParse(buffer);
+  /**
+   * Text layer first, OCR only when it is not enough.
+   *
+   * pdf-parse is free and fast, so it always gets first attempt. It falls short
+   * in two ways that OCR covers:
+   *
+   *   - A scanned page has no text layer, so pdf-parse returns an empty string
+   *     and the document would otherwise enter the index carrying nothing.
+   *   - pdf-parse 1.1.4 vendors pdf.js 1.10.100 (2018) and throws on plenty of
+   *     modern PDFs — including, verified, the ones this app generates with
+   *     pdfkit ("bad XRef entry").
+   *
+   * @param {Function|null} pdfOcrCall async (buffer, fileName) => string|null
+   * @param {Function} parse text-layer parser; injectable so the routing above
+   *   can be tested without hand-crafting a PDF that satisfies pdf.js 1.10.100
+   */
+  async load(buffer, fileName, pdfOcrCall = null, parse = pdfParse) {
+    let text = '';
+    let pages = 0;
+    let parseError = null;
+
+    try {
+      const data = await parse(buffer);
+      text = String(data?.text || '').trim();
+      pages = data?.numpages || 0;
+    } catch (err) {
+      // Not fatal yet — OCR reads the page image and does not care that the
+      // text layer is unparseable.
+      parseError = err;
+      console.warn(`[PDFLoader] pdf-parse failed for "${fileName}": ${err.message}`);
+    }
+
+    const { needsOcr } = require('./pdfOcr.service');
+    const sparse = needsOcr(text, pages);
+
+    if (pdfOcrCall && (parseError || sparse)) {
+      const reason = parseError ? 'text layer unreadable' : 'text layer too sparse (likely scanned)';
+      console.log(`[PDFLoader] "${fileName}": ${reason}; falling back to OCR.`);
+
+      const ocrText = await pdfOcrCall(buffer, fileName);
+      if (ocrText && ocrText.trim()) {
+        return {
+          content: ocrText.trim(),
+          metadata: {
+            type: 'pdf',
+            fileName,
+            pages: pages || undefined,
+            size: buffer.length,
+            extraction: 'ocr',
+          },
+        };
+      }
+      console.warn(`[PDFLoader] OCR produced nothing for "${fileName}".`);
+    }
+
+    // No usable text from either route. Throwing keeps an empty document out of
+    // the index rather than storing a chunk with no content.
+    if (!text) {
+      const detail = parseError ? parseError.message : 'no text layer and OCR unavailable';
+      throw new Error(`Could not extract text from PDF "${fileName}": ${detail}`,
+        parseError ? { cause: parseError } : undefined);
+    }
+
     return {
-      content: data.text,
+      content: text,
       metadata: {
         type: 'pdf',
         fileName,
-        pages: data.numpages,
+        pages,
         size: buffer.length,
+        extraction: 'text-layer',
       },
     };
   },
@@ -246,54 +308,54 @@ const SpreadsheetLoader = {
 
 /**
  * ImageLoader — extract text from image via vision API
+ *
+ * THROWS when nothing readable can be extracted, rather than returning a
+ * human-readable apology as `content`. Those placeholders were previously
+ * chunked, embedded and stored, so an unreadable image became a retrievable
+ * chunk that the reranker could later present to the model as a cited source.
+ * Callers already treat a throw as "this file has no usable content", which is
+ * the correct outcome.
  */
 const ImageLoader = {
   async load(buffer, fileName, visionApiCall) {
     if (!visionApiCall) {
-      return {
-        content: `[Image: ${fileName}] - Vision API not available`,
-        metadata: {
-          type: 'image',
-          fileName,
-          size: buffer.length,
-        },
-      };
+      throw new Error(`No vision extractor configured, so "${fileName}" cannot be read`);
     }
 
+    const base64Image = buffer.toString('base64');
+    const ext = path.extname(fileName).toLowerCase();
+    const mimeTypeMap = {
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+    };
+    const mimeType = mimeTypeMap[ext] || 'image/jpeg';
+
+    let result;
     try {
-      const base64Image = buffer.toString('base64');
-      const ext = path.extname(fileName).toLowerCase();
-      const mimeTypeMap = {
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.png': 'image/png',
-        '.gif': 'image/gif',
-        '.webp': 'image/webp',
-      };
-      const mimeType = mimeTypeMap[ext] || 'image/jpeg';
-
-      const result = await visionApiCall(base64Image, mimeType);
-      return {
-        content: result,
-        metadata: {
-          type: 'image',
-          fileName,
-          mimeType,
-          size: buffer.length,
-        },
-      };
+      result = await visionApiCall(base64Image, mimeType);
     } catch (err) {
-      console.error('[ImageLoader] Vision API failed:', err.message);
-      return {
-        content: `[Image: ${fileName}] - Could not extract text`,
-        metadata: {
-          type: 'image',
-          fileName,
-          size: buffer.length,
-          error: err.message,
-        },
-      };
+      console.error('[ImageLoader] Vision extraction failed:', err.message);
+      throw new Error(`Could not extract text from image "${fileName}": ${err.message}`, { cause: err });
     }
+
+    // The vision service returns null for an unreadable or empty image.
+    const content = typeof result === 'string' ? result.trim() : '';
+    if (!content) {
+      throw new Error(`No readable text found in image "${fileName}"`);
+    }
+
+    return {
+      content,
+      metadata: {
+        type: 'image',
+        fileName,
+        mimeType,
+        size: buffer.length,
+      },
+    };
   },
 };
 
@@ -331,9 +393,11 @@ const ArchiveLoader = {
  * @param {any} buffer - file content
  * @param {string} fileName - original file name
  * @param {Function} visionApiCall - optional vision API function for images
+ * @param {Function} pdfOcrCall - optional OCR fallback for PDFs whose text layer
+ *   is missing or unreadable
  * @returns {Promise<{content: string, metadata: object}>}
  */
-const loadDocument = async (buffer, fileName, visionApiCall = null) => {
+const loadDocument = async (buffer, fileName, visionApiCall = null, pdfOcrCall = null) => {
   if (!buffer || !fileName) {
     throw new Error('buffer and fileName are required');
   }
@@ -349,7 +413,7 @@ const loadDocument = async (buffer, fileName, visionApiCall = null) => {
         return await CodeLoader.load(buffer, fileName);
 
       case 'pdf':
-        return await PDFLoader.load(buffer, fileName);
+        return await PDFLoader.load(buffer, fileName, pdfOcrCall);
 
       case 'document':
         return await DocumentLoader.load(buffer, fileName);

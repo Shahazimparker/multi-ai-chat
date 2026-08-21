@@ -24,6 +24,9 @@ const {
   RAG_RERANK_TIMEOUT_MS,
   RAG_RERANK_CANDIDATE_MULTIPLIER,
   RAG_RERANK_MIN_RELEVANCE,
+  RAPTOR_SUMMARY_PENALTY,
+  GRAPHRAG_ENABLED,
+  GRAPHRAG_MAX_HOPS,
 } = require('../config/chatRuntime.config');
 
 const CHUNK_SIZE_CHARS = 1000;       // ~250 tokens (tight vector search target)
@@ -429,7 +432,7 @@ const rerankCandidates = async (query, candidates, signal = null) => {
     );
 
     if (!results.length) {
-      return { items: candidates, reranked: false, searchUnits };
+      return { items: candidates, reranked: false, calibrated: false, searchUnits };
     }
 
     const items = results.map(({ index, relevanceScore }) => ({
@@ -439,13 +442,36 @@ const rerankCandidates = async (query, candidates, signal = null) => {
     }));
 
     console.log(`[RAG2] Reranked ${candidates.length} candidates via ${RAG_RERANK_MODEL} (top score ${items[0].rerankScore.toFixed(3)})`);
-    return { items, reranked: true, searchUnits };
+    return { items, reranked: true, calibrated: true, searchUnits };
   } catch (err) {
     if (err?.name === 'AbortError' || err?.name === 'CanceledError') throw err;
-    // Retrieval still works without the reranker, just less precisely.
-    console.warn('[RAG2] Rerank unavailable, falling back to hybrid ordering:', err.message);
-    return { items: candidates, reranked: false, searchUnits: 0 };
+    console.warn('[RAG2] Cross-encoder unavailable:', err.message);
   }
+
+  // Second tier: ask a cheap chat model to score the candidates. OpenRouter has
+  // no rerank endpoint, so this is the closest available substitute. Ordering
+  // improves markedly over cosine; the SCORES do not mean what a cross-encoder's
+  // mean, which is why `calibrated` stays false and the relevance gate below
+  // stands down rather than applying a threshold to an invented scale.
+  try {
+    const { results } = await cohereService.rerankWithLlm(query, candidates.map((c) => c.chunk_text || ''), { signal });
+    if (results.length) {
+      const items = results.map(({ index, relevanceScore }) => ({
+        ...candidates[index],
+        rerankScore: relevanceScore,
+        hybridScore: relevanceScore,
+      }));
+      console.log(`[RAG2] Reranked ${candidates.length} candidates via LLM fallback (uncalibrated).`);
+      return { items, reranked: true, calibrated: false, searchUnits: 0 };
+    }
+  } catch (err) {
+    if (err?.name === 'AbortError' || err?.name === 'CanceledError') throw err;
+    console.warn('[RAG2] LLM rerank fallback failed:', err.message);
+  }
+
+  // Retrieval still works without any reranker, just less precisely.
+  console.warn('[RAG2] No reranker available; using fused RRF ordering.');
+  return { items: candidates, reranked: false, calibrated: false, searchUnits: 0 };
 };
 
 /**
@@ -613,18 +639,50 @@ const searchKnowledgeCollections = async ({
     return lists.filter((l) => l.length > 0);
   };
 
-  // Both passes are independent, so run them concurrently.
-  const [denseLists, sparseLists] = await Promise.all([
+  // Graph pass. Enters the entity graph by name-matching the query, walks one
+  // hop, and returns the chunks behind those entities. This is the only pass
+  // that can surface a chunk which is not textually similar to the query at
+  // all — the passage holding the other half of a two-part answer.
+  const runGraphPass = async () => {
+    if (!GRAPHRAG_ENABLED) return [];
+    const ids = scopeRows.map((row) => row.id);
+    if (ids.length === 0) return [];
+
+    const { data, error } = await supabase.rpc('match_knowledge_graph', {
+      query_text: query,
+      collection_ids: ids,
+      user_id_param: userId,
+      match_count: topK * oversampleFactor,
+      max_hops: GRAPHRAG_MAX_HOPS,
+    });
+
+    if (error) {
+      // Most likely the graph migration has not been applied. Dense+sparse is
+      // exactly the previous behaviour, so carry on.
+      console.warn('[RAG2] Graph pass unavailable:', error.message);
+      return [];
+    }
+    return data && data.length ? [data] : [];
+  };
+
+  // All three passes are independent, so run them concurrently.
+  const [denseLists, sparseLists, graphLists] = await Promise.all([
     runMatchPass(matchThreshold),
     runFtsPass(),
+    runGraphPass(),
   ]);
 
-  let candidates = fuseByReciprocalRank([...denseLists, ...sparseLists]);
+  let candidates = fuseByReciprocalRank([...denseLists, ...sparseLists, ...graphLists]);
 
-  if (denseLists.length + sparseLists.length > 0) {
+  if (denseLists.length + sparseLists.length + graphLists.length > 0) {
     const denseIds = new Set(denseLists.flat().map((r) => r.chunk_id));
-    const recovered = sparseLists.flat().filter((r) => !denseIds.has(r.chunk_id)).length;
-    console.log(`[RAG2] Fused ${denseLists.length} dense + ${sparseLists.length} sparse list(s) over ${searchQueries.length} query variant(s) -> ${candidates.length} candidates (${recovered} keyword-only)`);
+    const sparseIds = new Set(sparseLists.flat().map((r) => r.chunk_id));
+    const keywordOnly = sparseLists.flat().filter((r) => !denseIds.has(r.chunk_id)).length;
+    // Chunks only the graph reached: not similar to the query by either
+    // measure, but connected to something the query named.
+    const graphOnly = graphLists.flat()
+      .filter((r) => !denseIds.has(r.chunk_id) && !sparseIds.has(r.chunk_id)).length;
+    console.log(`[RAG2] Fused ${denseLists.length} dense + ${sparseLists.length} sparse + ${graphLists.length} graph list(s) over ${searchQueries.length} query variant(s) -> ${candidates.length} candidates (${keywordOnly} keyword-only, ${graphOnly} graph-only)`);
   }
 
   if (candidates.length === 0 && groups.length > 0) {
@@ -673,7 +731,7 @@ const searchKnowledgeCollections = async ({
 
   // 3.5 Cross-encoder rerank. Replaces the ordering above when available, and
   //     leaves it untouched when not.
-  const { items: rerankedItems, reranked } = await rerankCandidates(query, hybridScored, signal);
+  const { items: rerankedItems, reranked, calibrated } = await rerankCandidates(query, hybridScored, signal);
   let scored = rerankedItems;
 
   // 3.6 Relevance gate. Only meaningful with a reranker: `relevance_score` is
@@ -685,7 +743,10 @@ const searchKnowledgeCollections = async ({
   //     names every document, so the model can answer "what is in this
   //     knowledge base?" — it just stops citing passages that do not answer
   //     the question.
-  if (reranked) {
+  //     Only a CALIBRATED score may be compared against a fixed threshold. The
+  //     LLM fallback returns numbers on a scale it invented, so gating on them
+  //     would drop passages for arbitrary reasons.
+  if (reranked && calibrated) {
     const relevant = scored.filter((item) => item.rerankScore >= RAG_RERANK_MIN_RELEVANCE);
     if (relevant.length < scored.length) {
       console.log(`[RAG2] Relevance gate dropped ${scored.length - relevant.length}/${scored.length} chunk(s) below ${RAG_RERANK_MIN_RELEVANCE}`);
@@ -693,13 +754,41 @@ const searchKnowledgeCollections = async ({
     scored = relevant;
   }
 
+  // 3.7 Prefer primary text over synthesis at comparable relevance.
+  //
+  //     RAPTOR summaries compete with leaf chunks in the same ranking, and a
+  //     summary mentioning a term can tie or beat the leaf that actually
+  //     contains it — observed with an exact identifier lookup, where an L2
+  //     summary displaced the passage holding the literal string.
+  //
+  //     A small penalty breaks those ties toward the real text without
+  //     stopping a summary winning a genuinely broad question, where its lead
+  //     over any single passage is far larger than this margin.
+  if (RAPTOR_SUMMARY_PENALTY > 0) {
+    scored = scored
+      .map((item) => (item.chunk_metadata?.raptor === true
+        ? { ...item, hybridScore: Math.max(0, item.hybridScore - RAPTOR_SUMMARY_PENALTY) }
+        : item))
+      .sort((a, b) => b.hybridScore - a.hybridScore);
+  }
+
   // 4. Deduplicate parent context (avoid repeating same parent window)
   const selected = [];
   const seenParents = new Set();
   let usedTokens = 0;
 
+  // At most a third of the context may be synthesis. Without this an overview
+  // question can fill the entire budget with summaries, leaving the model no
+  // actual source text to quote or check itself against.
+  const maxSummaries = Math.max(1, Math.floor(topK / 3));
+  let summariesTaken = 0;
+
   for (const item of scored) {
     if (selected.length >= topK) break;
+
+    const isSummary = item.chunk_metadata?.raptor === true;
+    if (isSummary && summariesTaken >= maxSummaries) continue;
+
     const parentKey = `${item.document_id}_${item.parent_text.slice(0, 100)}`;
     if (seenParents.has(parentKey)) continue;
     seenParents.add(parentKey);
@@ -710,6 +799,7 @@ const searchKnowledgeCollections = async ({
     }
 
     selected.push(item);
+    if (isSummary) summariesTaken++;
     usedTokens += parentTokens;
   }
 
@@ -738,6 +828,12 @@ const searchKnowledgeCollections = async ({
   // 6. Generate structured citations for UI and LLM
   const citations = selected.map((item, index) => ({
     citationId: index + 1,
+    chunkId: item.chunk_id,
+    // RAPTOR summary nodes live in the same table as leaf chunks. Marking them
+    // matters for honesty: a summary is model-written synthesis, not text the
+    // document actually contains, and must not be presented as a direct quote.
+    isSummary: item.chunk_metadata?.raptor === true,
+    treeLevel: Number(item.chunk_metadata?.level) || 0,
     documentId: item.document_id,
     documentTitle: item.document_title,
     collectionId: item.collection_id,
@@ -749,14 +845,20 @@ const searchKnowledgeCollections = async ({
     // the number shown in the UI finally means something. Without one it is
     // the uncalibrated hybrid blend, as before.
     confidence: Math.round(item.hybridScore * 100),
-    calibrated: reranked,
+    calibrated,
     sectionTitle: item.chunk_metadata?.sectionTitle || '',
   }));
 
   // 7. Format RAG Context block with clear citation markers for the LLM
   const contextParts = selected.map((item, index) => {
     const sourceLabel = item.source_url ? ` (${item.source_url})` : '';
-    const sectionLabel = item.chunk_metadata?.sectionTitle ? ` § ${item.chunk_metadata.sectionTitle}` : '';
+    const isSummary = item.chunk_metadata?.raptor === true;
+    // A RAPTOR summary is model-written synthesis. Labelling it stops the model
+    // quoting it as though the document said it verbatim, while still letting
+    // it serve the overview questions it exists to answer.
+    const sectionLabel = isSummary
+      ? ` § GENERATED SUMMARY of ${item.chunk_metadata?.childCount || 'several'} passages — synthesis, not a direct quote`
+      : (item.chunk_metadata?.sectionTitle ? ` § ${item.chunk_metadata.sectionTitle}` : '');
     return `[SOURCE ${index + 1}: "${item.document_title}" in collection "${item.collection_name}"${sectionLabel}${sourceLabel}]\n${item.parent_text}\n[END SOURCE ${index + 1}]`;
   });
 
@@ -778,6 +880,7 @@ const searchKnowledgeCollections = async ({
     // and was previously invisible to quotas and analytics.
     tokensUsed: usedTokens + transformTokens,
     reranked,
+    rerankCalibrated: calibrated,
     queryVariants: searchQueries.length,
   };
 };

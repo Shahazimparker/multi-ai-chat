@@ -44,7 +44,7 @@ const OPENROUTER_TOOLS = [
 /**
  * Shared helper to build base config (used by both streaming and non-streaming)
  */
-function buildOpenRouterConfig(modelName, apiKey, messages, signal) {
+function buildOpenRouterConfig(modelName, apiKey, messages, signal, { disableTools = false } = {}) {
   const isClaudeModel = modelName.includes('claude');
   const isGPT4Turbo = modelName.includes('gpt-4-turbo');
   const systemMessages = messages.filter(m => m.role === 'system');
@@ -56,8 +56,10 @@ function buildOpenRouterConfig(modelName, apiKey, messages, signal) {
     modelName,
     messages: chatMessages,
     signal,
-    tools: OPENROUTER_TOOLS,
-    toolChoice: 'auto',
+    // Extraction-style callers (vision transcription, summarisation) pass
+    // disableTools. Offering generate_ppt there invites a tool call in place of
+    // the text they asked for, which reads downstream as an empty response.
+    ...(disableTools ? {} : { tools: OPENROUTER_TOOLS, toolChoice: 'auto' }),
   };
 
   if (systemMessages.length > 0) {
@@ -83,10 +85,11 @@ function buildOpenRouterConfig(modelName, apiKey, messages, signal) {
  * @param {string} apiKey
  * @param {Array} messages
  * @param {AbortSignal|null} signal
+ * @param {{disableTools?: boolean}} options
  * @returns {Promise<Object>}
  */
-const callOpenRouter = async (modelName, apiKey, messages, signal = null) => {
-  const baseConfig = buildOpenRouterConfig(modelName, apiKey, messages, signal);
+const callOpenRouter = async (modelName, apiKey, messages, signal = null, options = {}) => {
+  const baseConfig = buildOpenRouterConfig(modelName, apiKey, messages, signal, options);
   const response = await callOpenAICompatible(baseConfig);
 
   return {

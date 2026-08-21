@@ -5,6 +5,8 @@
 
 const axios = require('axios');
 
+const NEWLINE = String.fromCharCode(10);
+
 const COHERE_CHAT_URL = 'https://api.cohere.ai/v1/chat';
 const COHERE_RERANK_URL = 'https://api.cohere.com/v2/rerank';
 
@@ -189,4 +191,93 @@ const rerankDocuments = async (query, documents, apiKey, options = {}) => {
   };
 };
 
-module.exports = { callCohere, callCohereStream, rerankDocuments };
+/**
+ * rerankWithLlm - fallback reranker for when no cross-encoder is reachable.
+ *
+ * OpenRouter exposes no rerank endpoint (verified against its live catalogue:
+ * zero models with "rerank" in the id), because reranking is not a chat
+ * operation. The nearest equivalent is asking a cheap chat model to score each
+ * candidate against the query.
+ *
+ * IT IS NOT A DROP-IN REPLACEMENT. A cross-encoder returns a calibrated score,
+ * where 0.3 means the same thing across queries; a chat model returns a number
+ * it made up, and its scale drifts with the prompt and the batch. The ordering
+ * is still far better than cosine alone, so it is worth having — but the
+ * caller MUST NOT feed these numbers to a fixed relevance threshold, which is
+ * why the result is flagged `calibrated: false`.
+ *
+ * @returns {Promise<{ results: Array<{index, relevanceScore}>, calibrated: false }>}
+ */
+const rerankWithLlm = async (query, documents, options = {}) => {
+  const {
+    model = process.env.RAG_RERANK_LLM_MODEL || 'google/gemini-2.5-flash-lite',
+    apiKey = process.env.OPENROUTER_API_KEY,
+    signal = null,
+    timeout = 15000,
+    snippetChars = 400,
+  } = options;
+
+  if (!apiKey) throw new Error('No OpenRouter API key for LLM reranking');
+  if (!Array.isArray(documents) || documents.length === 0) {
+    return { results: [], calibrated: false };
+  }
+
+  const numbered = documents
+    .map((d, i) => '[' + i + '] ' + String(d ?? '').slice(0, snippetChars).replace(/\s+/g, ' '))
+    .join(NEWLINE + NEWLINE);
+
+  const prompt = [
+    'Score how well each passage answers the query.',
+    '',
+    'Rules:',
+    '- Score every passage from 0 (irrelevant) to 1 (directly answers it).',
+    '- Judge only against the query, not against the other passages.',
+    '- Reply with a JSON array only: [{"index":0,"score":0.9}, ...]',
+    '- No prose, no code fence, one entry per passage.',
+    '',
+    'Query: ' + query,
+    '',
+    'Passages:',
+    numbered,
+  ].join(NEWLINE);
+
+  const response = await axios.post(
+    'https://openrouter.ai/api/v1/chat/completions',
+    { model, messages: [{ role: 'user', content: prompt }] },
+    {
+      headers: {
+        Authorization: 'Bearer ' + apiKey,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.FRONTEND_URL || 'http://localhost:3000',
+        'X-Title': 'MultiAI Chat',
+      },
+      timeout,
+      signal,
+    }
+  );
+
+  const raw = String(response?.data?.choices?.[0]?.message?.content || '');
+  const match = raw.match(/\[[\s\S]*\]/);
+  if (!match) throw new Error('LLM reranker returned no JSON array');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(match[0]);
+  } catch {
+    throw new Error('LLM reranker returned unparseable JSON');
+  }
+  if (!Array.isArray(parsed)) throw new Error('LLM reranker did not return an array');
+
+  const results = parsed
+    .filter((r) => Number.isInteger(r?.index) && r.index >= 0 && r.index < documents.length)
+    .map((r) => ({
+      index: r.index,
+      // Clamp: models cheerfully return 1.5 or -0.2 despite the instruction.
+      relevanceScore: Math.max(0, Math.min(1, Number(r.score) || 0)),
+    }))
+    .sort((a, b) => b.relevanceScore - a.relevanceScore);
+
+  return { results, calibrated: false };
+};
+
+module.exports = { callCohere, callCohereStream, rerankDocuments, rerankWithLlm };

@@ -24,6 +24,10 @@ const {
 const { crawlWebsite } = require('../services/knowledgeCrawler.service');
 const { ingestDocumentContent, searchKnowledgeCollections } = require('../services/rag2.service');
 const { loadDocument } = require('../services/documentLoader.service');
+const { createVisionCallback } = require('../services/visionExtraction.service');
+const { createPdfOcrCallback } = require('../services/pdfOcr.service');
+const raptor = require('../services/raptor.service');
+const { DEFAULT_PROVIDER } = require('../config/embedding');
 
 // Configure multer for file uploads
 const uploadDir = path.join(os.tmpdir(), 'multi-ai-knowledge-uploads');
@@ -145,7 +149,15 @@ router.post('/collections/:id/documents/upload', handleMulterUpload, async (req,
     const ext = path.extname(originalName).slice(1).toLowerCase();
 
     try {
-      const loaded = await loadDocument(fileBuffer, originalName);
+      // Without this third argument every image entering a collection became
+      // the literal string "[Image: x] - Vision API not available", which was
+      // then chunked, embedded, and retrievable as a citable source.
+      const loaded = await loadDocument(
+        fileBuffer,
+        originalName,
+        createVisionCallback(),
+        createPdfOcrCallback(),
+      );
       extractedText = loaded?.content || '';
     } catch (loadErr) {
       // No raw-UTF8 fallback: loadDocument already handles unknown extensions,
@@ -341,6 +353,96 @@ router.get('/documents/:id/chunks', async (req, res) => {
     res.json(data);
   } catch (err) {
     res.status(400).json({ error: err.message || 'Failed to get document chunks' });
+  }
+});
+
+// ── POST /api/knowledge/documents/:id/build-tree — RAPTOR summary tree ──
+//
+// Vercel's function ceiling is the binding constraint here, so the build runs
+// against a deadline and reports whether it finished. When `stopped` is true
+// the tree is partially built and calling again RESUMES from that level rather
+// than starting over — so a document larger than one invocation can allow is
+// still completable by repeating the call.
+router.post('/documents/:id/build-tree', async (req, res) => {
+  try {
+    const documentId = req.params.id;
+
+    // Ownership check mirrors getDocumentChunks: the document row carries
+    // user_id, so a collection lookup is not needed to authorise.
+    const { data: doc } = await supabase
+      .from('knowledge_documents')
+      .select('id, title, collection_id, user_id, status, knowledge_collections(embedding_provider)')
+      .eq('id', documentId)
+      .single();
+
+    if (!doc || doc.user_id !== req.user.id) {
+      return res.status(404).json({ error: 'Document not found or unauthorized' });
+    }
+    if (doc.status !== 'indexed') {
+      return res.status(400).json({ error: `Document is "${doc.status}", not indexed` });
+    }
+
+    // Leave headroom under the platform limit for the response itself; a build
+    // killed mid-insert would leave the tree in a state the resume logic has to
+    // reconcile, and stopping cleanly is cheaper than being killed.
+    const budgetMs = Number(process.env.RAPTOR_REQUEST_BUDGET_MS || 280000);
+
+    const result = await raptor.buildDocumentTree({
+      documentId,
+      userId: req.user.id,
+      documentTitle: doc.title || '',
+      embedProvider: doc.knowledge_collections?.embedding_provider || DEFAULT_PROVIDER,
+      deadlineAt: Date.now() + budgetMs,
+      force: req.body?.force === true,
+    });
+
+    res.json({
+      success: true,
+      documentId,
+      ...result,
+      // Explicit rather than implied: the client should keep calling while this
+      // is true, and stop when it is false.
+      needsAnotherPass: Boolean(result.stopped),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Failed to build summary tree' });
+  }
+});
+
+// ── GET /api/knowledge/documents/:id/tree — current tree shape ──
+router.get('/documents/:id/tree', async (req, res) => {
+  try {
+    const { data: doc } = await supabase
+      .from('knowledge_documents')
+      .select('id, title, user_id')
+      .eq('id', req.params.id)
+      .single();
+
+    if (!doc || doc.user_id !== req.user.id) {
+      return res.status(404).json({ error: 'Document not found or unauthorized' });
+    }
+
+    const { data: chunks, error } = await supabase
+      .from('knowledge_chunks')
+      .select('metadata')
+      .eq('document_id', req.params.id);
+
+    if (error) throw error;
+
+    const levels = {};
+    for (const row of chunks || []) {
+      const level = Number(row?.metadata?.level) || 0;
+      levels[level] = (levels[level] || 0) + 1;
+    }
+
+    res.json({
+      documentId: doc.id,
+      title: doc.title,
+      levels,
+      built: Object.keys(levels).some((l) => Number(l) > 0),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Failed to read summary tree' });
   }
 });
 

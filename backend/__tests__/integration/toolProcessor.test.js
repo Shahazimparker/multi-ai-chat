@@ -1,6 +1,44 @@
 // vitest globals: describe, it, expect, vi, beforeEach
-// NOTE: supabase is mocked globally in setup.js
+// NOTE: setup.js does NOT mock supabase — it only neutralises credentials.
+// The generated-file persistence layer is stubbed below.
 // These tests verify processToolCall logic paths
+
+// ── Stub the persistence layer ───────────────────────────────
+//
+// These tests assert on generation: layouts, themes, filename derivation, the
+// shape of generatedMedia. The database write is incidental to all of it, and
+// with real Supabase credentials loaded from .env it was a live INSERT on every
+// run — 35 rows per suite into the production table.
+//
+// spyOn, not a vi.mock factory: these are CommonJS modules and a factory does
+// NOT intercept the require — it fails open and leaves the real implementation
+// in place, which is exactly how the live writes went unnoticed. The same
+// footgun is documented in rag2.test.js and rerank.test.js.
+//
+// Order matters. The consumers destructure their import at require time
+// (`const { saveGeneratedFile } = require('./fileUpload.service')`), capturing
+// the reference. The spies must therefore be installed BEFORE the modules under
+// test are required below.
+const fileUploadService = require('../../services/fileUpload.service');
+
+let savedSeq = 0;
+const stubSaved = (fileName, fileType) => ({
+  file_id: `test-file-${++savedSeq}`,
+  file_name: fileName,
+  file_type: fileType,
+  created_at: new Date().toISOString(),
+});
+
+// Both stubs mirror the real contract, including returning null on the same
+// missing-argument guards, so error paths stay reachable.
+vi.spyOn(fileUploadService, 'saveGeneratedFile').mockImplementation(
+  async (userId, topicId, fileName, content, fileType) =>
+    (userId && fileName ? stubSaved(fileName, fileType) : null)
+);
+vi.spyOn(fileUploadService, 'saveGeneratedBinaryFile').mockImplementation(
+  async (userId, topicId, fileName, textContent, fileType, binaryBuffer) =>
+    (userId && fileName && binaryBuffer ? stubSaved(fileName, fileType) : null)
+);
 
 const { processToolCall } = require('../../services/toolProcessor.service');
 const { approvalManager } = require('../../services/approvalManager.shared');

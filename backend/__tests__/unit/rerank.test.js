@@ -411,3 +411,189 @@ describe('buildEmbeddingText', () => {
     expect(buildEmbeddingText(null, '', '')).toBe('');
   });
 });
+
+// ── RAPTOR summary nodes in retrieval ────────────────────────
+// Summary nodes share a table with leaf chunks, so they compete in the same
+// ranking. They must be usable for overview questions without displacing the
+// primary text an exact lookup needs.
+describe('RAPTOR summaries in retrieval', () => {
+  const summaryChunk = (id, score) => ({
+    chunk_id: id,
+    document_id: DOC_ID,
+    collection_id: COLLECTION_ID,
+    collection_name: 'Engineering',
+    document_title: 'API_Specs.md',
+    source_type: 'file',
+    source_url: null,
+    chunk_text: 'This document covers streaming endpoints and error codes.',
+    parent_text: 'This document covers streaming endpoints and error codes.',
+    similarity: score,
+    chunk_metadata: { raptor: true, level: 1, childCount: 5 },
+  });
+
+  const stubWith = (rows) => {
+    mockCollectionScope([{ id: COLLECTION_ID, name: 'Engineering', embedding_provider: 'openrouter' }]);
+    vi.spyOn(ragService, 'embedText').mockResolvedValue({
+      vector: new Array(1536).fill(0.01), tokensUsed: 25,
+      provider: 'openrouter', space: 'openai-te3-small',
+    });
+    vi.spyOn(supabase, 'rpc').mockResolvedValue({ data: rows, error: null });
+  };
+
+  it('marks a summary as synthesis, not a verbatim quote', async () => {
+    stubWith([summaryChunk('sum-1', 0.9)]);
+    vi.spyOn(cohereService, 'rerankDocuments').mockResolvedValue({
+      results: [{ index: 0, relevanceScore: 0.9 }], searchUnits: 1,
+    });
+
+    const result = await search();
+
+    // A user must not read generated text as something the document says.
+    expect(result.citations[0].isSummary).toBe(true);
+    expect(result.citations[0].treeLevel).toBe(1);
+    expect(result.context).toMatch(/GENERATED SUMMARY/);
+    expect(result.context).toMatch(/not a direct quote/i);
+  });
+
+  it('leaves a leaf chunk unmarked', async () => {
+    stubWith(CHUNKS);
+    vi.spyOn(cohereService, 'rerankDocuments').mockResolvedValue({
+      results: [{ index: 0, relevanceScore: 0.9 }], searchUnits: 1,
+    });
+
+    const result = await search();
+
+    expect(result.citations[0].isSummary).toBe(false);
+    expect(result.citations[0].treeLevel).toBe(0);
+    expect(result.context).not.toMatch(/GENERATED SUMMARY/);
+  });
+
+  it('lets a leaf win a tie against a summary', async () => {
+    // Observed for real: an exact identifier lookup put an L2 summary above the
+    // passage containing the literal string, both scored 1.0 by the reranker.
+    stubWith([summaryChunk('sum-1', 0.9), CHUNKS[1]]);
+    vi.spyOn(cohereService, 'rerankDocuments').mockResolvedValue({
+      results: [{ index: 0, relevanceScore: 1.0 }, { index: 1, relevanceScore: 1.0 }],
+      searchUnits: 1,
+    });
+
+    const result = await search();
+
+    expect(result.citations[0].isSummary).toBe(false);
+    expect(result.citations[0].documentTitle).toBe('API_Specs.md');
+  });
+
+  it('still lets a summary win when it is clearly more relevant', async () => {
+    // The penalty is a tie-break, not a veto — a broad question where the
+    // summary leads by a wide margin must still surface it first.
+    stubWith([summaryChunk('sum-1', 0.9), CHUNKS[1]]);
+    vi.spyOn(cohereService, 'rerankDocuments').mockResolvedValue({
+      results: [{ index: 0, relevanceScore: 0.95 }, { index: 1, relevanceScore: 0.40 }],
+      searchUnits: 1,
+    });
+
+    const result = await search();
+
+    expect(result.citations[0].isSummary).toBe(true);
+  });
+
+  it('never fills the whole context with synthesis', async () => {
+    const summaries = [0, 1, 2, 3, 4, 5].map((i) => summaryChunk('sum-' + i, 0.9 - i * 0.01));
+    stubWith(summaries);
+    vi.spyOn(cohereService, 'rerankDocuments').mockResolvedValue({
+      results: summaries.map((_, i) => ({ index: i, relevanceScore: 0.9 - i * 0.01 })),
+      searchUnits: 1,
+    });
+
+    const result = await search();
+
+    // Leaving no primary text at all would give the model nothing to check
+    // itself against.
+    const summaryCount = result.citations.filter((c) => c.isSummary).length;
+    expect(summaryCount).toBeLessThanOrEqual(2);
+  });
+});
+
+// ── Reranker fallback chain ──────────────────────────────────
+// OpenRouter exposes no rerank endpoint, so the fallback is a chat model
+// scoring candidates. Its ordering is useful; its SCALE is invented, and the
+// relevance gate must not be applied to it.
+describe('rerank fallback', () => {
+  const llmScores = (pairs) => ({
+    data: { choices: [{ message: { content: JSON.stringify(pairs.map(([index, score]) => ({ index, score }))) } }] },
+  });
+
+  it('parses scores and orders best-first', async () => {
+    vi.spyOn(axios, 'post').mockResolvedValue(llmScores([[0, 0.2], [1, 0.9]]));
+
+    const { results, calibrated } = await cohereService.rerankWithLlm('q', ['a', 'b'], { apiKey: 'k' });
+
+    expect(results[0]).toEqual({ index: 1, relevanceScore: 0.9 });
+    expect(calibrated).toBe(false);
+  });
+
+  it('clamps scores outside 0..1', async () => {
+    // Models return 1.5 and -0.2 despite the instruction.
+    vi.spyOn(axios, 'post').mockResolvedValue(llmScores([[0, 1.5], [1, -0.2]]));
+
+    const { results } = await cohereService.rerankWithLlm('q', ['a', 'b'], { apiKey: 'k' });
+
+    expect(results.map((r) => r.relevanceScore)).toEqual([1, 0]);
+  });
+
+  it('discards indices outside the candidate range', async () => {
+    vi.spyOn(axios, 'post').mockResolvedValue(llmScores([[0, 0.8], [99, 0.9]]));
+
+    const { results } = await cohereService.rerankWithLlm('q', ['only'], { apiKey: 'k' });
+
+    expect(results).toEqual([{ index: 0, relevanceScore: 0.8 }]);
+  });
+
+  it('throws when the reply carries no JSON array', async () => {
+    vi.spyOn(axios, 'post').mockResolvedValue({ data: { choices: [{ message: { content: 'no idea' } }] } });
+    await expect(cohereService.rerankWithLlm('q', ['a'], { apiKey: 'k' })).rejects.toThrow(/no JSON array/i);
+  });
+
+  it('takes over when the cross-encoder fails', async () => {
+    stubRetrieval();
+    vi.spyOn(cohereService, 'rerankDocuments').mockRejectedValue(new Error('cohere 401'));
+    const llm = vi.spyOn(cohereService, 'rerankWithLlm').mockResolvedValue({
+      results: [{ index: 1, relevanceScore: 0.88 }, { index: 0, relevanceScore: 0.3 }],
+      calibrated: false,
+    });
+
+    const result = await search();
+
+    expect(llm).toHaveBeenCalled();
+    expect(result.reranked).toBe(true);
+    expect(result.rerankCalibrated).toBe(false);
+    expect(result.citations[0].documentTitle).toBe('API_Specs.md');
+  });
+
+  it('stands the relevance gate down for uncalibrated scores', async () => {
+    stubRetrieval();
+    vi.spyOn(cohereService, 'rerankDocuments').mockRejectedValue(new Error('cohere down'));
+    vi.spyOn(cohereService, 'rerankWithLlm').mockResolvedValue({
+      // Both below RAG_RERANK_MIN_RELEVANCE. With a cross-encoder these would
+      // be dropped; on an invented scale that would be an arbitrary cut.
+      results: [{ index: 0, relevanceScore: 0.10 }, { index: 1, relevanceScore: 0.05 }],
+      calibrated: false,
+    });
+
+    const result = await search();
+
+    expect(result.chunkCount).toBeGreaterThan(0);
+    expect(result.citations[0].calibrated).toBe(false);
+  });
+
+  it('falls all the way back to RRF ordering when both rerankers fail', async () => {
+    stubRetrieval();
+    vi.spyOn(cohereService, 'rerankDocuments').mockRejectedValue(new Error('cohere down'));
+    vi.spyOn(cohereService, 'rerankWithLlm').mockRejectedValue(new Error('openrouter down'));
+
+    const result = await search();
+
+    expect(result.reranked).toBe(false);
+    expect(result.chunkCount).toBeGreaterThan(0);
+  });
+});
