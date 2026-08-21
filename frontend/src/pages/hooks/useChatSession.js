@@ -131,6 +131,10 @@ export const useChatSession = ({ refreshTokenStats }) => {
   const handleTopicSelect = useCallback(async (topic) => {
     setActiveTopic(topic);
     setMessages([]);
+    // Attached knowledge bases belong to the conversation they were picked in.
+    // Carrying them into the next one silently cites documents the user never
+    // attached here.
+    setSelectedCollectionIds([]);
     try {
       const res = await api.get(`/history/topics/${topic.id}/messages`);
       setMessages(res.data.messages.map((entry) => {
@@ -167,6 +171,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
     setActiveTopic(null);
     setMessages([]);
     setError('');
+    setSelectedCollectionIds([]);
   }, []);
 
   const uploadSingleFile = useCallback(async (file, topicIdToUse) => {

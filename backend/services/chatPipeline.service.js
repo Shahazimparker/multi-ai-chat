@@ -189,7 +189,11 @@ const ARTIFACT_INTENTS = [
     label: 'image',
     keywords: /\b(image|picture|photo|illustration|artwork|poster|logo|banner)\b/,
     verbs: /\b(generate|create|make|draw|design)\b/,
-    hasEnoughDetails: (text) => /\b(of|for|showing|with)\s+.+/i.test(text),
+    // A prompt can be highly specific without ever using one of these
+    // prepositions ("red apple on white background, top-down, photorealistic"),
+    // so length stands in as a second signal of a described subject.
+    hasEnoughDetails: (text) => /\b(of|for|showing|with)\s+.+/i.test(text)
+      || String(text).trim().split(/\s+/).length >= 12,
     questions: (topicHint) => [
       { id: 'subject', label: 'Subject', kind: 'text', required: true, placeholder: 'Product launch hero image', value: topicHint },
       { id: 'style', label: 'Style', kind: 'text', required: true, placeholder: 'Modern 3D marketing illustration', value: '' },
@@ -308,6 +312,22 @@ const detectArtifactIntent = (text = '') => {
 
 const looksLikeClarificationResponse = (text = '') =>
   /\[ARTIFACT DETAILS\]/i.test(String(text));
+
+// Multimodal turns carry content as an array of parts rather than a string.
+const messageText = (content) => {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => (typeof part === 'string' ? part : part?.text || '')).join(' ');
+  }
+  return '';
+};
+
+// Whether the user already filled in a clarification form earlier in this
+// conversation. Without this the form is re-armed by the next plain-language
+// follow-up that happens to name the artifact again ("generate the image now"),
+// so answering it once was not enough to get past it.
+const conversationHadClarification = (messages = []) =>
+  messages.some((entry) => entry?.role === 'user' && looksLikeClarificationResponse(messageText(entry.content)));
 
 const extractArtifactTopic = (text = '') => {
   const normalized = String(text).trim();
@@ -912,7 +932,11 @@ ${page.text}`)
     aiMessages.push({ role: 'user', content: userContent });
 
     const artifactIntent = !image ? detectArtifactIntent(finalQuery) : null;
-    if (artifactIntent && !looksLikeClarificationResponse(finalQuery) && !artifactIntent.hasEnoughDetails(finalQuery)) {
+    // aiMessages ends with the turn being processed; the clarification history
+    // that matters is everything before it.
+    const alreadyClarified = looksLikeClarificationResponse(finalQuery)
+      || conversationHadClarification(aiMessages.slice(0, -1));
+    if (artifactIntent && !alreadyClarified && !artifactIntent.hasEnoughDetails(finalQuery)) {
       onToolStatus?.(buildArtifactClarificationEvent(artifactIntent, finalQuery));
       return makePipelineResult({
         finalReply: '',

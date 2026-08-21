@@ -65,6 +65,19 @@ const ChatPage = () => {
     await session.requestSend(payload);
   }, [composer, session]);
 
+  // Web search is scoped to the conversation it was switched on in. Leaving it
+  // armed while moving to another chat silently searches the web there too, so
+  // both ways of changing conversation disarm it.
+  const handleTopicSelect = useCallback(async (topic) => {
+    composer.setWebEnabled(false);
+    await session.handleTopicSelect(topic);
+  }, [composer, session]);
+
+  const handleNewChat = useCallback(() => {
+    composer.setWebEnabled(false);
+    session.handleNewChat();
+  }, [composer, session]);
+
   const handleApprovalComplete = useCallback((approvalId, result) => {
     console.log(`[Approval] ${approvalId} completed: ${result}`);
   }, []);
@@ -84,8 +97,8 @@ const ChatPage = () => {
     <div className="chat-root">
       <Sidebar
         activeTopic={session.activeTopic}
-        onTopicSelect={session.handleTopicSelect}
-        onNewChat={session.handleNewChat}
+        onTopicSelect={handleTopicSelect}
+        onNewChat={handleNewChat}
         refreshTrigger={session.sidebarRefresh}
       />
 
@@ -93,8 +106,8 @@ const ChatPage = () => {
         <TokenBar>
           <MobileNav
             activeTopic={session.activeTopic}
-            onTopicSelect={session.handleTopicSelect}
-            onNewChat={session.handleNewChat}
+            onTopicSelect={handleTopicSelect}
+            onNewChat={handleNewChat}
             refreshTrigger={session.sidebarRefresh}
           />
         </TokenBar>

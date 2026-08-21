@@ -64,6 +64,20 @@ const ComposerPlusMenu = ({ selectedCollectionIds = [], onSelectionChange, disab
     if (disabled) setOpen(false);
   }, [disabled]);
 
+  // The overlay swallows clicks meant for the composer while the panel is open,
+  // so Escape needs to dismiss it too — otherwise the only way out is finding
+  // the overlay to click, which looks like a frozen page.
+  useEffect(() => {
+    if (!open) return;
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open]);
+
   const goManage = () => {
     setOpen(false);
     navigate('/knowledge');

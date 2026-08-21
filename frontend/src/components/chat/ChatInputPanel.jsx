@@ -97,8 +97,8 @@ const ChatInputPanel = ({
         onClick={() => composer.setWebEnabled((prev) => !prev)}
         disabled={session.loading || !session.model}
         title={composer.webEnabled
-          ? 'Web search on for this query — click to turn off'
-          : 'Web search off — click to search the web for this query'}
+          ? 'Web search on for this chat — click to turn off'
+          : 'Web search off — click to search the web in this chat'}
         aria-pressed={composer.webEnabled}
         aria-label="Web search"
       >

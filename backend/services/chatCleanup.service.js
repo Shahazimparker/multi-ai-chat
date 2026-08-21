@@ -81,7 +81,10 @@ const classifyError = (messageText) => {
   } else if (/rate limit|429|too many/i.test(msg)) {
     errorType = 'rate_limited';
     userMessage = 'The selected LLM is rate limited right now.';
-  } else if (/decommissioned|not found|unsupported|model/i.test(msg)) {
+  // Deliberately not a bare /model/: provider errors mention the word in almost
+  // every failure mode, so matching it alone swallowed auth, connection and
+  // timeout errors below and reported all of them as a dead model.
+  } else if (/decommissioned|does not exist|unsupported|model[_ ]?not[_ ]?found|not_found_error|no such model|invalid model/i.test(msg)) {
     errorType = 'model_unavailable';
     userMessage = 'The selected LLM model is unavailable or no longer supported.';
   } else if (/api key|authentication|unauthorized|401/i.test(msg)) {

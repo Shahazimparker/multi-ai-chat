@@ -5,7 +5,7 @@
 // ============================================================
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Menu, X, PlusCircle, MessageSquare, LogOut, Settings, Trash2, Pencil, Check, FileText, Clock, ChevronRight, Search, Download } from 'lucide-react';
+import { Menu, X, PlusCircle, MessageSquare, LogOut, Settings, Trash2, Pencil, Check, FileText, Clock, ChevronRight, Search, Download, Database } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigate } from 'react-router';
 import api from '../../config/api';
@@ -34,11 +34,15 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
             const data = res.data;
             const newWindow = window.open('', '_blank');
             if (newWindow) {
-                const safe = (str) => str
-                    .replace(/&/g, '&')
-                    .replace(/</g, '<')
-                    .replace(/>/g, '>')
-                    .replace(/"/g, '"');
+                // The preview window is same-origin with the app, so anything
+                // written here runs with the user's session. Escape the
+                // ampersand first — doing it later would double-escape the
+                // entities introduced below.
+                const safe = (str) => String(str ?? '')
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;');
                 newWindow.document.write(`
                     <!DOCTYPE html>
                     <html><head><meta charset="utf-8">
@@ -115,9 +119,13 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
             .catch(() => { });
     }, [user, refreshTrigger]);
 
-    const handleDelete = async (e, id) => {
+    const handleDelete = async (e, topic) => {
         e.stopPropagation();
-        if (!window.confirm('Delete this conversation?')) return;
+        const { id } = topic;
+        // Naming the chat matters here: the rows re-order as chats are deleted,
+        // and this also takes the topic's generated files with it.
+        const label = topic.title ? `"${topic.title}"` : 'this conversation';
+        if (!window.confirm(`Delete ${label} and any files generated in it? This cannot be undone.`)) return;
         await api.delete(`/history/topics/${id}`);
         setTopics(p => p.filter(t => t.id !== id));
         if (activeTopic?.id === id) onNewChat();
@@ -200,6 +208,15 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
                         New Chat
                     </button>
 
+                    <button
+                        type="button"
+                        className="mobile-knowledge-nav-btn"
+                        onClick={() => { navigate('/knowledge'); setIsOpen(false); }}
+                    >
+                        <Database size={15} />
+                        <span>Knowledge Bases</span>
+                    </button>
+
                     {/* ── Chats section (collapsible) ── */}
                     <div className="mobile-section">
                         <div className="mobile-section-label collapsible" onClick={() => setChatsOpen(!chatsOpen)}>
@@ -250,7 +267,7 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
                                                     <button onClick={e => startEdit(e, topic)} title="Rename">
                                                         <Pencil size={14} />
                                                     </button>
-                                                    <button onClick={e => handleDelete(e, topic.id)} title="Delete">
+                                                    <button onClick={e => handleDelete(e, topic)} title="Delete">
                                                         <Trash2 size={14} />
                                                     </button>
                                                 </div>
@@ -366,7 +383,7 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
                                                 <button onClick={e => startEdit(e, topic)} title="Rename">
                                                     <Pencil size={14} />
                                                 </button>
-                                                <button onClick={e => handleDelete(e, topic.id)} title="Delete">
+                                                <button onClick={e => handleDelete(e, topic)} title="Delete">
                                                     <Trash2 size={14} />
                                                 </button>
                                             </div>

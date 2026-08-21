@@ -70,11 +70,14 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
       const data = res.data;
       const newWindow = window.open('', '_blank');
       if (newWindow) {
-        const safe = (str) => str
-          .replace(/&/g, '&')
-          .replace(/</g, '<')
-          .replace(/>/g, '>')
-          .replace(/"/g, '"');
+        // The preview window is same-origin with the app, so anything written
+        // here runs with the user's session. Escape the ampersand first — doing
+        // it later would double-escape the entities introduced below.
+        const safe = (str) => String(str ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
         newWindow.document.write(`
           <!DOCTYPE html>
           <html><head><meta charset="utf-8">
@@ -151,9 +154,13 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
       .catch(() => {});
   }, [user, refreshTrigger]);
 
-  const handleDelete = async (e, id) => {
+  const handleDelete = async (e, topic) => {
     e.stopPropagation();
-    if (!window.confirm('Delete this conversation?')) return;
+    const { id } = topic;
+    // Naming the chat matters here: the rows re-order as chats are deleted, and
+    // this also takes the topic's generated files with it.
+    const label = topic.title ? `"${topic.title}"` : 'this conversation';
+    if (!window.confirm(`Delete ${label} and any files generated in it? This cannot be undone.`)) return;
     await api.delete(`/history/topics/${id}`);
     setTopics(p => p.filter(t => t.id !== id));
     if (activeTopic?.id === id) onNewChat();
@@ -267,7 +274,7 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
                     {editing !== topic.id && (
                       <div className="topic-actions">
                         <button onClick={e => startEdit(e, topic)} title="Rename"><Pencil size={12}/></button>
-                        <button className="topic-del-btn" onClick={e => handleDelete(e, topic.id)} title="Delete"><Trash2 size={12}/></button>
+                        <button className="topic-del-btn" onClick={e => handleDelete(e, topic)} title="Delete"><Trash2 size={12}/></button>
                       </div>
                     )}
                   </div>
@@ -367,7 +374,7 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
                   {editing !== topic.id && (
                     <div className="topic-actions">
                       <button onClick={e => startEdit(e, topic)} title="Rename"><Pencil size={12}/></button>
-                      <button className="topic-del-btn" onClick={e => handleDelete(e, topic.id)} title="Delete"><Trash2 size={12}/></button>
+                      <button className="topic-del-btn" onClick={e => handleDelete(e, topic)} title="Delete"><Trash2 size={12}/></button>
                     </div>
                   )}
                 </div>
