@@ -21,8 +21,11 @@ const REFRESH_AFTER_FRACTION = 0.5;
 
 // Columns safe to attach to req.user — never select '*' here, it pulls
 // the bcrypt password hash (and any future secret column) into the request.
+// `timezone` requires database/migration_add_user_timezone.sql. Postgres fails
+// the whole select on an unknown column, so that migration has to be applied
+// before this code is deployed — schema first, then code, as usual.
 const AUTH_USER_COLUMNS =
-  'id, email, username, role, is_active, expires_at, total_tokens, used_tokens, per_query_limit, session_minutes';
+  'id, email, username, role, is_active, expires_at, total_tokens, used_tokens, per_query_limit, session_minutes, timezone';
 
 /**
  * Builds the JWT + account-state guard.

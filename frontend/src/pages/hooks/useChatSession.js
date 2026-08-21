@@ -338,6 +338,11 @@ export const useChatSession = ({ refreshTokenStats }) => {
           selectedCollectionIds,
           thinkingEnabled,
           reasoningEffort,
+          // The server has no way to know where the user is — a serverless host
+          // runs in UTC. Without this, "today" and "next Friday" resolve in the
+          // wrong zone for anyone outside it. Advisory: the backend validates
+          // it and prefers the saved profile setting when there is one.
+          clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
         signal: controller.signal,
       });

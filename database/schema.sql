@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS users (
   session_minutes INTEGER DEFAULT 60,                   -- session duration in minutes
   expires_at      TIMESTAMPTZ,                          -- account expiry (NULL = never)
   locked_until    TIMESTAMPTZ,                          -- account lock expiry (NULL = not locked)
+  timezone        TEXT,                                 -- IANA zone for AI temporal grounding (NULL = use browser)
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   updated_at      TIMESTAMPTZ DEFAULT NOW()
 );

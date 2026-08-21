@@ -24,6 +24,7 @@ const sendMessage = async (req, res) => {
     ragEnabled = false,
     forceWebSearch = false,
     selectedCollectionIds = [],
+    clientTimeZone,
   } = req.body;
 
   // ── Setup Abort Controller ─────────────────────────────────
@@ -53,6 +54,7 @@ const sendMessage = async (req, res) => {
     ragEnabled,
     forceWebSearch: Boolean(forceWebSearch),
     selectedCollectionIds,
+    clientTimeZone: typeof clientTimeZone === 'string' ? clientTimeZone : undefined,
 
     abortController,
 

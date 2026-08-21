@@ -31,6 +31,7 @@ const { listUserFiles } = require('./fileUpload.service');
 const { logAnalytics } = require('./analytics.service');
 const { calculateBillableTokens } = require('./tokenAccounting.service');
 const { buildFileContext } = require('./toolProcessor.service');
+const { resolveTimeZone, buildTemporalContext, renderTemporalSystemBlock } = require('./temporalContext.service');
 const { runToolLoop } = require('./toolLoop.service');
 const { stripToolTags, classifyError } = require('./chatCleanup.service');
 const { searchWeb } = require('./tools/webSearch.service');
@@ -64,6 +65,7 @@ const {
  * @param {boolean}  [opts.ragEnabled=false]
  * @param {boolean}  [opts.forceWebSearch=false]
  * @param {Array}    [opts.history]             — client-provided history for anonymous
+ * @param {string}   [opts.clientTimeZone]      — browser IANA zone, advisory
  * @param {AbortController} opts.abortController
  *
  * // ---- runtime controls ----
@@ -446,6 +448,10 @@ const runChatPipeline = async (opts) => {
     selectedCollectionIds = [],
     history,
     abortController,
+
+    // IANA zone reported by the browser. Advisory only — validated and ranked
+    // below the user's saved preference in resolveTimeZone.
+    clientTimeZone,
 
     // runtime flags
     exactCacheEnabled = false,
@@ -903,14 +909,39 @@ ${page.text}`)
       : '';
 
     const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}${generalToolsDirective}`;
-    const systemSections = [staticSystem];
-    if (ragContext) systemSections.push(`## Retrieved Context\n${ragContext}`);
-    if (forcedWebContext) systemSections.push(`## Web Search Context\n${forcedWebContext}`);
-    if (urlContext) systemSections.push(`## URL Context\n${urlContext}`);
-    if (fileContext) systemSections.push(`## File Context\n${fileContext}`);
-    if (memoryContext) systemSections.push(memoryContext);
-    if (knowledgeBaseContext) systemSections.push(knowledgeBaseContext);
-    aiMessages.push({ role: 'system', content: systemSections.join('\n\n') });
+
+    // The system prompt is emitted as three ordered blocks rather than one
+    // string. The provider adapters mark only the FIRST system block cacheable
+    // (see extractClaudeParams in services/ai/claude.service.js), so anything
+    // that changes between turns has to sit after it or the cached prefix is
+    // rebuilt on every request:
+    //   0. stable instructions  — cached
+    //   1. temporal grounding   — changes once per TEMPORAL_PRECISION_MS
+    //   2. retrieved context    — changes every turn by nature
+    // Every provider folds multiple system messages correctly (Gemini joins
+    // them into systemInstruction, OpenAI-compatible paths concatenate), so
+    // the split costs nothing where caching is not available.
+    aiMessages.push({ role: 'system', content: staticSystem });
+
+    const { timeZone } = resolveTimeZone({
+      requestTimeZone: clientTimeZone,
+      userTimeZone: user?.timezone,
+    });
+    aiMessages.push({
+      role: 'system',
+      content: renderTemporalSystemBlock(buildTemporalContext({ timeZone })),
+    });
+
+    const volatileSections = [];
+    if (ragContext) volatileSections.push(`## Retrieved Context\n${ragContext}`);
+    if (forcedWebContext) volatileSections.push(`## Web Search Context\n${forcedWebContext}`);
+    if (urlContext) volatileSections.push(`## URL Context\n${urlContext}`);
+    if (fileContext) volatileSections.push(`## File Context\n${fileContext}`);
+    if (memoryContext) volatileSections.push(memoryContext);
+    if (knowledgeBaseContext) volatileSections.push(knowledgeBaseContext);
+    if (volatileSections.length > 0) {
+      aiMessages.push({ role: 'system', content: volatileSections.join('\n\n') });
+    }
 
     // History. The `history` fallback is client-supplied (anonymous sessions have
     // no server-side topic), so it is untrusted: cap the number of turns, coerce

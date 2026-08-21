@@ -55,7 +55,7 @@ router.get('/provider-models/:provider', async (req, res) => {
   }
 });
 
-const chatBodySanitizer = sanitizeBody(['message', 'image', 'providerModelId', 'modelId', 'memoryMode']);
+const chatBodySanitizer = sanitizeBody(['message', 'image', 'providerModelId', 'modelId', 'memoryMode', 'clientTimeZone']);
 
 // POST /api/chat/message — legacy JSON compatibility; /stream is the canonical chat path
 router.post('/message', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer, sendMessage);
@@ -81,6 +81,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
     thinkingEnabled,
     reasoningEffort = null,
     history,
+    clientTimeZone,
   } = req.body;
 
   const user = req.user;
@@ -125,6 +126,7 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
     thinkingEnabled: typeof thinkingEnabled === 'boolean' ? thinkingEnabled : undefined,
     reasoningEffort: typeof reasoningEffort === 'string' ? reasoningEffort : null,
     history,
+    clientTimeZone: typeof clientTimeZone === 'string' ? clientTimeZone : undefined,
     abortController,
 
     ...CANONICAL_CHAT_PIPELINE_FLAGS,

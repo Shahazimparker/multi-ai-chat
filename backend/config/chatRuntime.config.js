@@ -98,7 +98,21 @@ const GRAPHRAG_ENABLED = parseBoolean('GRAPHRAG_ENABLED', true);
 // pulls in loosely-connected material and dilutes the candidate set.
 const GRAPHRAG_MAX_HOPS = parseInteger('GRAPHRAG_MAX_HOPS', 1, 0, 3);
 
+// Temporal grounding. The zone used when a request carries none and the user
+// has saved no preference — deliberately not the container's local zone, which
+// is UTC on every serverless host and would silently answer a Mumbai user in
+// London time. Set it to the deployment's primary business timezone.
+const DEFAULT_TIMEZONE = process.env.APP_DEFAULT_TIMEZONE || 'UTC';
+
+// How finely the injected "now" is rendered. Prompt caching keys on an exact
+// prefix match, so a second-precision clock in the prompt is a guaranteed cache
+// miss on every turn. One minute is well inside what any chat answer needs.
+// Raise it to 300000 (5 min) for a higher cache hit rate on chatty workloads.
+const TEMPORAL_PRECISION_MS = parseInteger('TEMPORAL_PRECISION_MS', 60000, 1000, 3600000);
+
 module.exports = {
+  DEFAULT_TIMEZONE,
+  TEMPORAL_PRECISION_MS,
   ENABLE_ORCHESTRATOR_BRAIN,
   GRAPHRAG_ENABLED,
   GRAPHRAG_MAX_HOPS,

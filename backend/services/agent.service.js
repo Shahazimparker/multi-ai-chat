@@ -9,6 +9,7 @@
 // ============================================================
 
 const { createParser, JSONParser } = require('./outputParser.service');
+const { buildTemporalSystemBlock } = require('./temporalContext.service');
 
 /**
  * Tool definition — describes a tool the agent can use
@@ -152,6 +153,7 @@ class Agent {
     this.approvalHandler = options.approvalHandler || null;
     this.requireApprovalFor = options.requireApprovalFor || [];
     this.tracer = options.tracer || null; // ExecutionTracer instance (optional)
+    this.timeZone = options.timeZone || null; // IANA zone; falls back to DEFAULT_TIMEZONE
   }
 
   _log(message) {
@@ -178,7 +180,9 @@ ${this.tools.getToolDescription()}
 When you have the final answer, respond with:
 {"final_answer": "Your answer here"}
 
-Think carefully and use tools when needed.`;
+Think carefully and use tools when needed.
+
+${buildTemporalSystemBlock({ requestTimeZone: this.timeZone })}`;
   }
 
   /**

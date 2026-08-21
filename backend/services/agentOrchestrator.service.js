@@ -8,6 +8,8 @@
 //          - State and memory management
 // ============================================================
 
+const { buildTemporalSystemBlock } = require('./temporalContext.service');
+
 /**
  * ToolSelectionStrategy — determines which tool to use
  */
@@ -103,6 +105,7 @@ class SmartAgent {
     this.callbackManager = options.callbackManager || null;
     this.memory = options.memory || null;
     this.tracer = options.tracer || null; // ExecutionTracer instance (optional)
+    this.timeZone = options.timeZone || null; // IANA zone; falls back to DEFAULT_TIMEZONE
     this.executionHistory = [];
   }
 
@@ -410,7 +413,9 @@ ${toolDescriptions}
 When you need to use a tool, respond with JSON: {"tool": "tool_name", "args": {...}}
 When you have the final answer, respond with: {"final_answer": "Your answer here"}
 
-Think carefully. Use tools strategically. Provide the best possible answer.`;
+Think carefully. Use tools strategically. Provide the best possible answer.
+
+${buildTemporalSystemBlock({ requestTimeZone: this.timeZone })}`;
   }
 
   /**
