@@ -62,15 +62,19 @@ describe('chain ordering', () => {
     expect(chain[0].model).toContain('gemini');
   });
 
-  it('reaches Mistral through the key that actually works', () => {
-    // The plain MISTRAL_API_KEY in this project returns 401; falling back to a
-    // dead credential would be indistinguishable from having no fallback.
+  it('prefers the background key but still runs on the primary one', () => {
+    // Both keys are free-tier Mistral credentials; the split exists so bulk
+    // ingest does not burn the quota that user-facing chat is using. So the
+    // background key wins when present, but its absence must not cost the free
+    // tier -- MISTRAL_API_KEY is a working fallback, not a dead one.
     delete process.env.MISTRAL_SUMMARY_API_KEY;
-    process.env.MISTRAL_API_KEY = 'legacy-key';
-    expect(visionChain().find((c) => c.provider === 'mistral').apiKey).toBe('legacy-key');
+    process.env.MISTRAL_API_KEY = 'primary-key';
+    const fallback = visionChain().find((c) => c.provider === 'mistral');
+    expect(fallback.apiKey).toBe('primary-key');
+    expect(fallback.tier).toBe('free');
 
-    process.env.MISTRAL_SUMMARY_API_KEY = 'working-key';
-    expect(visionChain().find((c) => c.provider === 'mistral').apiKey).toBe('working-key');
+    process.env.MISTRAL_SUMMARY_API_KEY = 'background-key';
+    expect(visionChain().find((c) => c.provider === 'mistral').apiKey).toBe('background-key');
   });
 
   it('drops providers with no key configured', () => {

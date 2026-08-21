@@ -141,7 +141,15 @@ const buildMessages = (base64Image, mimeType) => ([
 const runLocalOcr = async (buffer) => {
   try {
     const { createWorker } = require('tesseract.js');
-    const worker = await createWorker('eng');
+    // cachePath defaults to '.', the deployment directory, which is read-only on
+    // serverless hosts. The write failure is swallowed by tesseract, so nothing
+    // breaks — it just means eng.traineddata is re-fetched from the jsdelivr CDN
+    // on every cold start. That is a network dependency on the one path that
+    // exists for when the network providers are already unavailable. /tmp is
+    // writable, so the cache survives at least within a warm container.
+    const worker = await createWorker('eng', undefined, {
+      cachePath: process.env.OCR_CACHE_DIR || require('os').tmpdir(),
+    });
     try {
       const { data } = await worker.recognize(buffer);
       const text = String(data?.text || '').trim();
