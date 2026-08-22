@@ -10,7 +10,7 @@ import './UserModal.css';
 
 const DEFAULT_FORM = {
   username: '', email: '', password: '', role: 'user',
-  total_tokens: 100000, per_query_limit: 2000,
+  total_tokens: 1000000, per_query_limit: 16000,
   session_minutes: 60, is_active: true, expires_at: '',
 };
 

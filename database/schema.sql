@@ -17,9 +17,9 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash   TEXT NOT NULL,                        -- bcrypt hashed
   role            TEXT NOT NULL DEFAULT 'user',         -- 'user' | 'admin'
   is_active       BOOLEAN DEFAULT true,
-  total_tokens    INTEGER DEFAULT 100000,               -- lifetime token quota
+  total_tokens    INTEGER DEFAULT 1000000,              -- lifetime token quota (~100 turns at measured per-turn cost)
   used_tokens     INTEGER DEFAULT 0,                    -- tokens consumed so far
-  per_query_limit INTEGER DEFAULT 2000,                 -- max tokens per single query
+  per_query_limit INTEGER DEFAULT 16000,                -- max PROMPT tokens per query; also clamps the RAG/history budget
   session_minutes INTEGER DEFAULT 60,                   -- session duration in minutes
   expires_at      TIMESTAMPTZ,                          -- account expiry (NULL = never)
   locked_until    TIMESTAMPTZ,                          -- account lock expiry (NULL = not locked)
@@ -386,7 +386,7 @@ VALUES (
   '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TiGMoNiF1tZGWtOUMpZ4TzJh3.Oy',
   'admin',
   9999999,
-  9999,
+  32000,
   480
 ) ON CONFLICT (email) DO NOTHING;
 

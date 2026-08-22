@@ -160,13 +160,23 @@ const MODELS = {
   // ── Mistral AI ────────────────────────────────────────────
   // Not reasoning models — Magistral is Mistral's reasoning line and is not
   // wired up here. No `reasoning` block, so the UI greys the Thinking button.
+  // Mistral's free tier is shaped the opposite way to Gemini's and Groq's:
+  // token-rich (~1B/month) but request-poor (~2 requests/minute). The scarce
+  // resource is REQUESTS, not tokens, so capping context low is exactly wrong
+  // here — it wastes the abundant resource without easing the scarce one.
+  // 32000 lets each of those few requests carry real context. per_query_limit
+  // (16000 by default) still clamps the prompt below this, so a full request
+  // lands near 20K tokens; at 2 RPM that stays inside the observed ~50K TPM.
+  // Groq and Gemini are left at 5999 deliberately — their free tiers meter
+  // daily tokens and daily requests respectively, so bigger prompts there
+  // would burn the scarce resource directly.
   'mistral-small': {
     label: 'Mistral Small (Free)',
     provider: 'mistral',
     apiKey: process.env.MISTRAL_API_KEY,
     model: 'mistral-small-latest',
     paid: false,
-    maxTokens: 5999,
+    maxTokens: 32000,
   },
   'mistral-medium': {
     label: 'Mistral Medium (Free)',
@@ -174,7 +184,7 @@ const MODELS = {
     apiKey: process.env.MISTRAL_API_KEY,
     model: 'mistral-medium-latest',
     paid: false,
-    maxTokens: 5999,
+    maxTokens: 32000,
   },
 
   // ── Anthropic Claude ──────────────────────────────────────

@@ -33,7 +33,7 @@ const createUser = async (req, res) => {
   try {
     const {
       email, username, password, role = 'user',
-      total_tokens = 100000, per_query_limit = 2000,
+      total_tokens = 1000000, per_query_limit = 16000,
       session_minutes = 60, expires_at = null,
     } = req.body;
 
