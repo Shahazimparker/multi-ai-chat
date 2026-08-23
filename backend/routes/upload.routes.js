@@ -9,8 +9,11 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
+const { createRateLimitStore } = require('../services/rateLimitStore.service');
 
 // ── Rate limiting ────────────────────────────────────────────
+// Postgres-backed (see rateLimitStore.service.js) so counts survive across
+// Vercel's per-instance memory instead of resetting on every cold start.
 // Baseline for every /api/upload/* route, keyed by IP. Must stay well above
 // the frontend's 2s poll of /status/:sessionId (~30 req/min per tab) so a user
 // with several tabs open, or an office behind one NAT address, is not blocked.
@@ -20,6 +23,7 @@ const uploadBaseLimiter = rateLimit({
   message: { error: 'Too many upload requests. Please slow down.' },
   standardHeaders: true,
   legacyHeaders: false,
+  store: createRateLimitStore('upload-base'),
 });
 
 // Stricter cap for the expensive endpoints (parsing, OCR, file generation).
@@ -32,6 +36,7 @@ const uploadHeavyLimiter = rateLimit({
   message: { error: 'Too many file processing requests. Please wait a few minutes.' },
   standardHeaders: true,
   legacyHeaders: false,
+  store: createRateLimitStore('upload-heavy'),
 });
 
 router.use(uploadBaseLimiter);
@@ -201,6 +206,7 @@ router.post('/file', requireAuth, uploadHeavyLimiter, uploadTimeout, uploadSingl
     sessionId = crypto.randomUUID();
     uploadSessions.set(sessionId, {
       controller: abortController,
+      userId: req.user.id,
       status: 'processing',
       progress: 0,
       message: 'Starting...',
@@ -230,6 +236,19 @@ router.post('/file', requireAuth, uploadHeavyLimiter, uploadTimeout, uploadSingl
     const { topicId, modelId } = req.body;
     const fileName = req.file.originalname;
     const fileType = getSupportedFileType(req.file.originalname);
+
+    // An unrecognized extension falls into documentLoader's catch-all path, which
+    // returns a "[Binary file]" placeholder or garbled decoded bytes instead of
+    // failing — so instead of "processing" garbage, reject up front here.
+    if (fileType === 'other') {
+      updateSession({ status: 'error', error: 'Unsupported file type' });
+      try {
+        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      } catch (cleanupErr) {
+        console.warn('[Upload] Failed to clean temp file:', cleanupErr.message);
+      }
+      return res.status(400).json({ error: `Unsupported file type for "${fileName}". Supported: text, code, PDF, Word, Excel/CSV, images and ZIP.` });
+    }
 
     // ── SSE setup ──
     try {
@@ -461,18 +480,14 @@ router.get('/download/:fileId', requireAuth, async (req, res) => {
       const safeName = sanitizeFilename(fileName);
       const mime = getMimeType(safeName);
       const bin = fileData.original_file_data;
-      console.log(`[Download] fileId=${fileId} fileName=${safeName} binType=${typeof bin} binLen=${bin?.length || bin?.byteLength || '?'} isString=${typeof bin === 'string'} first100=${typeof bin === 'string' ? bin.slice(0, 100) : 'NOT STRING'}`);
       res.setHeader('Content-Type', mime);
       res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
       // bin can be base64 string, Buffer, or bytea hex — normalize
       if (typeof bin === 'string' && /^[A-Za-z0-9+/=]+$/.test(bin)) {
-        console.log('[Download] Decoding as base64');
         res.send(Buffer.from(bin, 'base64'));
       } else if (typeof bin === 'string' && bin.startsWith('\\x')) {
-        console.log('[Download] Decoding as hex');
         res.send(Buffer.from(bin.slice(2), 'hex'));
       } else {
-        console.log('[Download] Using as raw bytes, isBuffer:', Buffer.isBuffer(bin), 'isArray:', Array.isArray(bin));
         res.send(Buffer.from(bin));
       }
       return;
@@ -588,7 +603,9 @@ router.post('/generate-ppt', requireAuth, uploadHeavyLimiter, async (req, res) =
 router.get('/status/:sessionId', requireAuth, async (req, res) => {
   const { sessionId } = req.params;
   const session = uploadSessions.get(sessionId);
-  if (!session) {
+  // Treat another user's session the same as no session — a 403 here would
+  // confirm the ID is live, turning it into an existence oracle.
+  if (!session || session.userId !== req.user.id) {
     return res.json({ active: false });
   }
   res.json({
@@ -608,7 +625,9 @@ router.get('/status/:sessionId', requireAuth, async (req, res) => {
 router.post('/cancel/:sessionId', requireAuth, async (req, res) => {
   const { sessionId } = req.params;
   const session = uploadSessions.get(sessionId);
-  if (!session) {
+  // Same 404 whether the session doesn't exist or just isn't this user's —
+  // a distinct "forbidden" response would confirm the ID is live.
+  if (!session || session.userId !== req.user.id) {
     return res.status(404).json({ error: 'Upload session not found or already completed' });
   }
   console.log(`[Upload] Explicit cancel for session: ${sessionId}`);

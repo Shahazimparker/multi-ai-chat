@@ -18,26 +18,24 @@ const rag2Service = require('./rag2.service');
 /**
  * Wait for approval with polling (non-blocking runtime compatibility)
  */
-const POLL_INTERVAL_MS = 500;
+const POLL_INTERVAL_START_MS = 500;
+const POLL_INTERVAL_MAX_MS = 3000;
 const APPROVAL_TIMEOUT_MS = 120000; // 2 minutes
 
 const waitForUserApproval = async (requestId, abortSignal) => {
   const handler = approvalManager.getHandler('default');
   const startTime = Date.now();
+  let pollInterval = POLL_INTERVAL_START_MS;
 
   while (Date.now() - startTime < APPROVAL_TIMEOUT_MS) {
     if (abortSignal?.aborted) return { approved: false, reason: 'aborted' };
 
     try {
-      const request = await handler.getRequest(requestId);
-      if (!request) {
-        // Try loading from DB
-        const loaded = await handler._loadRequest(requestId);
-        if (!loaded) {
-          await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
-          continue;
-        }
-      }
+      // The response to this request is frequently written from a different
+      // lambda instance than the one polling here, so every poll must hit the
+      // store — a same-instance cache read would just replay whatever status
+      // this instance saw first and never notice an approval granted elsewhere.
+      const request = await handler.getRequestFresh(requestId);
 
       if (request?.status === 'approved') {
         const instructions = (request.reason && request.reason !== 'Approved from chat') ? request.reason : '';
@@ -49,7 +47,9 @@ const waitForUserApproval = async (requestId, abortSignal) => {
       console.warn('[ToolProcessor] Approval poll error:', err.message);
     }
 
-    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+    await new Promise(r => setTimeout(r, pollInterval));
+    // Back off since each poll is now a DB round-trip, not a Map lookup.
+    pollInterval = Math.min(pollInterval * 2, POLL_INTERVAL_MAX_MS);
   }
 
   return { approved: false, reason: 'Approval timed out' };
@@ -119,11 +119,22 @@ const buildSummary = (toolName, context) => {
   return lines.join('\n');
 };
 
+// `instructions` is free text the user typed into the approval "Other" box and
+// it is interpolated between [USER MODIFICATION REQUEST] markers. Nothing stops
+// a user typing the closing marker themselves and continuing as if their text
+// were outside the frame, so neutralise any literal marker before it reaches
+// the prompt. Cheap, and it keeps the frame the only thing that closes it.
+const defangInstructionDelimiters = (text) =>
+  String(text ?? '').replace(
+    /\[\s*(?:\/|END\s+)?USER\s+MODIFICATION\s+REQUEST\s*\]/gi,
+    '(user modification request)',
+  );
+
 const makeInstructionsResult = (matchStr, reply, toolName, instructions) => ({
   handled: true,
   newMessages: [
     { role: 'assistant', content: (matchStr ? reply.replace(matchStr, '').trim() : reply.trim()) || `[${toolName} generation paused for revision]` },
-    { role: 'user', content: `[USER MODIFICATION REQUEST]\nUser approved but requested these changes before generating:\n"${instructions}"\nPlease revise your plan to incorporate these changes and regenerate.\n[END USER MODIFICATION REQUEST]` },
+    { role: 'user', content: `[USER MODIFICATION REQUEST]\nUser approved but requested these changes before generating:\n"${defangInstructionDelimiters(instructions)}"\nPlease revise your plan to incorporate these changes and regenerate.\n[END USER MODIFICATION REQUEST]` },
   ],
   embedTokens: 0,
 });
@@ -131,7 +142,7 @@ const makeInstructionsResult = (matchStr, reply, toolName, instructions) => ({
 /**
  * Request human approval before executing a generation tool
  */
-const requestToolApproval = async (toolName, context, onStatus, abortSignal = null) => {
+const requestToolApproval = async (toolName, context, onStatus, abortSignal = null, userId = null) => {
   const toolLabels = {
     GENERATE_PPT: 'PowerPoint presentation',
     GENERATE_IMAGE: 'image',
@@ -149,6 +160,7 @@ const requestToolApproval = async (toolName, context, onStatus, abortSignal = nu
 
   try {
     const request = await approvalManager.getHandler('default').requestApproval({
+      userId,
       type: 'approval',
       title: `Generate ${toolLabel}`,
       description: `The AI wants to generate a ${toolLabel}. Click approve to continue or cancel to stop.`,
@@ -179,7 +191,9 @@ const requestToolApproval = async (toolName, context, onStatus, abortSignal = nu
     return result;
   } catch (err) {
     console.error(`[ToolProcessor] Approval request failed for ${toolName}:`, err.message);
-    return { approved: true, reason: '' }; // Fall through on error
+    // A security gate must fail CLOSED: if the approval request itself couldn't
+    // even be created (DB down, table missing), the tool must not run unsupervised.
+    return { approved: false, reason: 'blocked — the approval system is unavailable, please try again' };
   }
 };
 
@@ -431,7 +445,7 @@ The knowledge base search failed. Answer from the context you already have and t
     const prompt = generateImageMatch[1].trim();
 
     // Request human approval before executing
-    const approval = await requestToolApproval('GENERATE_IMAGE', { prompt }, onStatus, abortController?.signal);
+    const approval = await requestToolApproval('GENERATE_IMAGE', { prompt }, onStatus, abortController?.signal, user?.id);
     if (!approval.approved) {
       return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateImageMatch[0], '').trim() || '[Image generation]' }, { role: 'user', content: `[IMAGE GENERATION RESULT]\nImage generation was ${approval.reason || 'cancelled'}.\n[END IMAGE GENERATION RESULT]` }], embedTokens: 0 };
     }
@@ -472,7 +486,7 @@ The knowledge base search failed. Answer from the context you already have and t
   if (pptToolCall) {
     try {
       const parsed = JSON.parse(String(pptToolCall.function.arguments || '{}'));
-      const pptApproval = await requestToolApproval('GENERATE_PPT', { title: parsed?.title, theme: parsed?.theme || parsed?.style, slides: parsed?.slides }, onStatus, abortController?.signal);
+      const pptApproval = await requestToolApproval('GENERATE_PPT', { title: parsed?.title, theme: parsed?.theme || parsed?.style, slides: parsed?.slides }, onStatus, abortController?.signal, user?.id);
       if (!pptApproval.approved) {
         return { handled: true, newMessages: [{ role: 'assistant', content: reply.trim() || '[PPT generation]' }, { role: 'user', content: `[PPT GENERATION RESULT]\nPresentation generation was ${pptApproval.reason || 'cancelled'}.\n[END PPT GENERATION RESULT]` }], embedTokens: 0 };
       }
@@ -511,7 +525,7 @@ The knowledge base search failed. Answer from the context you already have and t
     }
 
     // Request human approval before executing
-    const approval = await requestToolApproval('GENERATE_PPT', { title: parsed?.title, theme: parsed?.theme || parsed?.style, slides: parsed?.slides }, onStatus, abortController?.signal);
+    const approval = await requestToolApproval('GENERATE_PPT', { title: parsed?.title, theme: parsed?.theme || parsed?.style, slides: parsed?.slides }, onStatus, abortController?.signal, user?.id);
     if (!approval.approved) {
       return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generatePPTMatch[0], '').trim() || '[PPT generation]' }, { role: 'user', content: `[PPT GENERATION RESULT]\nPresentation generation was ${approval.reason || 'cancelled'}.\n[END PPT GENERATION RESULT]` }], embedTokens: 0 };
     }
@@ -553,7 +567,7 @@ The knowledge base search failed. Answer from the context you already have and t
       const sections = Array.isArray(parsed.sections) ? parsed.sections : [];
       if (sections.length === 0) throw new Error('No sections provided in PDF request.');
 
-      const pdfApproval = await requestToolApproval('GENERATE_PDF', { title, sections }, onStatus, abortController?.signal);
+      const pdfApproval = await requestToolApproval('GENERATE_PDF', { title, sections }, onStatus, abortController?.signal, user?.id);
       if (!pdfApproval.approved) {
         return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generatePDFMatch[0], '').trim() || '[PDF generation]' }, { role: 'user', content: `[PDF GENERATION RESULT]\nPDF generation was ${pdfApproval.reason || 'cancelled'}.\n[END PDF GENERATION RESULT]` }], embedTokens: 0 };
       }
@@ -582,7 +596,7 @@ The knowledge base search failed. Answer from the context you already have and t
       const sheets = Array.isArray(parsed.sheets) ? parsed.sheets : [];
       if (sheets.length === 0) throw new Error('No sheets provided in Excel request.');
 
-      const excelApproval = await requestToolApproval('GENERATE_EXCEL', { title, sheets }, onStatus, abortController?.signal);
+      const excelApproval = await requestToolApproval('GENERATE_EXCEL', { title, sheets }, onStatus, abortController?.signal, user?.id);
       if (!excelApproval.approved) {
         return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateExcelMatch[0], '').trim() || '[Excel generation]' }, { role: 'user', content: `[EXCEL GENERATION RESULT]\nSpreadsheet generation was ${excelApproval.reason || 'cancelled'}.\n[END EXCEL GENERATION RESULT]` }], embedTokens: 0 };
       }
@@ -611,7 +625,7 @@ The knowledge base search failed. Answer from the context you already have and t
       const sections = Array.isArray(parsed.sections) ? parsed.sections : [];
       if (sections.length === 0) throw new Error('No sections provided in DOCX request.');
 
-      const docxApproval = await requestToolApproval('GENERATE_DOCX', { title, sections }, onStatus, abortController?.signal);
+      const docxApproval = await requestToolApproval('GENERATE_DOCX', { title, sections }, onStatus, abortController?.signal, user?.id);
       if (!docxApproval.approved) {
         return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateDocxMatch[0], '').trim() || '[DOCX generation]' }, { role: 'user', content: `[DOCX GENERATION RESULT]\nDocument generation was ${docxApproval.reason || 'cancelled'}.\n[END DOCX GENERATION RESULT]` }], embedTokens: 0 };
       }
@@ -640,7 +654,7 @@ The knowledge base search failed. Answer from the context you already have and t
       const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
       if (headers.length === 0) throw new Error('No headers provided in CSV request.');
 
-      const csvApproval = await requestToolApproval('GENERATE_CSV', { headers, rowCount: rows.length }, onStatus, abortController?.signal);
+      const csvApproval = await requestToolApproval('GENERATE_CSV', { headers, rowCount: rows.length }, onStatus, abortController?.signal, user?.id);
       if (!csvApproval.approved) {
         return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateCSVMatch[0], '').trim() || '[CSV generation]' }, { role: 'user', content: `[CSV GENERATION RESULT]\nCSV generation was ${csvApproval.reason || 'cancelled'}.\n[END CSV GENERATION RESULT]` }], embedTokens: 0 };
       }
@@ -671,7 +685,7 @@ The knowledge base search failed. Answer from the context you already have and t
       const data = Array.isArray(parsed.data) ? parsed.data : [];
       if (labels.length === 0 || data.length === 0) throw new Error('Labels and data are required for chart.');
 
-      const chartApproval = await requestToolApproval('GENERATE_CHART', { type, title, labels }, onStatus, abortController?.signal);
+      const chartApproval = await requestToolApproval('GENERATE_CHART', { type, title, labels }, onStatus, abortController?.signal, user?.id);
       if (!chartApproval.approved) {
         return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateChartMatch[0], '').trim() || '[Chart generation]' }, { role: 'user', content: `[CHART GENERATION RESULT]\nChart generation was ${chartApproval.reason || 'cancelled'}.\n[END CHART GENERATION RESULT]` }], embedTokens: 0 };
       }
@@ -700,7 +714,7 @@ The knowledge base search failed. Answer from the context you already have and t
       const body = parsed.body || '';
       const css = parsed.css || '';
 
-      const htmlApproval = await requestToolApproval('GENERATE_HTML', { title }, onStatus, abortController?.signal);
+      const htmlApproval = await requestToolApproval('GENERATE_HTML', { title }, onStatus, abortController?.signal, user?.id);
       if (!htmlApproval.approved) {
         return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateHTMLMatch[0], '').trim() || '[HTML generation]' }, { role: 'user', content: `[HTML GENERATION RESULT]\nHTML generation was ${htmlApproval.reason || 'cancelled'}.\n[END HTML GENERATION RESULT]` }], embedTokens: 0 };
       }
@@ -727,7 +741,7 @@ The knowledge base search failed. Answer from the context you already have and t
       try { parsed = JSON.parse(jsonBody); } catch { throw new Error('Invalid JSON structure.'); }
       const data = parsed.data || parsed;
 
-      const jsonApproval = await requestToolApproval('GENERATE_JSON', {}, onStatus, abortController?.signal);
+      const jsonApproval = await requestToolApproval('GENERATE_JSON', {}, onStatus, abortController?.signal, user?.id);
       if (!jsonApproval.approved) {
         return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateJSONMatch[0], '').trim() || '[JSON generation]' }, { role: 'user', content: `[JSON GENERATION RESULT]\nJSON generation was ${jsonApproval.reason || 'cancelled'}.\n[END JSON GENERATION RESULT]` }], embedTokens: 0 };
       }
@@ -755,7 +769,7 @@ The knowledge base search failed. Answer from the context you already have and t
       const content = parsed.content || '';
       const title = parsed.title || '';
 
-      const mdApproval = await requestToolApproval('GENERATE_MD', { title }, onStatus, abortController?.signal);
+      const mdApproval = await requestToolApproval('GENERATE_MD', { title }, onStatus, abortController?.signal, user?.id);
       if (!mdApproval.approved) {
         return { handled: true, newMessages: [{ role: 'assistant', content: reply.replace(generateMDMatch[0], '').trim() || '[Markdown generation]' }, { role: 'user', content: `[MD GENERATION RESULT]\nMarkdown generation was ${mdApproval.reason || 'cancelled'}.\n[END MD GENERATION RESULT]` }], embedTokens: 0 };
       }

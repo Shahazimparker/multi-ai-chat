@@ -9,8 +9,11 @@ const supabase = require('../config/supabase');
 const { getCookieValue } = require('../utils/cookies');
 const {
   AUTH_COOKIE_NAME,
+  CSRF_COOKIE_NAME,
   getSessionSeconds,
   issueAuthCookie,
+  issueCsrfCookie,
+  parseRememberMe,
 } = require('../utils/authCookie');
 
 // Re-mint the cookie once the token is past its half-life. Doing it on every
@@ -77,11 +80,24 @@ const createAuthMiddleware = ({ optional = false } = {}) => async (req, res, nex
     // requests are refreshed — a Bearer caller holds its own token and would
     // never see the new one.
     if (!bearerToken && cookieToken) {
+      const csrfCookie = getCookieValue(req.headers.cookie, CSRF_COOKIE_NAME);
       const secondsLeft = decoded.exp - Math.floor(Date.now() / 1000);
       if (secondsLeft < getSessionSeconds(user) * REFRESH_AFTER_FRACTION) {
         // Falsy for tokens minted before rememberMe was in the payload, which
         // degrades to a session cookie rather than failing the request.
-        issueAuthCookie(res, user, decoded.rememberMe);
+        // The caller's existing CSRF token rides along so the refresh extends
+        // its lifetime without invalidating requests already in flight.
+        issueAuthCookie(res, user, decoded.rememberMe, csrfCookie);
+      } else if (!csrfCookie) {
+        // A valid session with no CSRF cookie — one that predates the
+        // double-submit check, or whose cookie was wiped. The CSRF middleware
+        // runs app-wide before this one, so it has already turned away any
+        // write; repairing it here means a plain GET (the app issues one on
+        // mount) heals the session before the user ever sees a 403.
+        const remember = parseRememberMe(decoded.rememberMe);
+        issueCsrfCookie(res, {
+          maxAge: remember ? getSessionSeconds(user) * 1000 : undefined,
+        });
       }
     }
 

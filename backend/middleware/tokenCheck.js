@@ -3,15 +3,14 @@
 // PURPOSE: Blocks requests if user has exceeded their token quota
 // ============================================================
 
-const ANONYMOUS_TOKEN_LIMIT = parseInt(process.env.ANONYMOUS_TOKEN_LIMIT, 10) || 10000;
-
 const tokenCheck = (req, res, next) => {
   const user = req.user;
 
+  // Every route mounting this runs requireAuth first, so a missing req.user
+  // here means the auth guard was skipped, not that the caller is
+  // legitimately anonymous — fail closed instead of granting quota.
   if (!user) {
-    // Anonymous users get a hard token cap per request session
-    req.tokenRemaining = ANONYMOUS_TOKEN_LIMIT;
-    return next();
+    return res.status(401).json({ error: 'Authentication required' });
   }
 
   const remaining = user.total_tokens - user.used_tokens;

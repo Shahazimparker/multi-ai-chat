@@ -75,11 +75,12 @@ const defaultAnalytics = {
   ],
 };
 
-const json = async (route: Route, payload: unknown, status = 200) => {
+const json = async (route: Route, payload: unknown, status = 200, setCookie?: string) => {
   await route.fulfill({
     status,
     contentType: 'application/json',
     body: JSON.stringify(payload),
+    ...(setCookie ? { headers: { 'set-cookie': setCookie } } : {}),
   });
 };
 
@@ -142,7 +143,15 @@ export async function installMockApi(page: Page, options: MockOptions = {}) {
             expires_at: null,
             is_active: true,
           };
-      return json(route, { csrfToken: 'csrf-token', user: state.loggedInUser });
+      // The real server sets this as a JS-readable cookie, and the client now
+      // reads the header value from there rather than from the JSON body.
+      // Mirror that, or the mock would exercise a path production never takes.
+      return json(
+        route,
+        { csrfToken: 'csrf-token', user: state.loggedInUser },
+        200,
+        'csrf_token=csrf-token; Path=/; SameSite=Lax'
+      );
     }
 
     if (path === '/auth/logout' && method === 'POST') {

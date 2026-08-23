@@ -20,8 +20,16 @@ if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
   process.exit(1);
 }
 if (process.env.JWT_SECRET === 'your_super_secret_jwt_key_min_32_chars_change_this') {
-  console.error('[FATAL] Change the default JWT_SECRET in your .env file before deploying');
-  process.exit(1);
+  if (process.env.NODE_ENV === 'production') {
+    console.error('[FATAL] JWT_SECRET is still the .env.example placeholder — set a real secret before deploying.');
+    process.exit(1);
+  }
+  // First run on a copied .env.example: boot with a temporary random secret so
+  // onboarding doesn't hard-crash. It is regenerated on every restart, so any
+  // session it signs becomes invalid as soon as the server restarts.
+  const crypto = require('crypto');
+  process.env.JWT_SECRET = crypto.randomBytes(32).toString('hex');
+  console.warn('[WARN] JWT_SECRET is the .env.example placeholder; generated a temporary random secret for this run. Set a permanent JWT_SECRET in backend/.env (e.g. `openssl rand -hex 32`).');
 }
 
 // ── Global crash logging ──
@@ -47,11 +55,12 @@ const knowledgeRoutes = require('./routes/knowledge.routes');
 // ── Periodic cache cleanup ─────────────────────────────────
 const { cleanupStaleCache } = require('./services/cache.service');
 const CACHE_CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // 24h
-setInterval(() => {
+const cleanupTimer = setInterval(() => {
   cleanupStaleCache(30, 2).catch(err =>
     console.warn('[Cache] Periodic cleanup failed:', err.message)
   );
 }, CACHE_CLEANUP_INTERVAL);
+if (typeof cleanupTimer.unref === 'function') cleanupTimer.unref();
 // Run once on startup too
 cleanupStaleCache(30, 2).catch(err =>
   console.warn('[Cache] Startup cleanup failed:', err.message)
@@ -97,7 +106,7 @@ app.use(cors({
 }));
 
 // ── Handle OPTIONS preflight explicitly (required by Vercel serverless) ──
-app.options('*', (req, res) => res.sendStatus(204));
+app.options('/*splat', (req, res) => res.sendStatus(204));
 app.use(csrfProtection);
 
 // ── Health check (used by Vercel / uptime monitors) ────────

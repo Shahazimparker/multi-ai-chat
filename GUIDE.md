@@ -16,8 +16,8 @@ This is the main setup and maintenance guide for the current repo state.
 - Authenticated chat flows
 - **Real provider token streaming** — all 10 providers stream native tokens via SSE. No artificial `setTimeout` delays. Tool-call rounds are handled transparently: tool status events are sent during processing, then the final answer streams in naturally.
 - Shared pipeline (`chatPipeline.service.js`) keeps legacy JSON and streaming chat behavior aligned
-- OrchestratorBrain is wired into `/api/chat/stream` as a real pre-stream runtime layer using the custom graph, agent, callback, tracing, parser, retriever, vector-store, and flow-visibility services.
-- Human approval checkpoints are persisted in Supabase (`human_approvals`) and controlled through `/api/approvals`, so Vercel/serverless invocations do not wait in memory for a human response.
+- OrchestratorBrain is an optional pre-stream runtime layer (custom graph, agent, callback, tracing, parser, retriever, vector-store, flow-visibility services), off by default behind `ENABLE_ORCHESTRATOR_BRAIN=false`.
+- Human approval checkpoints are persisted in Supabase (`human_approvals`) and controlled through `/api/approval`, so Vercel/serverless invocations do not wait in memory for a human response.
 - RAG with hybrid reranking (cosine+BM25+Jaccard), semantic cache, token accounting, context summarization, and cross-chat memory with hybrid reranking
 - File upload, search, and abort cleanup
 - Upload embedding retry safety: when embedding provider returns max-context errors, chunks are retried with smaller adaptive splits.

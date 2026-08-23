@@ -43,6 +43,38 @@ vi.spyOn(fileUploadService, 'saveGeneratedBinaryFile').mockImplementation(
 const { processToolCall } = require('../../services/toolProcessor.service');
 const { approvalManager } = require('../../services/approvalManager.shared');
 
+// The default handler is wired to the real Supabase client, which resolves to
+// nothing reachable in this test env (see __tests__/setup.js: SUPABASE_URL is
+// a placeholder). Every persist/read used to fail silently and, before the
+// approval gate was fixed to fail CLOSED, that failure was swallowed into an
+// automatic approval — which is exactly why these GENERATE_* tests looked
+// green without the store or `autoApprove` below ever doing real work. Give
+// the handler an in-memory store so the approve round-trip actually happens,
+// the same way it would against a real, reachable database.
+const memoryApprovalStore = (() => {
+  const rows = new Map();
+  const api = {
+    upsert: async (payload) => {
+      rows.set(payload.id, { created_at: new Date().toISOString(), ...rows.get(payload.id), ...payload });
+      return { data: rows.get(payload.id), error: null };
+    },
+    update: (patch) => ({
+      eq: async (_field, id) => {
+        rows.set(id, { ...rows.get(id), ...patch });
+        return { data: rows.get(id), error: null };
+      },
+    }),
+    select: () => ({
+      eq: (field, value) => ({
+        maybeSingle: async () => ({ data: [...rows.values()].find((row) => row[field] === value) || null, error: null }),
+        order: async () => ({ data: [...rows.values()].filter((row) => row[field] === value), error: null }),
+      }),
+    }),
+  };
+  return { from: () => api, rows };
+})();
+approvalManager.getHandler('default').store = memoryApprovalStore;
+
 // Auto-approves any approval_request event so GENERATE_* tests don't wait for human input.
 // Uses the real approvalManager — not a mock — matching production behavior.
 const autoApprove = (event) => {
@@ -306,5 +338,47 @@ describe('processToolCall', () => {
       expect(result.generatedMedia.length).toBeGreaterThan(0);
       expect(result.generatedMedia[0].file_type).toBe('md');
     }, 15000);
+  });
+
+  describe('approval gate security', () => {
+    // Bug C: requestApproval must record who asked, so ownership can be
+    // enforced later at the HTTP layer (approval.controller.js).
+    it('threads the calling user id into the persisted approval row', async () => {
+      const userId = '023fec25-c86b-4b51-9d93-36f661ae5a67';
+      const result = await processToolCall({
+        ...baseArgs,
+        user: { id: userId },
+        onStatus: autoApprove,
+        reply: '[GENERATE_IMAGE:prompt=a red bicycle]',
+      });
+
+      expect(result.handled).toBe(true);
+      const persisted = [...memoryApprovalStore.rows.values()].find((r) => r.context?.tool === 'GENERATE_IMAGE');
+      expect(persisted?.user_id).toBe(userId);
+    });
+
+    // Bug B: a security gate must fail CLOSED. If the approval request can't
+    // even be created (DB down, table missing), the tool must not run.
+    it('denies the tool instead of running it when creating the approval request throws', async () => {
+      const handler = approvalManager.getHandler('default');
+      const spy = vi.spyOn(handler, 'requestApproval')
+        .mockRejectedValueOnce(new Error('relation "human_approvals" does not exist'));
+
+      try {
+        const jsonJson = JSON.stringify({ data: { key: 'value' } });
+        const result = await processToolCall({
+          ...baseArgs,
+          user: { id: '023fec25-c86b-4b51-9d93-36f661ae5a67' },
+          onStatus: autoApprove,
+          reply: `[GENERATE_JSON]${jsonJson}[/GENERATE_JSON]`,
+        });
+
+        expect(result.handled).toBe(true);
+        expect(result.generatedMedia).toBeUndefined();
+        expect(result.newMessages[1].content).toContain('JSON generation was blocked');
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 });

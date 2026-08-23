@@ -16,8 +16,8 @@ Unified AI chat platform with authentication, file-aware chat (RAG), **real prov
 - Primary chat endpoint: `/api/chat/stream` (SSE with real provider token streaming). `/api/chat/message` is kept only as legacy JSON compatibility.
 - **Real streaming**: All 10 providers stream native tokens. No artificial `setTimeout` typewriter delays. Tool-call rounds send status events, then the final answer streams in naturally.
 - **Shared pipeline**: `chatPipeline.service.js` keeps legacy JSON and streaming chat behavior aligned
-- **OrchestratorBrain**: `/api/chat/stream` initializes the real custom framework runtime (graph workflow, SmartAgent, callbacks, tracing, flow dashboard, parser, retriever, and vector store) before provider streaming; covered by no-mock unit tests.
-- **Deploy-safe human approvals**: approval requests persist in Supabase via `human_approvals`; API approval/rejection runs through `/api/approvals` without blocking serverless invocations.
+- **OrchestratorBrain** (off by default): an optional custom framework runtime (graph workflow, SmartAgent, callbacks, tracing, flow dashboard, parser, retriever, vector store) gated behind `ENABLE_ORCHESTRATOR_BRAIN=false`; its telemetry is not consumed by the frontend.
+- **Deploy-safe human approvals**: approval requests persist in Supabase via `human_approvals`; API approval/rejection runs through `/api/approval` without blocking serverless invocations.
 - Authenticated chat flows
 - Semantic query cache, RAG context with hybrid reranking (cosine+BM25+Jaccard), history summarization, cross-chat memory with hybrid reranking
 - File upload/search integration

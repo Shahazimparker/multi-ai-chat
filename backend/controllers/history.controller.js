@@ -119,6 +119,15 @@ const renameTopic = async (req, res) => {
       .select();
 
     if (error) return res.status(500).json({ error: error.message });
+
+    // `.update()` with no matching row resolves to `{ data: [] }` rather than
+    // an error, so the empty-array case must be handled explicitly — otherwise
+    // renaming a missing or unowned topic reports `{ success: true, topic:
+    // undefined }` with HTTP 200.
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'Topic not found' });
+    }
+
     res.json({ success: true, topic: data[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });

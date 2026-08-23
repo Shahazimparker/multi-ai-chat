@@ -5,6 +5,7 @@ const {
   resolveTimeZone,
   buildTemporalContext,
   renderTemporalSystemBlock,
+  zoneCache,
 } = require('../../services/temporalContext.service');
 
 // A fixed instant that exercises the interesting cases at once: an offset with
@@ -12,7 +13,10 @@ const {
 // quarter/ISO-week boundary that is not the obvious one.
 const INSTANT = new Date('2026-08-22T09:05:47.123Z');
 
-afterEach(() => resetClock());
+afterEach(() => {
+  resetClock();
+  zoneCache.clear();
+});
 
 describe('resolveTimeZone', () => {
   it('prefers the request zone over the profile zone', () => {
@@ -37,6 +41,16 @@ describe('resolveTimeZone', () => {
   it('always resolves to something', () => {
     expect(resolveTimeZone().timeZone).toBeTruthy();
     expect(resolveTimeZone({ requestTimeZone: 123, userTimeZone: null }).timeZone).toBe('UTC');
+  });
+});
+
+describe('isValidTimeZone cache bound', () => {
+  it('evicts instead of growing without limit on attacker-controlled keys', () => {
+    for (let i = 0; i < 300; i++) {
+      expect(isValidTimeZone(`Invalid/Zone_${i}`)).toBe(false);
+    }
+    expect(zoneCache.size).toBeLessThanOrEqual(256);
+    expect(isValidTimeZone('Asia/Kolkata')).toBe(true);
   });
 });
 

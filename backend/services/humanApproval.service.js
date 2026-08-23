@@ -14,15 +14,20 @@
 class ApprovalRequest {
   constructor(options = {}) {
     this.id = options.id || `approval-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    this.userId = options.userId || null; // owning user — null means legacy/unowned, not "owned by everyone"
     this.type = options.type || 'approval'; // approval, input, selection, feedback
     this.title = options.title || '';
     this.description = options.description || '';
     this.context = options.context || {}; // execution state, previous output, etc
     this.options = options.options || []; // for selection type
-    this.timeout = options.timeout || null; // ms, null = no timeout
+    this.timeout = options.timeout || null; // ms, null = no timeout — the in-process wait cap
     this.requiredBy = options.requiredBy || null; // node/step that needs approval
     this.createdAt = new Date().toISOString();
-    this.expiresAt = this.timeout ? new Date(Date.now() + this.timeout).toISOString() : null;
+    // expiresAt is the real business deadline. It defaults to `timeout` but callers
+    // that clamp `timeout` for an unrelated reason (see SERVERLESS_MAX_APPROVAL_TIMEOUT_MS)
+    // pass expiresInMs separately so clamping the wait doesn't also clamp the deadline.
+    const expiryWindow = options.expiresInMs != null ? options.expiresInMs : this.timeout;
+    this.expiresAt = expiryWindow ? new Date(Date.now() + expiryWindow).toISOString() : null;
     this.status = 'pending'; // pending, approved, rejected, expired, timeout
     this.approvedAt = null;
     this.approver = null;
@@ -149,6 +154,65 @@ class ExecutionSnapshot {
 const MAX_APPROVAL_TIMEOUT_MS = 3600000; // hard cap: 1 hour
 const SERVERLESS_MAX_APPROVAL_TIMEOUT_MS = 1000;
 
+// Unbounded growth guards for the in-process state below — see cleanup().
+const MAX_AUDIT_LOG_ENTRIES = 5000;
+const CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // 10 min
+
+// ── Cleanup sweeper ─────────────────────────────────────────
+//
+// One timer for the whole process, not one per handler. A `setInterval` created
+// in the constructor closes over `this`, and the timer list is a GC root — so
+// every handler ever constructed would stay reachable forever, even after the
+// last reference to it was dropped. That converts "handler is garbage" into
+// "handler is immortal", which is the very leak this cleanup exists to prevent;
+// `unref()` does not help, it only stops the timer holding the event loop open.
+//
+// Handlers are therefore tracked by WeakRef so the sweeper never keeps one
+// alive, the FinalizationRegistry drops the dead refs as they are collected,
+// and the timer stops itself once nothing is left to sweep.
+const liveHandlers = new Set(); // Set<WeakRef<HumanApprovalHandler>>
+let sweepTimer = null;
+
+const stopSweepIfIdle = () => {
+  if (liveHandlers.size === 0 && sweepTimer) {
+    clearInterval(sweepTimer);
+    sweepTimer = null;
+  }
+};
+
+const deadHandlers = new FinalizationRegistry((ref) => {
+  liveHandlers.delete(ref);
+  stopSweepIfIdle();
+});
+
+const sweepLiveHandlers = () => {
+  for (const ref of liveHandlers) {
+    const handler = ref.deref();
+    if (!handler) {
+      liveHandlers.delete(ref);
+      continue;
+    }
+    // One handler throwing must not abort the sweep for the others.
+    try {
+      handler.cleanup();
+    } catch (err) {
+      console.error('[HumanApprovalHandler] cleanup sweep failed:', err.message);
+    }
+  }
+  stopSweepIfIdle();
+};
+
+const registerForCleanup = (handler) => {
+  const ref = new WeakRef(handler);
+  liveHandlers.add(ref);
+  deadHandlers.register(handler, ref, handler);
+
+  if (sweepTimer) return;
+  sweepTimer = setInterval(sweepLiveHandlers, CLEANUP_INTERVAL_MS);
+  // Never keep the process (or a test runner) alive just to sweep caches.
+  if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
+};
+
 const isServerlessRuntime = () => (
   process.env.VERCEL === '1' ||
   process.env.AWS_LAMBDA_FUNCTION_NAME ||
@@ -157,6 +221,7 @@ const isServerlessRuntime = () => (
 
 const normalizeApprovalRow = (row) => row ? {
   id: row.id,
+  userId: row.user_id,
   type: row.type,
   title: row.title,
   description: row.description,
@@ -189,6 +254,28 @@ class HumanApprovalHandler {
     this.defaultApprover = options.defaultApprover || 'system';
     this.autoRejectExpired = options.autoRejectExpired !== false;
     this.defaultTimeout = options.defaultTimeout || 300000; // 5 min default
+
+    // Nothing else in the codebase ever called cleanup() — left running, requests,
+    // snapshots and the audit log grow forever in a long-lived process. Joins the
+    // shared sweeper above rather than owning a timer, so this handler stays
+    // collectable once it is dropped.
+    registerForCleanup(this);
+  }
+
+  /**
+   * Stop this handler being swept and release it from the sweeper's registry.
+   * Not required for GC (the sweeper only holds a WeakRef) — it just lets a
+   * caller that is deliberately discarding a handler drop it immediately.
+   */
+  dispose() {
+    for (const ref of liveHandlers) {
+      if (ref.deref() === this) {
+        liveHandlers.delete(ref);
+        break;
+      }
+    }
+    deadHandlers.unregister(this);
+    stopSweepIfIdle();
   }
 
   /**
@@ -199,7 +286,12 @@ class HumanApprovalHandler {
     const rawTimeout = options.timeout != null ? options.timeout : this.defaultTimeout;
     const maxTimeout = this.waitForApproval ? MAX_APPROVAL_TIMEOUT_MS : SERVERLESS_MAX_APPROVAL_TIMEOUT_MS;
     const clampedTimeout = Math.min(rawTimeout, maxTimeout);
-    const request = new ApprovalRequest({ ...options, timeout: clampedTimeout });
+    // clampedTimeout only bounds how long THIS process blocks in memory. The
+    // persisted expiry is a separate, real deadline (how long a human actually
+    // has to respond) and must not shrink just because this runtime can't wait —
+    // it is only ever bounded by the hard cap, never by the serverless clamp.
+    const expiresInMs = Math.min(rawTimeout, MAX_APPROVAL_TIMEOUT_MS);
+    const request = new ApprovalRequest({ ...options, timeout: clampedTimeout, expiresInMs });
     this.requests.set(request.id, request);
     await this._persistRequest(request);
 
@@ -241,6 +333,7 @@ class HumanApprovalHandler {
     if (!this.store?.from) return;
     const payload = {
       id: request.id,
+      user_id: request.userId,
       type: request.type,
       title: request.title,
       description: request.description,
@@ -376,26 +469,17 @@ class HumanApprovalHandler {
   }
 
   /**
-   * Get approval request
+   * Get approval request from the local, same-instance cache only. Cheap, but
+   * on serverless this is frequently stale or empty — see getRequestFresh().
    */
   getRequest(requestId) {
     return this.requests.get(requestId);
   }
 
-  async _loadRequest(requestId) {
-    const existing = this.requests.get(requestId);
-    if (existing) return existing;
-    if (!this.store?.from) return null;
-
-    const { data, error } = await this.store
-      .from('human_approvals')
-      .select('*')
-      .eq('id', requestId)
-      .maybeSingle();
-    if (error || !data) return null;
-
+  _hydrateRequestFromRow(data) {
     const request = new ApprovalRequest({
       id: data.id,
+      userId: data.user_id,
       type: data.type,
       title: data.title,
       description: data.description,
@@ -411,6 +495,46 @@ class HumanApprovalHandler {
     request.createdAt = data.created_at;
     request.expiresAt = data.expires_at;
     request.approvedAt = data.approved_at;
+    return request;
+  }
+
+  async _loadRequest(requestId) {
+    const existing = this.requests.get(requestId);
+    if (existing) return existing;
+    if (!this.store?.from) return null;
+
+    const { data, error } = await this.store
+      .from('human_approvals')
+      .select('*')
+      .eq('id', requestId)
+      .maybeSingle();
+    if (error || !data) return null;
+
+    const request = this._hydrateRequestFromRow(data);
+    this.requests.set(request.id, request);
+    return request;
+  }
+
+  /**
+   * Authoritative status read. The request that created an approval and the
+   * request polling for its answer routinely land on different lambda
+   * instances, so the in-memory cache above cannot be trusted for status —
+   * it would just replay whatever this instance saw first and never observe
+   * an approval granted elsewhere. Always ask the store when one exists;
+   * only fall back to the cache when there is no store to ask (e.g. tests).
+   */
+  async getRequestFresh(requestId) {
+    if (!this.store?.from) return this.requests.get(requestId) || null;
+
+    const { data, error } = await this.store
+      .from('human_approvals')
+      .select('*')
+      .eq('id', requestId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
+
+    const request = this._hydrateRequestFromRow(data);
     this.requests.set(request.id, request);
     return request;
   }
@@ -463,10 +587,16 @@ class HumanApprovalHandler {
       data,
       timestamp: new Date().toISOString(),
     });
+    // Hard cap independent of the periodic sweep below — a burst of activity
+    // between sweeps should not be able to grow this without bound.
+    if (this.auditLog.length > MAX_AUDIT_LOG_ENTRIES) {
+      this.auditLog.splice(0, this.auditLog.length - MAX_AUDIT_LOG_ENTRIES);
+    }
   }
 
   /**
-   * Clear old requests and snapshots
+   * Clear old requests, snapshots and audit entries. Called on a timer (see
+   * constructor) so this state doesn't grow forever in a long-lived process.
    */
   cleanup(olderThan = 3600000) {
     // default 1 hour
@@ -483,6 +613,14 @@ class HumanApprovalHandler {
         this.snapshots.delete(id);
       }
     }
+
+    // Entries are pushed in chronological order, so the stale ones are always
+    // a prefix — trim it rather than filtering the whole array.
+    let staleCount = 0;
+    while (staleCount < this.auditLog.length && new Date(this.auditLog[staleCount].timestamp) < cutoff) {
+      staleCount++;
+    }
+    if (staleCount > 0) this.auditLog.splice(0, staleCount);
   }
 
   toJSON() {
@@ -516,6 +654,9 @@ class ApprovalManager {
       waitForApproval: this.waitForApproval !== undefined ? this.waitForApproval : options.waitForApproval,
       ...options,
     });
+    // Re-registering a name drops the previous handler on the floor; unhook it
+    // from the cleanup sweeper straight away instead of waiting for GC.
+    this.handlers.get(name)?.dispose();
     this.handlers.set(name, handler);
     return handler;
   }

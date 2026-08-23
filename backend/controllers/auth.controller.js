@@ -19,7 +19,12 @@ const IDENTIFIER_PATTERN = /^[A-Za-z0-9._+@-]{1,254}$/;
 const isSafeIdentifier = (value) => typeof value === 'string' && IDENTIFIER_PATTERN.test(value);
 
 // ── Per-account failed-attempt tracking (complements IP rate limiter) ──
-const failMap = new Map();             // username → { count, lockedUntil, lastFail }
+// Durable via login_attempt_counters (migration_add_rate_limiting.sql) rather
+// than an in-memory Map — Vercel runs many short-lived instances, so a
+// per-process counter gave every cold instance its own fresh budget and
+// multiplied it across concurrent ones. Keyed on the identifier text (not a
+// user id) because a nonexistent username still needs to accumulate failures;
+// see the migration's comment on login_attempt_counters for why.
 const MAX_FAILS = 5;                   // lock after 5 failed attempts
 const LOCK_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 const ATTEMPT_WINDOW_MS = 15 * 60 * 1000; // failures older than this stop counting
@@ -27,28 +32,44 @@ const ATTEMPT_WINDOW_MS = 15 * 60 * 1000; // failures older than this stop count
 const minutesUntil = (timestamp) => Math.ceil((new Date(timestamp) - Date.now()) / 1000 / 60);
 
 /**
- * In-memory lock check — fast path for recent brute-force, no DB round trip.
+ * Durable lock check against login_attempt_counters — covers identifiers that
+ * may not resolve to any real user, which have no users row to check instead.
+ * (login()'s existing check of the already-fetched user.locked_until handles
+ * the resolved-user case for free, without a second round trip.)
  * Returns minutes remaining, or null when not locked.
  */
-const checkAccountLock = (identifier) => {
+const checkAccountLock = async (identifier) => {
   const key = String(identifier || '').toLowerCase();
-  const entry = failMap.get(key);
-  if (!entry) return null;
-
-  if (entry.lockedUntil && Date.now() < entry.lockedUntil) {
-    return Math.ceil((entry.lockedUntil - Date.now()) / 1000 / 60);
+  try {
+    const { data, error } = await supabase
+      .from('login_attempt_counters')
+      .select('locked_until')
+      .eq('identifier', key)
+      .maybeSingle();
+    if (error) throw error;
+    if (data?.locked_until && new Date(data.locked_until) > new Date()) {
+      return minutesUntil(data.locked_until);
+    }
+    return null;
+  } catch (err) {
+    // Fail open, same reasoning as rateLimitStore.service.js: a DB hiccup on
+    // this check must not make login itself unusable for every real user.
+    console.error('[Auth] checkAccountLock error:', err.message);
+    return null;
   }
-  if (entry.lockedUntil) failMap.delete(key); // lock expired
-  return null;
 };
 
 /**
- * Record a failed login attempt.
+ * Record a failed login attempt via the atomic record_login_failure RPC
+ * (sliding window + lock decision happen in one DB round trip, avoiding the
+ * classic read-then-write race under concurrent requests).
  *
- * The in-memory counter is always updated. The DB lock is only written when the
- * caller resolved a real user, and is keyed by that user's primary key — never
- * by a caller-supplied pattern. A pattern-based UPDATE here previously let an
- * unauthenticated caller lock every account in the system at once.
+ * The DB lock is mirrored onto users.locked_until only when the caller
+ * resolved a real user, and only via that user's primary key — never by a
+ * caller-supplied pattern. A pattern-based UPDATE here previously let an
+ * unauthenticated caller lock every account in the system at once;
+ * record_login_failure is keyed on the exact identifier text passed as a
+ * parameterized RPC argument, not a LIKE pattern, so that can't recur.
  *
  * @param {string} identifier - what the caller typed (username or email)
  * @param {string|null} userId - resolved user id, or null when no user matched
@@ -56,28 +77,30 @@ const checkAccountLock = (identifier) => {
 const recordFailedAttempt = async (identifier, userId = null) => {
   const key = String(identifier || '').toLowerCase();
 
-  const now = Date.now();
-  const entry = failMap.get(key) || { count: 0, lockedUntil: null, lastFail: 0 };
-
-  // Sliding window: attempts older than ATTEMPT_WINDOW_MS no longer count toward
-  // the lock, so a few failures spread over months can't accumulate into one.
-  if (!entry.lockedUntil && now - entry.lastFail > ATTEMPT_WINDOW_MS) {
-    entry.count = 0;
+  let lockedUntil;
+  try {
+    const { data, error } = await supabase.rpc('record_login_failure', {
+      p_identifier: key,
+      p_window_ms: ATTEMPT_WINDOW_MS,
+      p_max_fails: MAX_FAILS,
+      p_lock_ms: LOCK_DURATION_MS,
+    });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    lockedUntil = row?.locked_until || null;
+  } catch (err) {
+    // Fail open — an outage here means this one attempt goes uncounted, not
+    // that login breaks for everyone else.
+    console.error('[Auth] record_login_failure error:', err.message);
+    return;
   }
-
-  entry.count++;
-  entry.lastFail = now;
-  if (entry.count >= MAX_FAILS) {
-    entry.lockedUntil = now + LOCK_DURATION_MS;
-  }
-  failMap.set(key, entry);
 
   // Persist to DB when threshold is reached — only ever for a known account.
-  if (entry.count >= MAX_FAILS && userId) {
+  if (lockedUntil && userId) {
     try {
       const { error } = await supabase
         .from('users')
-        .update({ locked_until: new Date(Date.now() + LOCK_DURATION_MS).toISOString() })
+        .update({ locked_until: lockedUntil })
         .eq('id', userId);
       if (error) console.error('[Auth] DB lock persist error:', error.message);
     } catch (err) {
@@ -87,16 +110,22 @@ const recordFailedAttempt = async (identifier, userId = null) => {
 };
 
 /**
- * Clear failed attempts — clears the in-memory counter and, when a user id is
+ * Clear failed attempts — resets the durable counter and, when a user id is
  * supplied, the persisted DB lock for exactly that account.
  *
  * @param {string} identifier - username or email used at login
  * @param {string|null} userId - resolved user id
  */
 const clearFailedAttempts = async (identifier, userId = null) => {
-  failMap.delete(String(identifier || '').toLowerCase());
-  if (!userId) return;
+  const key = String(identifier || '').toLowerCase();
+  try {
+    const { error } = await supabase.from('login_attempt_counters').delete().eq('identifier', key);
+    if (error) console.error('[Auth] login_attempt_counters clear error:', error.message);
+  } catch (err) {
+    console.error('[Auth] login_attempt_counters clear error:', err.message);
+  }
 
+  if (!userId) return;
   try {
     const { error } = await supabase
       .from('users')
@@ -107,19 +136,6 @@ const clearFailedAttempts = async (identifier, userId = null) => {
     console.error('[Auth] DB lock clear error:', err.message);
   }
 };
-
-// Periodic cleanup of stale entries (runs hourly).
-// Evicts both expired locks and counting-only entries that never reached MAX_FAILS —
-// without the second case, every username that ever failed a login would be retained
-// for the lifetime of the process, which is an unbounded, attacker-controlled map.
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of failMap) {
-    const lockExpired = entry.lockedUntil && now >= entry.lockedUntil;
-    const countStale = !entry.lockedUntil && now - entry.lastFail > ATTEMPT_WINDOW_MS;
-    if (lockExpired || countStale) failMap.delete(key);
-  }
-}, 60 * 60 * 1000).unref();
 
 /**
  * POST /api/auth/login
@@ -138,8 +154,8 @@ const login = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Per-account lock — in-memory fast path, no DB round trip
-    const minsLeft = checkAccountLock(username);
+    // Per-account lock — durable check against login_attempt_counters
+    const minsLeft = await checkAccountLock(username);
     if (minsLeft !== null) {
       return res.status(429).json({
         error: `Account locked due to too many failed attempts. Try again in ${minsLeft} minute(s).`,
@@ -162,7 +178,7 @@ const login = async (req, res) => {
         || String(user.email || '').toLowerCase() === identifier);
 
     if (error || !user || !isExactMatch) {
-      // No user id — the in-memory counter still ticks, but nothing is locked in the DB.
+      // No user id — the identifier's own counter still ticks, but no users row is locked.
       await recordFailedAttempt(username);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -193,16 +209,14 @@ const login = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Success — clear failed attempts for this account (in-memory + DB)
+    // Success — clear failed attempts for this account
     await clearFailedAttempts(username, user.id);
 
-    // Mint the auth cookie. The window is the user's session_minutes and slides
-    // forward on each request from here on — see middleware/auth.js.
-    issueAuthCookie(res, user, rememberMe);
-
-    // Generate CSRF token for defense-in-depth
-    const { generateCsrfToken } = require('../middleware/csrf');
-    const csrfToken = generateCsrfToken();
+    // Mint the auth cookie plus the matching CSRF cookie. The window is the
+    // user's session_minutes and slides forward on each request from here on —
+    // see middleware/auth.js. The CSRF token is returned in the body too so a
+    // non-browser client can read it without parsing Set-Cookie.
+    const { csrfToken } = issueAuthCookie(res, user, rememberMe);
 
     res.json({
       csrfToken,

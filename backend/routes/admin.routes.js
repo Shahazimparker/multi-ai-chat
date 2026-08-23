@@ -30,16 +30,18 @@ router.get('/api-status', requireAuth, async (req, res) => {
     openai: process.env.OPENAI_API_KEY ? 'active' : 'inactive',
     groq: process.env.GROQ_API_KEY ? 'active' : 'inactive',
     gemini: process.env.GEMINI_API_KEY ? 'active' : 'inactive',
-    openrouter:process.env.OPENROUTER_API_KEY ? 'active' : 'inactive',
-    together : process.env.TOGETHER_API_KEY ? 'active' : 'inactive',
+    openrouter: process.env.OPENROUTER_API_KEY ? 'active' : 'inactive',
+    together: process.env.TOGETHER_API_KEY ? 'active' : 'inactive',
     anyapi: process.env.ANYAPI_API_KEY ? 'active' : 'inactive',
     supabase: 'checking...'
   };
 
-  // Test Supabase
+  // Test Supabase. The Supabase client resolves (never rejects) on a failed
+  // query — it returns `{ data, error }` — so checking only the thrown case
+  // made this always report "active".
   try {
-    await supabase.from('users').select('count').limit(1);
-    status.supabase = 'active';
+    const { error } = await supabase.from('users').select('count').limit(1);
+    status.supabase = error ? 'inactive' : 'active';
   } catch {
     status.supabase = 'inactive';
   }

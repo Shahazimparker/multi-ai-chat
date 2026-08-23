@@ -16,9 +16,11 @@ if (import.meta.env.VITE_SENTRY_DSN) {
     environment: import.meta.env.MODE,
     integrations: [
       Sentry.browserTracingIntegration(),
+      // This is a chat app: unmasked replay would ship every prompt, AI answer,
+      // uploaded document preview and the admin user list (emails) to Sentry.
       Sentry.replayIntegration({
-        maskAllText: false,
-        blockAllMedia: false,
+        maskAllText: true,
+        blockAllMedia: true,
       }),
       Sentry.captureConsoleIntegration({ levels: ['error', 'warn'] }),
     ],

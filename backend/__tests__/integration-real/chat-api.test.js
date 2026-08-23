@@ -4,6 +4,44 @@
 
 const BASE = 'http://localhost:5000/api';
 
+// /api/chat/* requires auth — anonymous chat was removed so an unauthenticated
+// caller could no longer spend provider budget. Same login shape as
+// approval-flow.test.js; keep the two in step if either changes.
+let authToken = null;
+let csrfToken = null;
+
+beforeAll(async () => {
+  const res = await fetch(`${BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username: process.env.TEST_USERNAME || 'testadmin',
+      password: process.env.TEST_PASSWORD || 'testpassword123',
+    }),
+  });
+
+  if (res.status !== 200) {
+    console.warn('[beforeAll] Login failed — authenticated tests will be skipped');
+    return;
+  }
+
+  const setCookie = res.headers.get('set-cookie') || '';
+  authToken = setCookie.match(/auth_token=([^;]+)/)?.[1] || null;
+  try {
+    csrfToken = (await res.json()).csrfToken || null;
+  } catch { /* body already consumed or malformed */ }
+
+  if (!authToken) console.warn('[beforeAll] Could not parse auth_token from cookie');
+}, 15000);
+
+// The CSRF cookie has to ride along with the header: the middleware compares
+// the two, so sending only the header now fails exactly as a forgery would.
+const authHeaders = (extra = {}) => ({
+  ...extra,
+  ...(authToken ? { Cookie: `auth_token=${authToken}; csrf_token=${csrfToken}` } : {}),
+  ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+});
+
 describe('Chat API (real)', () => {
   const parseSseEvents = (buffer) => {
     const events = [];
@@ -30,7 +68,8 @@ describe('Chat API (real)', () => {
 
   // ── Model listing ───────────────────────────────────
   it('GET /api/chat/models returns model list', async () => {
-    const res = await fetch(`${BASE}/chat/models`);
+    if (!authToken) return;
+    const res = await fetch(`${BASE}/chat/models`, { headers: authHeaders() });
     const data = await res.json();
     expect(res.status).toBe(200);
     expect(data.models).toBeDefined();
@@ -45,10 +84,31 @@ describe('Chat API (real)', () => {
   });
 
   // ── Anonymous streaming chat (no auth) ──────────────
-  it('POST /api/chat/stream works anonymously', async () => {
+  // This asserted 200 while anonymous chat was allowed. That was removed so an
+  // unauthenticated caller could not spend provider budget, so the test now
+  // pins the opposite guarantee.
+  it('POST /api/chat/stream rejects unauthenticated callers', async () => {
     const res = await fetch(`${BASE}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        modelId: 'deepseek-v4-flash',
+        message: 'Reply with exactly: HELLO',
+      }),
+    });
+    expect(res.status).toBe(401);
+  }, 15000);
+
+  it('GET /api/chat/models rejects unauthenticated callers', async () => {
+    const res = await fetch(`${BASE}/chat/models`);
+    expect(res.status).toBe(401);
+  }, 15000);
+
+  it('POST /api/chat/stream streams for an authenticated caller', async () => {
+    if (!authToken) return;
+    const res = await fetch(`${BASE}/chat/stream`, {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         modelId: 'deepseek-v4-flash',
         message: 'Reply with exactly: HELLO',
@@ -86,15 +146,16 @@ describe('Chat API (real)', () => {
 
     expect(doneEvent || errorEvent).toBeTruthy();
     if (doneEvent) expect(doneEvent?.model).toBeDefined();
-    console.log(`[Anonymous Stream] Reply: ${fullText.slice(0, 100)}`);
-    console.log(`[Anonymous Stream] Tokens: ${doneEvent?.tokensUsed}`);
+    console.log(`[Auth Stream] Reply: ${fullText.slice(0, 100)}`);
+    console.log(`[Auth Stream] Tokens: ${doneEvent?.tokensUsed}`);
   }, 30000);
 
   // ── Streaming chat ──────────────────────────────────
   it('POST /api/chat/stream returns SSE events', async () => {
+    if (!authToken) return;
     const res = await fetch(`${BASE}/chat/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         modelId: 'deepseek-v4-flash',
         message: 'Say hello in one word',
@@ -140,9 +201,10 @@ describe('Chat API (real)', () => {
   }, 60000);
 
   it('POST /api/chat/stream accepts allowArtifactWithCurrentModel override', async () => {
+    if (!authToken) return;
     const res = await fetch(`${BASE}/chat/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         modelId: 'deepseek-v4-flash',
         message: 'Say HELLO in one short sentence.',
@@ -189,7 +251,8 @@ describe('Chat API (real)', () => {
 
   // ── Provider model catalog ──────────────────────────
   it('GET /api/chat/provider-models/openrouter works', async () => {
-    const res = await fetch(`${BASE}/chat/provider-models/openrouter`);
+    if (!authToken) return;
+    const res = await fetch(`${BASE}/chat/provider-models/openrouter`, { headers: authHeaders() });
     const data = await res.json();
 
     if (res.status === 200) {

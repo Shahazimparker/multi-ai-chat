@@ -2,12 +2,14 @@ export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired' | '
 
 export interface ApprovalRequestOptions {
   id?: string;
+  userId?: string | null;
   type?: 'approval' | 'input' | 'selection' | 'feedback' | string;
   title?: string;
   description?: string;
   context?: Record<string, any>;
   options?: any[];
   timeout?: number | null;
+  expiresInMs?: number | null;
   requiredBy?: string | null;
 }
 
@@ -29,6 +31,7 @@ export interface ApprovalRequestJSON {
 export class ApprovalRequest {
   constructor(options?: ApprovalRequestOptions);
   id: string;
+  userId: string | null;
   type: string;
   title: string;
   description: string;
@@ -111,10 +114,12 @@ export class HumanApprovalHandler {
   saveSnapshot(snapshot: ExecutionSnapshot | ExecutionSnapshotOptions): ExecutionSnapshot;
   getSnapshot(snapshotId: string): ExecutionSnapshot | undefined;
   getRequest(requestId: string): ApprovalRequest | undefined;
+  getRequestFresh(requestId: string): Promise<ApprovalRequest | null>;
   getPendingRequests(): ApprovalRequest[];
   listPendingRequests(): Promise<ApprovalRequestJSON[]>;
   getAuditLog(options?: Record<string, any>): any[];
   cleanup(olderThan?: number): void;
+  dispose(): void;
   toJSON(): Record<string, any>;
 }
 

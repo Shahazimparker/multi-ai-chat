@@ -45,8 +45,25 @@ jobs:
           FRONTEND_URL: 'http://localhost:3000'
 
       # Blocking: production dependencies must stay clean at high+.
+      #
+      # audit-gate.mjs runs `npm audit --omit=dev --json` and fails on any
+      # high/critical advisory EXCEPT the IDs explicitly allowlisted inside it.
+      # Plain `npm audit --audit-level=high` cannot express that — it is
+      # all-or-nothing, so tolerating one unfixable advisory would mean going
+      # blind to every new one. The audit level is not lowered and the step is
+      # not continue-on-error: a new high advisory still turns this red.
+      #
+      # Current exception (2 IDs): GHSA-w3rx-r6r6-pgpr and GHSA-5p2g-fcmc-qvqq,
+      # image-size denial of service via infinite loops in its ICNS/JXL/HEIF
+      # parsers, pulled in transitively by pptxgenjs. No patched release exists:
+      # both advisories cover "<=2.0.2" and 2.0.2 is the newest image-size ever
+      # published, so an `overrides` entry has nothing to point at; pptxgenjs
+      # 4.0.1 is the latest release and pins image-size ^1.2.1. The parsers are
+      # also unreachable here — pptGeneration.service.js builds text-only decks
+      # and never calls addImage. Full justification and the removal checklist
+      # live in .github/scripts/audit-gate.mjs.
       - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
+        run: node ../.github/scripts/audit-gate.mjs
 
   frontend:
     name: Frontend
