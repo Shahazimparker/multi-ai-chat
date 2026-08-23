@@ -7,6 +7,18 @@
 // ============================================================
 
 const path = require('path');
+
+// Polyfill browser globals required by pdfjs-dist / pdf-parse in Node.js serverless runtimes
+if (typeof global.DOMMatrix === 'undefined') {
+  global.DOMMatrix = class DOMMatrix {};
+}
+if (typeof global.ImageData === 'undefined') {
+  global.ImageData = class ImageData {};
+}
+if (typeof global.Path2D === 'undefined') {
+  global.Path2D = class Path2D {};
+}
+
 const { PDFParse } = require('pdf-parse');
 const mammoth = require('mammoth');
 const ExcelJS = require('exceljs');
