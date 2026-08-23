@@ -15,28 +15,23 @@ const { csrfProtection } = require('./middleware/csrf');
 const { initSentry, sentryRequestHandler, sentryTracingHandler, sentryErrorHandler, Sentry } = require('./config/sentry');
 
 // ── JWT_SECRET validation on startup ──
-if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
-  console.error('[FATAL] JWT_SECRET must be at least 32 characters long');
-  process.exit(1);
-}
-if (process.env.JWT_SECRET === 'your_super_secret_jwt_key_min_32_chars_change_this') {
-  if (process.env.NODE_ENV === 'production') {
-    console.error('[FATAL] JWT_SECRET is still the .env.example placeholder — set a real secret before deploying.');
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32 || process.env.JWT_SECRET === 'your_super_secret_jwt_key_min_32_chars_change_this') {
+  if (process.env.NODE_ENV === 'production' && !process.env.VERCEL) {
+    console.error('[FATAL] JWT_SECRET must be at least 32 characters long and not the placeholder.');
     process.exit(1);
   }
-  // First run on a copied .env.example: boot with a temporary random secret so
-  // onboarding doesn't hard-crash. It is regenerated on every restart, so any
-  // session it signs becomes invalid as soon as the server restarts.
   const crypto = require('crypto');
-  process.env.JWT_SECRET = crypto.randomBytes(32).toString('hex');
-  console.warn('[WARN] JWT_SECRET is the .env.example placeholder; generated a temporary random secret for this run. Set a permanent JWT_SECRET in backend/.env (e.g. `openssl rand -hex 32`).');
+  process.env.JWT_SECRET = (process.env.JWT_SECRET && process.env.JWT_SECRET.length >= 32 && process.env.JWT_SECRET !== 'your_super_secret_jwt_key_min_32_chars_change_this')
+    ? process.env.JWT_SECRET
+    : crypto.randomBytes(32).toString('hex');
+  console.warn('[WARN] Using auto-generated 32-byte JWT_SECRET for this runtime.');
 }
 
 // ── Global crash logging ──
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught Exception:', err);
   if (Sentry) Sentry.captureException(err);
-  process.exit(1);
+  if (!process.env.VERCEL) process.exit(1);
 });
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
@@ -52,19 +47,21 @@ const historyRoutes   = require('./routes/history.routes');
 const uploadRoutes    = require('./routes/upload.routes');
 const knowledgeRoutes = require('./routes/knowledge.routes');
 
-// ── Periodic cache cleanup ─────────────────────────────────
+// ── Periodic cache cleanup (only on long-running servers, not serverless) ─
 const { cleanupStaleCache } = require('./services/cache.service');
-const CACHE_CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // 24h
-const cleanupTimer = setInterval(() => {
+if (!process.env.VERCEL) {
+  const CACHE_CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // 24h
+  const cleanupTimer = setInterval(() => {
+    cleanupStaleCache(30, 2).catch(err =>
+      console.warn('[Cache] Periodic cleanup failed:', err.message)
+    );
+  }, CACHE_CLEANUP_INTERVAL);
+  if (typeof cleanupTimer.unref === 'function') cleanupTimer.unref();
+  // Run once on startup too
   cleanupStaleCache(30, 2).catch(err =>
-    console.warn('[Cache] Periodic cleanup failed:', err.message)
+    console.warn('[Cache] Startup cleanup failed:', err.message)
   );
-}, CACHE_CLEANUP_INTERVAL);
-if (typeof cleanupTimer.unref === 'function') cleanupTimer.unref();
-// Run once on startup too
-cleanupStaleCache(30, 2).catch(err =>
-  console.warn('[Cache] Startup cleanup failed:', err.message)
-);
+}
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
@@ -106,7 +103,10 @@ app.use(cors({
 }));
 
 // ── Handle OPTIONS preflight explicitly (required by Vercel serverless) ──
-app.options('/*splat', (req, res) => res.sendStatus(204));
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 app.use(csrfProtection);
 
 // ── Health check (used by Vercel / uptime monitors) ────────

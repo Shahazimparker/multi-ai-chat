@@ -7,9 +7,12 @@
 
 const { createClient } = require('@supabase/supabase-js');
 
+const supabaseUrl = process.env.SUPABASE_URL || 'https://placeholder.supabase.co';
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY || 'placeholder-key';
+
 const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY,   // service_role key (not anon key)
+  supabaseUrl,
+  supabaseKey,
   {
     auth: { persistSession: false },  // backend is stateless
   }
