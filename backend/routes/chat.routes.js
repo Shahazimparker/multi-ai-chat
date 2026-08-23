@@ -1,6 +1,6 @@
 // ============================================================
 // FILE: backend/routes/chat.routes.js
-// PURPOSE: Chat endpoints — auth optional (anonymous allowed)
+// PURPOSE: Chat endpoints — authentication required throughout
 // ============================================================
 
 const express = require('express');
@@ -8,23 +8,26 @@ const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const { sendMessage } = require('../controllers/chat.controller');
 const { tokenCheck } = require('../middleware/tokenCheck');
-const { sanitizeBody } = require('../middleware/sanitize');
+const { sanitizeBody, sanitizeInput, sanitizeText } = require('../middleware/sanitize');
 const { MODELS } = require('../config/models');
 const { getProviderModels } = require('../services/modelCatalog.service');
 const { classifyError } = require('../services/chatCleanup.service');
 const { CANONICAL_CHAT_PIPELINE_FLAGS, runChatPipeline } = require('../services/chatPipeline.service');
 const { describeReasoning } = require('../services/ai/reasoning.service');
-const { optionalAuth } = require('../middleware/auth');
+const { requireAuth } = require('../middleware/auth');
+const { createRateLimitStore } = require('../services/rateLimitStore.service');
 
-// Rate limit: 30 requests/minute per IP
+// Rate limit: 30 requests/minute per IP. Postgres-backed (see
+// rateLimitStore.service.js) so the count survives across serverless instances.
 const chatLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
   message: { error: 'Too many requests. Please slow down.' },
+  store: createRateLimitStore('chat'),
 });
 
-// GET /api/chat/models — public list of available models
-router.get('/models', (req, res) => {
+// GET /api/chat/models — list of available models
+router.get('/models', requireAuth, (req, res) => {
   const models = Object.entries(MODELS).map(([id, cfg]) => ({
     id,
     label: cfg.label,
@@ -37,7 +40,9 @@ router.get('/models', (req, res) => {
   }));
   res.json({ models });
 });
-router.get('/provider-models/:provider', async (req, res) => {
+// Rate-limited: this triggers a real outbound call to the provider using our
+// own API key, and `?refresh=true` bypasses the cache entirely.
+router.get('/provider-models/:provider', chatLimiter, requireAuth, async (req, res) => {
   try {
     const refresh = req.query.refresh === 'true';
     const result = await getProviderModels(req.params.provider, { refresh });
@@ -55,15 +60,28 @@ router.get('/provider-models/:provider', async (req, res) => {
   }
 });
 
-const chatBodySanitizer = sanitizeBody(['message', 'image', 'providerModelId', 'modelId', 'memoryMode', 'clientTimeZone']);
+// `message` is free text bound for an LLM and for React rendering — both
+// safe from raw HTML by design — so it only gets the gentle sanitizer
+// (control chars / line separators). Tag-stripping it silently mangles
+// legitimate content like `Array<string>` or `a < b`. `image` is a base64
+// data URL: not HTML either, and too large to regex on every request, so it
+// is left out of the sanitizer entirely. The remaining fields are
+// identifiers and keep the strict, tag-stripping sanitizer.
+const chatBodySanitizer = sanitizeBody({
+  message: sanitizeText,
+  providerModelId: sanitizeInput,
+  modelId: sanitizeInput,
+  memoryMode: sanitizeInput,
+  clientTimeZone: sanitizeInput,
+});
 
 // POST /api/chat/message — legacy JSON compatibility; /stream is the canonical chat path
-router.post('/message', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer, sendMessage);
+router.post('/message', chatLimiter, requireAuth, tokenCheck, chatBodySanitizer, sendMessage);
 /**
  * POST /api/chat/stream
  * Canonical chat endpoint using Server-Sent Events
  */
-router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer, async (req, res) => {
+router.post('/stream', chatLimiter, requireAuth, tokenCheck, chatBodySanitizer, async (req, res) => {
   req.setTimeout(0);
   res.setTimeout(0);
   const startTime = Date.now();
@@ -195,11 +213,13 @@ router.post('/stream', chatLimiter, optionalAuth, tokenCheck, chatBodySanitizer,
     }
 
     try {
+      // The raw provider error is logged server-side but never shipped to the
+      // client: it can embed internal details (API key hints, provider messages,
+      // request bodies). `errorMessage` above is the sanitized, user-safe text.
       res.write(`data: ${JSON.stringify({
         type: 'error',
         error: errorMessage,
         errorType,
-        originalError: result.err?.message || '',
         suggestedModels: result.suggestedModels || undefined,
         recommendedModelId: result.recommendedModelId || undefined,
         failedModelId: modelId,

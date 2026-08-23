@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import api, { API_BASE_URL } from '../../config/api';
 import { createSseParser } from '../../utils/sse';
+import { getCsrfToken } from '../../utils/sessionBroadcast';
 
 export const useChatSession = ({ refreshTokenStats }) => {
   const [models, setModels] = useState([]);
@@ -187,7 +188,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
       xhr.open('POST', `${API_BASE_URL}/upload/file`);
       xhr.withCredentials = true;
       xhr.timeout = 600000;
-      const csrfToken = sessionStorage.getItem('csrf_token');
+      const csrfToken = getCsrfToken();
       if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
 
       xhr.upload.onprogress = (event) => {
@@ -328,7 +329,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
       }
 
       const headers = { 'Content-Type': 'application/json' };
-      const csrfToken = sessionStorage.getItem('csrf_token');
+      const csrfToken = getCsrfToken();
       if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
       const response = await fetch(`${API_BASE_URL}/chat/stream`, {
         method: 'POST',
@@ -355,7 +356,19 @@ export const useChatSession = ({ refreshTokenStats }) => {
         }),
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error('Stream failed');
+      // A bare "Stream failed" hid the actual cause — a 401 from an expired
+      // session and a 403 from a missing CSRF cookie looked identical to a
+      // provider outage. Surface what the server actually said.
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const body = await response.json();
+          detail = body?.error || '';
+        } catch {
+          /* non-JSON error body — the status alone will have to do */
+        }
+        throw new Error(detail || `Request failed (HTTP ${response.status})`);
+      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();

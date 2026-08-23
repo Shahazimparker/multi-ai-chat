@@ -3,13 +3,18 @@
 const { tokenCheck } = require('../../middleware/tokenCheck');
 
 describe('tokenCheck', () => {
-  it('sets tokenRemaining for anonymous users (no req.user)', () => {
+  it('returns 401 when req.user is missing (requireAuth should have run first)', () => {
     const req = {};
-    const res = {};
+    const res = {
+      statusCode: null,
+      body: null,
+      status(code) { this.statusCode = code; return this; },
+      json(data) { this.body = data; return this; },
+    };
     let nextCalled = false;
     tokenCheck(req, res, () => { nextCalled = true; });
-    expect(nextCalled).toBe(true);
-    expect(req.tokenRemaining).toBe(10000);
+    expect(nextCalled).toBe(false);
+    expect(res.statusCode).toBe(401);
   });
 
   it('calls next() when user has remaining tokens', () => {

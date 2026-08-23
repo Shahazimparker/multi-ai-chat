@@ -34,6 +34,10 @@ const now = () => clock();
 // A client-supplied IANA name reaches Intl, so it is validated rather than
 // trusted: an unknown zone makes DateTimeFormat throw, which would turn a
 // cosmetic field into a 500 on the chat path.
+//
+// The cache is keyed by client-supplied strings, so it is bounded: an attacker
+// sending many distinct (or garbage) zone names must not grow it without limit.
+const ZONE_CACHE_MAX_ENTRIES = 256;
 const zoneCache = new Map();
 const isValidTimeZone = (tz) => {
   if (typeof tz !== 'string' || tz.length === 0 || tz.length > 64) return false;
@@ -43,6 +47,11 @@ const isValidTimeZone = (tz) => {
     new Intl.DateTimeFormat('en-US', { timeZone: tz });
   } catch {
     ok = false;
+  }
+  // Evict the oldest entry (Map preserves insertion order) before growing past
+  // the cap, so the cache stays at a fixed, small footprint.
+  if (zoneCache.size >= ZONE_CACHE_MAX_ENTRIES) {
+    zoneCache.delete(zoneCache.keys().next().value);
   }
   zoneCache.set(tz, ok);
   return ok;
@@ -203,4 +212,6 @@ module.exports = {
   buildTemporalContext,
   renderTemporalSystemBlock,
   buildTemporalSystemBlock,
+  // Exported so tests can assert the cache stays bounded.
+  zoneCache,
 };

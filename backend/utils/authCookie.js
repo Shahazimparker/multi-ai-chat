@@ -5,8 +5,14 @@
 // ============================================================
 
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 
 const AUTH_COOKIE_NAME = 'auth_token';
+// Deliberately readable by JavaScript: the double-submit check needs the client
+// to echo this value back in a header, which it cannot do if the cookie is
+// httpOnly. That is not a downgrade — the token is not a credential on its own,
+// it only proves the request came from a document that can read our cookies.
+const CSRF_COOKIE_NAME = 'csrf_token';
 const DEFAULT_SESSION_MINUTES = 60;
 
 const parseRememberMe = (value) =>
@@ -36,15 +42,38 @@ const buildCookieOptions = (extra = {}) => {
   };
 };
 
+const generateCsrfToken = () => crypto.randomBytes(32).toString('hex');
+
 /**
- * Signs a fresh JWT and attaches it as the auth cookie.
+ * Mints a CSRF token and sets it as a JS-readable cookie.
+ *
+ * Always issued next to the auth cookie so the two share a lifetime. A session
+ * whose auth cookie slid forward but whose CSRF cookie expired would fail every
+ * write with no way to recover short of logging out.
+ *
+ * @returns {string} the token, so login can also return it in its JSON body
+ */
+const issueCsrfCookie = (res, { maxAge, reuseToken } = {}) => {
+  // The sliding refresh passes the caller's current token back in. Minting a
+  // fresh one there would 403 any request already in flight that had read the
+  // old value — the header would no longer match the newly-set cookie.
+  const token = reuseToken || generateCsrfToken();
+  res.cookie(CSRF_COOKIE_NAME, token, buildCookieOptions({ httpOnly: false, maxAge }));
+  return token;
+};
+
+/**
+ * Signs a fresh JWT and attaches it as the auth cookie, plus a matching CSRF
+ * cookie.
  *
  * `rememberMe` rides along inside the token because the refresh path has no
  * other way to tell a persistent session from a browser-session one.
  *
- * @returns {string} the signed token
+ * @param {string} [reuseCsrfToken] - carry an existing CSRF token forward
+ *        instead of minting a new one; used by the sliding refresh.
+ * @returns {{token: string, csrfToken: string}}
  */
-const issueAuthCookie = (res, user, rememberMe) => {
+const issueAuthCookie = (res, user, rememberMe, reuseCsrfToken) => {
   const remember = parseRememberMe(rememberMe);
   const seconds = getSessionSeconds(user);
 
@@ -55,23 +84,27 @@ const issueAuthCookie = (res, user, rememberMe) => {
   );
 
   // No maxAge => a session cookie, discarded when the browser closes.
-  res.cookie(
-    AUTH_COOKIE_NAME,
-    token,
-    buildCookieOptions({ maxAge: remember ? seconds * 1000 : undefined })
-  );
+  const maxAge = remember ? seconds * 1000 : undefined;
+  res.cookie(AUTH_COOKIE_NAME, token, buildCookieOptions({ maxAge }));
+  const csrfToken = issueCsrfCookie(res, { maxAge, reuseToken: reuseCsrfToken });
 
-  return token;
+  return { token, csrfToken };
 };
 
-const clearAuthCookie = (res) => res.clearCookie(AUTH_COOKIE_NAME, buildCookieOptions());
+const clearAuthCookie = (res) => {
+  res.clearCookie(AUTH_COOKIE_NAME, buildCookieOptions());
+  res.clearCookie(CSRF_COOKIE_NAME, buildCookieOptions({ httpOnly: false }));
+};
 
 module.exports = {
   AUTH_COOKIE_NAME,
+  CSRF_COOKIE_NAME,
   DEFAULT_SESSION_MINUTES,
   parseRememberMe,
   getSessionSeconds,
   buildCookieOptions,
+  generateCsrfToken,
+  issueCsrfCookie,
   issueAuthCookie,
   clearAuthCookie,
 };

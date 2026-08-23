@@ -9,7 +9,6 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const JSZip = require('jszip');
-const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 const supabase = require('../config/supabase');
 const { MODELS } = require('../config/models');
@@ -118,27 +117,41 @@ const getFileHash = (fileName, fileContent) => {
   return `${fileName}:${contentHash}`;
 };
 
+// Must stay a superset-free mirror of SUPPORTED_FORMATS in
+// documentLoader.service.js. An extension the loader handles but this map omits
+// resolves to 'other', which the upload route now rejects outright — so a gap
+// here silently blocks a file type that would have worked. The reverse gap is
+// just as bad: it accepts a file the loader can only turn into placeholder text.
 const SUPPORTED_FILE_TYPES = {
   txt: 'txt',
   csv: 'csv',
   xlsx: 'xlsx',
+  xls: 'xlsx',
   pdf: 'pdf',
   doc: 'doc',
   docx: 'doc',
   jpg: 'image',
   jpeg: 'image',
   png: 'image',
+  // Routed as images so extractTextFromBuffer attaches the vision callback;
+  // without that they reached ImageLoader with no way to describe themselves.
+  gif: 'image',
+  webp: 'image',
   zip: 'zip',
   js: 'code',
   ts: 'code',
+  tsx: 'code',
+  jsx: 'code',
   py: 'code',
   java: 'code',
+  c: 'code',
   cpp: 'code',
   go: 'code',
   rb: 'code',
   html: 'code',
   json: 'code',
   css: 'code',
+  scss: 'code',
   xml: 'code',
   yml: 'code',
   yaml: 'code',
@@ -188,6 +201,22 @@ const getSupportedFileType = (fileName) => {
   const ext = path.extname(fileName).slice(1).toLowerCase();
   return SUPPORTED_FILE_TYPES[ext] || 'other';
 };
+
+// ==================== ZIP SAFETY LIMITS ====================
+// A ZIP under the 4MB upload cap (MAX_UPLOAD_BYTES in upload.routes.js) can still
+// decompress to gigabytes ("zip bomb"), and processZipFile inflates up to
+// CONCURRENCY entries at once — enough to exhaust a serverless invocation's
+// memory. These bound the damage a single archive can do. Central-directory
+// sizes are a fast pre-check, not a guarantee (an entry can decompress to more
+// than it declares), so the running total of actually-extracted bytes is
+// re-checked as each entry comes out.
+const parseZipLimitEnv = (name, fallback) => {
+  const parsed = Number.parseInt(process.env[name], 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+const ZIP_MAX_ENTRIES = parseZipLimitEnv('ZIP_MAX_ENTRIES', 200);
+const ZIP_MAX_ENTRY_UNCOMPRESSED_BYTES = parseZipLimitEnv('ZIP_MAX_ENTRY_UNCOMPRESSED_BYTES', 25 * 1024 * 1024); // 25MB per file
+const ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES = parseZipLimitEnv('ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES', 100 * 1024 * 1024); // 100MB whole archive
 
 const normalizeZipEntryName = (entryName) => entryName.replace(/\\/g, '/');
 
@@ -465,8 +494,7 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
       return false;
     }
 
-    const innerType = getSupportedFileType(entryName);
-    if (!innerType) {
+    if (getSupportedFileType(entryName) === 'other') {
       skipped.push(entryName);
       return false;
     }
@@ -474,11 +502,35 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
     return true;
   });
 
+  if (entries.length > ZIP_MAX_ENTRIES) {
+    throw new Error(`ZIP contains ${entries.length} files, which exceeds the ${ZIP_MAX_ENTRIES}-file limit per upload.`);
+  }
+
+  // Declared sizes come from the ZIP's own central directory and aren't
+  // trustworthy on their own, but they reject an obvious bomb before any CPU
+  // is spent decompressing.
+  let declaredTotalBytes = 0;
+  for (const entry of entries) {
+    const declaredSize = entry._data?.uncompressedSize;
+    if (typeof declaredSize !== 'number') continue;
+    if (declaredSize > ZIP_MAX_ENTRY_UNCOMPRESSED_BYTES) {
+      throw new Error(`"${normalizeZipEntryName(entry.name)}" declares an uncompressed size over the ${Math.round(ZIP_MAX_ENTRY_UNCOMPRESSED_BYTES / (1024 * 1024))}MB per-file limit.`);
+    }
+    declaredTotalBytes += declaredSize;
+  }
+  if (declaredTotalBytes > ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES) {
+    throw new Error(`ZIP declares ${Math.round(declaredTotalBytes / (1024 * 1024))}MB uncompressed, over the ${Math.round(ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES / (1024 * 1024))}MB total limit.`);
+  }
+
   console.log(`[FileUpload] ZIP has ${entries.length} processable entries (concurrency=${CONCURRENCY})`);
 
   let validResults = [];
   let completedCount = 0;
   const total = entries.length;
+  // Declared sizes above are only a pre-check; this is the real running total,
+  // checked against actual decompressed bytes as each entry extracts.
+  let extractedTotalBytes = 0;
+  let sizeLimitMessage = null;
 
   try {
     onProgress?.({ type: 'progress', phase: 'extracting', percent: 5, message: `ZIP contains ${total} processable files. Starting...` });
@@ -490,7 +542,21 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
 
       try {
         if (signal?.aborted) throw { name: 'AbortError' };
+        // A cap already tripped in another concurrent entry — stop starting new work.
+        if (sizeLimitMessage) throw { name: 'AbortError' };
+
         const buffer = await entry.async('nodebuffer');
+
+        if (buffer.length > ZIP_MAX_ENTRY_UNCOMPRESSED_BYTES) {
+          sizeLimitMessage = `"${entryName}" decompressed past the ${Math.round(ZIP_MAX_ENTRY_UNCOMPRESSED_BYTES / (1024 * 1024))}MB per-file limit.`;
+          throw { name: 'AbortError' };
+        }
+        extractedTotalBytes += buffer.length;
+        if (extractedTotalBytes > ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES) {
+          sizeLimitMessage = `ZIP exceeded the ${Math.round(ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES / (1024 * 1024))}MB total uncompressed limit during extraction.`;
+          throw { name: 'AbortError' };
+        }
+
         const extractedText = await extractTextFromBuffer(buffer, innerType, modelId, signal, entryName);
 
         if (!extractedText || extractedText.length < 10) {
@@ -544,6 +610,13 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
       onProgress?.({ type: 'progress', phase: 'error', percent: 0, message: 'Upload cancelled. Cleaning up...' });
       await cleanupOrphanedRagEntries(savedRagIds, savedFileIds);
       throw { name: 'AbortError', message: 'Upload cancelled by user' };
+    }
+
+    // A size cap tripped mid-extraction — fail the whole ZIP rather than
+    // silently keeping the entries that happened to finish first. Falls
+    // through to the generic catch below, which cleans up savedRagIds/savedFileIds.
+    if (sizeLimitMessage) {
+      throw new Error(sizeLimitMessage);
     }
   } catch (err) {
     // On abort/timeout/error, clean up orphaned RAG entries
@@ -643,8 +716,6 @@ ${extractedText.slice(0, 1000)}
 Upload timestamp: ${new Date().toISOString()}
 
 File ready for queries.`;
-
-    await new Promise(resolve => setTimeout(resolve, 1000));
 
     // 3. Store in RAG — wrap onProgress to map embedding 0-100% → overall 30-95%
     onProgress?.({ type: 'progress', phase: 'embedding', percent: 30, message: 'Embedding file content...' });
@@ -1061,4 +1132,5 @@ module.exports = {
   getSupportedFileType,
   getFileHash,
   analyzeFileWithLLM,
+  processZipFile, // exported for unit tests to exercise the ZIP safety limits directly
 };

@@ -6,11 +6,13 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
 
 const { requireAuth } = require('../middleware/auth');
+const { createRateLimitStore } = require('../services/rateLimitStore.service');
 const supabase = require('../config/supabase');
 const {
   listCollections,
@@ -68,6 +70,40 @@ const sanitizeFilename = (name) => {
 
 // All knowledge endpoints require authentication
 router.use(requireAuth);
+
+// ── Rate limiting ────────────────────────────────────────────
+// Postgres-backed (see rateLimitStore.service.js), same as the other routers.
+// requireAuth runs for the whole router above, so req.user is always set here —
+// key by user id rather than IP so an office/NAT-shared address doesn't share
+// one budget, matching uploadHeavyLimiter's pattern.
+// Baseline for every /api/knowledge/* route — mostly cheap CRUD (list/get/update
+// collections, read chunks/tree), so this is generous.
+const knowledgeBaseLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: { error: 'Too many requests. Please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: createRateLimitStore('knowledge-base'),
+});
+router.use(knowledgeBaseLimiter);
+
+// Stricter cap for the two routes that cost real money per request: crawling
+// fetches and embeds up to `maxPages` external pages, and search runs at least
+// one paid embedding call per query (more with query expansion). Same shape as
+// uploadHeavyLimiter — this app's existing convention for "expensive AI-backed
+// route" — but a little tighter since a single crawl can itself fan out into
+// many embedding calls.
+const knowledgeHeavyLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: { error: 'Too many requests to this endpoint. Please wait a few minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: createRateLimitStore('knowledge-heavy'),
+});
 
 // ── GET /api/knowledge/collections — list accessible collections ──
 router.get('/collections', async (req, res) => {
@@ -216,7 +252,7 @@ router.post('/collections/:id/documents/upload', handleMulterUpload, async (req,
 });
 
 // ── POST /api/knowledge/collections/:id/documents/crawl — crawl URL ──
-router.post('/collections/:id/documents/crawl', async (req, res) => {
+router.post('/collections/:id/documents/crawl', knowledgeHeavyLimiter, async (req, res) => {
   const collectionId = req.params.id;
   const { url, maxDepth = 2, maxPages = 15 } = req.body;
 
@@ -447,7 +483,7 @@ router.get('/documents/:id/tree', async (req, res) => {
 });
 
 // ── POST /api/knowledge/search — test vector search across collections ──
-router.post('/search', async (req, res) => {
+router.post('/search', knowledgeHeavyLimiter, async (req, res) => {
   try {
     const { query, collectionIds = [], topK = 6 } = req.body;
     const searchResult = await searchKnowledgeCollections({

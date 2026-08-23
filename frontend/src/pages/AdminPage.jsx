@@ -115,18 +115,10 @@ const AdminPage = () => {
     ? Object.entries(analytics.modelCounts).map(([name, value]) => ({ name, value }))
     : [];
 
-  // Build daily bar data
+  // Build daily bar data — the backend now aggregates by day server-side
+  // (get_admin_analytics RPC), so each row is already `{ day, queries, tokens }`.
   const dailyBarData = analytics
-    ? (() => {
-      const grouped = {};
-      (analytics.dailyUsage || []).forEach(r => {
-        const day = r.created_at?.slice(0, 10);
-        if (!grouped[day]) grouped[day] = { day, queries: 0, tokens: 0 };
-        grouped[day].queries++;
-        grouped[day].tokens += r.tokens_used || 0;
-      });
-      return Object.values(grouped).slice(-7);
-    })()
+    ? (analytics.dailyUsage || []).map(r => ({ day: r.day, queries: r.queries, tokens: r.tokens }))
     : [];
 
   return (

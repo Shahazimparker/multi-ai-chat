@@ -1,5 +1,11 @@
 const { approvalManager } = require('../services/approvalManager.shared');
 
+// human_approvals has no user_id on rows created before ownership tracking
+// existed. Treat those as owned by nobody (deny non-admins) rather than by
+// everybody — the opposite default would reopen the IDOR this check exists for.
+const canAccessApproval = (request, user) =>
+  Boolean(request.userId && user?.id && request.userId === user.id) || user?.role === 'admin';
+
 const listPendingApprovals = async (req, res) => {
   try {
     const approvals = await approvalManager.listPending('default');
@@ -37,6 +43,14 @@ const rejectRequest = async (req, res) => {
  */
 const respondFromChat = async (req, res) => {
   try {
+    const handler = approvalManager.getHandler('default');
+    const existing = await handler.getRequestFresh(req.params.id);
+    // 404, not 403, for both "doesn't exist" and "exists but isn't yours" —
+    // otherwise the endpoint becomes an oracle for which approval IDs are real.
+    if (!existing || !canAccessApproval(existing, req.user)) {
+      return res.status(404).json({ error: 'Approval request not found' });
+    }
+
     const { response, reason } = req.body;
     const approver = req.user?.email || req.user?.username || 'user';
 
@@ -56,8 +70,11 @@ const respondFromChat = async (req, res) => {
 const checkApprovalStatus = async (req, res) => {
   try {
     const handler = approvalManager.getHandler('default');
-    const request = await handler.getRequest(req.params.id);
-    if (!request) {
+    // Authoritative read: the chat lambda that created this approval and the
+    // one serving this status poll are frequently different instances, so the
+    // in-process cache getRequest() would use can be stale or simply empty here.
+    const request = await handler.getRequestFresh(req.params.id);
+    if (!request || !canAccessApproval(request, req.user)) {
       return res.status(404).json({ error: 'Approval request not found' });
     }
     res.json({ status: request.status, approval: request.toJSON() });

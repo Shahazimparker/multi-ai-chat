@@ -15,6 +15,14 @@ const BASE = 'http://localhost:5000/api';
 
 // File-scoped auth token + CSRF token — set once in the top-level beforeAll
 let globalAuthToken = null;
+
+// The CSRF middleware compares the X-CSRF-Token header against a csrf_token
+// cookie, so sending the header alone now fails exactly as a forgery would.
+// Every request in this file goes through here to keep the pair together.
+const cookieHeader = () => [
+  globalAuthToken ? `auth_token=${globalAuthToken}` : null,
+  globalCsrfToken ? `csrf_token=${globalCsrfToken}` : null,
+].filter(Boolean).join('; ');
 let globalCsrfToken = null;
 
 // ── Helper: Parse SSE events from a raw multi-event buffer ───
@@ -48,7 +56,7 @@ const streamUntil = async (body, stopWhen, maxWaitMs = 30000) => {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(globalAuthToken ? { Cookie: `auth_token=${globalAuthToken}` } : {}),
+      ...(globalAuthToken ? { Cookie: cookieHeader() } : {}),
       ...(globalCsrfToken ? { 'X-CSRF-Token': globalCsrfToken } : {}),
     },
     body: JSON.stringify(body),
@@ -93,7 +101,7 @@ const postRespond = (approvalId, body) =>
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(globalAuthToken ? { Cookie: `auth_token=${globalAuthToken}` } : {}),
+      ...(globalAuthToken ? { Cookie: cookieHeader() } : {}),
       ...(globalCsrfToken ? { 'X-CSRF-Token': globalCsrfToken } : {}),
     },
     body: JSON.stringify(body),
@@ -102,7 +110,7 @@ const postRespond = (approvalId, body) =>
 // ── Helper: GET approval status ──────────────────────────────
 const getStatus = (approvalId) =>
   fetch(`${BASE}/approval/${approvalId}/status`, {
-    headers: globalAuthToken ? { Cookie: `auth_token=${globalAuthToken}` } : {},
+    headers: globalAuthToken ? { Cookie: cookieHeader() } : {},
   });
 
 // ── Top-level auth setup ─────────────────────────────────────
@@ -162,7 +170,11 @@ describe('1 — Health Check', () => {
 // ════════════════════════════════════════════════════════════
 describe('2 — Model Listing', () => {
   it('GET /api/chat/models returns a non-empty model array', async () => {
-    const res = await fetch(`${BASE}/chat/models`);
+    if (!globalAuthToken) {
+      console.warn('[Test 2] No auth token, skipping');
+      return;
+    }
+    const res = await fetch(`${BASE}/chat/models`, { headers: { Cookie: cookieHeader() } });
     const data = await res.json();
     expect(res.status).toBe(200);
     expect(Array.isArray(data.models)).toBe(true);
@@ -186,7 +198,7 @@ describe('3 — Approval API: unknown ID (no auth needed for error check)', () =
       return;
     }
     const res = await fetch(`${BASE}/approval/${UNKNOWN_ID}/status`, {
-      headers: { Cookie: `auth_token=${globalAuthToken}` },
+      headers: { Cookie: cookieHeader() },
     });
     expect(res.status).toBe(404);
     const data = await res.json();
@@ -483,7 +495,7 @@ describe('10 — Abort signal: cancel stream mid-approval', () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Cookie: `auth_token=${globalAuthToken}`,
+        Cookie: cookieHeader(),
       },
       body: JSON.stringify({
         modelId: 'deepseek-v4-flash',

@@ -360,8 +360,12 @@ const buildArtifactClarificationEvent = (artifact, rawMessage = '') => {
   };
 };
 
-// Per-request ceiling for unauthenticated callers. Mirrors the value the
-// tokenCheck middleware advertises, which nothing previously enforced.
+// Anonymous chat is no longer reachable — chat.routes.js requires auth on
+// both /message and /stream, and tokenCheck.js now 401s if req.user is
+// somehow still missing. This constant survives only as the per-request
+// ceiling for callers that invoke the pipeline directly (e.g. tests), and as
+// a fail-safe should an anonymous entry point ever come back — without it an
+// unauthenticated caller could spend without bound.
 const ANONYMOUS_TOKEN_LIMIT = Number.parseInt(process.env.ANONYMOUS_TOKEN_LIMIT, 10) || 10000;
 
 // Hard ceiling on client-supplied history turns, independent of token budget —

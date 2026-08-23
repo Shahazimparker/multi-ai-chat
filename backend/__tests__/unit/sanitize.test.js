@@ -1,6 +1,6 @@
 // vitest globals: describe, it, expect
 
-const { sanitizeInput } = require('../../middleware/sanitize');
+const { sanitizeInput, sanitizeText } = require('../../middleware/sanitize');
 
 describe('sanitizeInput', () => {
   it('returns non-string input unchanged', () => {
@@ -53,5 +53,52 @@ describe('sanitizeInput', () => {
     expect(sanitizeInput('<img src=x onerror=alert(1)>')).toBe('');
     expect(sanitizeInput('<svg onload=alert(1)>')).toBe('');
     expect(sanitizeInput('javascript:alert(1)')).toBe('javascript:alert(1)');
+  });
+
+  it('still strips tags for identifier-style fields (unchanged, strict path)', () => {
+    expect(sanitizeInput('<script>alert(1)</script>modelId')).toBe('alert(1)modelId');
+    expect(sanitizeInput('claude-sonnet-5<b>')).toBe('claude-sonnet-5');
+  });
+});
+
+describe('sanitizeText', () => {
+  it('returns non-string input unchanged', () => {
+    expect(sanitizeText(123)).toBe(123);
+    expect(sanitizeText(null)).toBe(null);
+    expect(sanitizeText(undefined)).toBe(undefined);
+    expect(sanitizeText({ key: 'value' })).toEqual({ key: 'value' });
+  });
+
+  it('preserves generic type syntax verbatim', () => {
+    const code = 'function f(x: Array<string>): Map<string, number> {}';
+    expect(sanitizeText(code)).toBe(code);
+  });
+
+  it('preserves comparison operators verbatim', () => {
+    const code = 'Compare a < b && c > d in JS';
+    expect(sanitizeText(code)).toBe(code);
+  });
+
+  it('does not strip HTML-looking tags — this is not an HTML sink', () => {
+    expect(sanitizeText('<div>hello</div>')).toBe('<div>hello</div>');
+  });
+
+  it('still strips control characters', () => {
+    expect(sanitizeText('hello\u0000\u0001world')).toBe('helloworld');
+    expect(sanitizeText('a\u001Bb')).toBe('ab');
+  });
+
+  it('still normalizes \u2028/\u2029 line separators to a space', () => {
+    expect(sanitizeText('line1\u2028line2')).toBe('line1 line2');
+    expect(sanitizeText('line1\u2029line2')).toBe('line1 line2');
+  });
+
+  it('trims leading/trailing whitespace but preserves internal whitespace', () => {
+    expect(sanitizeText('  hello   world  ')).toBe('hello   world');
+  });
+
+  it('preserves newlines and multi-line code blocks', () => {
+    const codeBlock = 'function foo() {\n  return "bar";\n}';
+    expect(sanitizeText(codeBlock)).toBe(codeBlock);
   });
 });

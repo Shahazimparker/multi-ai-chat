@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 
 // Replaces react-scripts (Create React App), which has been unmaintained since
 // 2023 and was the source of every frontend audit finding.
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
 
   server: {
@@ -22,7 +22,9 @@ export default defineConfig({
   // CRA emitted to build/. Kept so frontend/vercel.json and .gitignore still apply.
   build: {
     outDir: 'build',
-    sourcemap: true,
+    // Source maps ship the full un-minified source. Keep them for dev debugging
+    // only; production builds must not leak source to the CDN.
+    sourcemap: mode !== 'production',
   },
 
   test: {
@@ -30,6 +32,7 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/setupTests.js'],
     include: ['src/**/*.{test,spec}.{js,jsx}'],
+    pool: 'threads',
     css: false,
   },
-});
+}));

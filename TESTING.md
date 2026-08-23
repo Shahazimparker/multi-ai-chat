@@ -30,7 +30,7 @@ This is the current test reference for the repo. It reflects the live backend/fr
 - `/api/chat/stream` returns real provider-token SSE chunks (no artificial `setTimeout` delays) and a final `done` event.
 - Artifact requests run on whichever model is selected — the `model_switch_required` gate and its `allowArtifactWithCurrentModel` override were removed, so no model-switch modal should ever appear.
 - `/api/chat/message` remains available only as legacy JSON compatibility.
-- OrchestratorBrain emits `framework_status` SSE events before provider token chunks and is covered by `backend/__tests__/unit/orchestratorBrain.test.js`, which uses the real model registry and real framework classes without mocks.
+- OrchestratorBrain is off by default (`ENABLE_ORCHESTRATOR_BRAIN=false`); `backend/__tests__/unit/orchestratorBrain.test.js` covers only module load and degraded-config behavior, not a live framework run.
 - Human approval deploy safety is covered by `backend/__tests__/unit/humanApproval.test.js`: approvals persist, return immediately in serverless mode, and can be approved by a separate manager instance.
 - Streaming test: verify chunks arrive progressively (not all at once at the end). Each chunk should contain valid JSON with `type: 'chunk'` and a `text` field.
 - Tool-call flows: during DB queries / web search, tool status events (`type: 'tool_status'`) are sent. The final answer streams in naturally after tools complete.

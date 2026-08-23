@@ -192,9 +192,9 @@ describe('PDFLoader routing', () => {
   const { PDFLoader } = loaders;
 
   // The text-layer parser is injected rather than exercised for real. Building
-  // a synthetic PDF that satisfies pdf-parse's vendored pdf.js 1.10.100 proved
-  // impossible to do reliably — and the subject here is PDFLoader's ROUTING
-  // decision, not pdf.js. Real parsing is covered by the parser's own library.
+  // a synthetic PDF that satisfies pdfjs-dist (pdf-parse v2's engine) proved
+  // unreliable — and the subject here is PDFLoader's ROUTING decision, not
+  // pdf.js. Real parsing is covered by the parser's own library.
   const textLayer = (text, numpages = 1) => async () => ({ text, numpages });
   const brokenParser = async () => { throw new Error('bad XRef entry'); };
 
@@ -224,8 +224,7 @@ describe('PDFLoader routing', () => {
   it('falls back to OCR when the parser throws', async () => {
     const ocr = vi.fn().mockResolvedValue('recovered by ocr');
 
-    // This is the real-world pdfkit case: pdf-parse raises "bad XRef entry"
-    // on PDFs this very application generates.
+    // Parser failures still fall back to OCR rather than failing the document.
     const doc = await PDFLoader.load(PDF, 'broken.pdf', ocr, brokenParser);
 
     expect(doc.content).toBe('recovered by ocr');

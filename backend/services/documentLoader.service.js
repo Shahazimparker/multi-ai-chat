@@ -7,9 +7,28 @@
 // ============================================================
 
 const path = require('path');
-const pdfParse = require('pdf-parse');
+const { PDFParse } = require('pdf-parse');
 const mammoth = require('mammoth');
 const ExcelJS = require('exceljs');
+
+// pdf-parse v2 replaced the `pdfParse(buffer)` callable with a `PDFParse` class
+// backed by pdfjs-dist 5.x (v1 vendored pdf.js 1.10.100 from 2018). This adapter
+// keeps the v1-shaped contract the rest of PDFLoader relies on:
+// `(buffer) => Promise<{ text, numpages }>`.
+const parsePdfBuffer = async (buffer) => {
+  // Copy before handing the bytes to pdfjs: it may transfer ownership of a
+  // TypedArray to its worker thread, which would detach the caller's Buffer
+  // (`.length` silently becomes 0) and corrupt the `size` metadata below.
+  const parser = new PDFParse({ data: Uint8Array.from(buffer) });
+  try {
+    // pageJoiner: '' keeps raw concatenated text; the v2 default inserts
+    // "-- page_number of total_number --" markers between pages.
+    const result = await parser.getText({ pageJoiner: '' });
+    return { text: String(result?.text || ''), numpages: Number(result?.total) || 0 };
+  } finally {
+    await parser.destroy();
+  }
+};
 
 // Supported file types and their loaders
 const SUPPORTED_FORMATS = {
@@ -148,15 +167,14 @@ const PDFLoader = {
    *
    *   - A scanned page has no text layer, so pdf-parse returns an empty string
    *     and the document would otherwise enter the index carrying nothing.
-   *   - pdf-parse 1.1.4 vendors pdf.js 1.10.100 (2018) and throws on plenty of
-   *     modern PDFs — including, verified, the ones this app generates with
-   *     pdfkit ("bad XRef entry").
+   *   - pdf-parse v2 (pdfjs-dist 5.x) handles modern PDFs well; OCR remains the
+   *     fallback for scanned pages and for anything the text layer can't cover.
    *
    * @param {Function|null} pdfOcrCall async (buffer, fileName) => string|null
    * @param {Function} parse text-layer parser; injectable so the routing above
-   *   can be tested without hand-crafting a PDF that satisfies pdf.js 1.10.100
+   *   can be tested without hand-crafting a PDF that satisfies pdfjs-dist
    */
-  async load(buffer, fileName, pdfOcrCall = null, parse = pdfParse) {
+  async load(buffer, fileName, pdfOcrCall = null, parse = parsePdfBuffer) {
     let text = '';
     let pages = 0;
     let parseError = null;
