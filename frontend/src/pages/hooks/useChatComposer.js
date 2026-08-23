@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 
-const visionProviders = ['openai', 'gemini', 'claude'];
-const visionOpenRouterModels = ['gemini', 'gpt', 'claude'];
+const visionProviders = ['openai', 'gemini', 'claude', 'deepseek'];
+const visionOpenRouterModels = ['gemini', 'gpt', 'claude', 'deepseek'];
 
 export const useChatComposer = () => {
   const [input, setInput] = useState('');
@@ -20,6 +20,7 @@ export const useChatComposer = () => {
       const provider = model?.provider;
       const modelId = model?.model || '';
       const supportsVision =
+        Boolean(model?.supportsVision) ||
         visionProviders.includes(provider) ||
         (provider === 'openrouter' && visionOpenRouterModels.some((value) => modelId.includes(value)));
 

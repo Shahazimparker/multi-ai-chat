@@ -67,6 +67,12 @@ const visionChain = () => {
 
   const paid = [
     {
+      provider: 'deepseek',
+      model: process.env.VISION_DEEPSEEK_MODEL || 'deepseek-v4-flash',
+      apiKey: process.env.DEEPSEEK_API_KEY,
+      tier: 'paid',
+    },
+    {
       provider: 'openrouter',
       model: process.env.VISION_MODEL || 'google/gemini-2.5-flash-lite',
       apiKey: process.env.OPENROUTER_API_KEY,

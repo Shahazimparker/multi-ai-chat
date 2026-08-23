@@ -37,6 +37,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   clearCooldowns();
   process.env = { ...ENV_SNAPSHOT };
+  process.env.DEEPSEEK_API_KEY = 'test-deepseek';
   process.env.OPENROUTER_API_KEY = 'test-openrouter';
   process.env.MISTRAL_SUMMARY_API_KEY = 'test-mistral';
   delete process.env.VISION_PREFER_FREE;
@@ -52,6 +53,8 @@ describe('chain ordering', () => {
     const chain = visionChain();
     expect(chain[0].tier).toBe('free');
     expect(chain[0].provider).toBe('mistral');
+    expect(chain[1].provider).toBe('deepseek');
+    expect(chain[1].tier).toBe('paid');
     expect(chain.slice(1).every((c) => c.tier === 'paid')).toBe(true);
   });
 
@@ -59,7 +62,8 @@ describe('chain ordering', () => {
     process.env.VISION_PREFER_FREE = 'false';
     const chain = visionChain();
     expect(chain[0].tier).toBe('paid');
-    expect(chain[0].model).toContain('gemini');
+    expect(chain[0].provider).toBe('deepseek');
+    expect(chain[0].model).toBe('deepseek-v4-flash');
   });
 
   it('prefers the background key but still runs on the primary one', () => {
@@ -78,8 +82,9 @@ describe('chain ordering', () => {
   });
 
   it('drops providers with no key configured', () => {
+    delete process.env.DEEPSEEK_API_KEY;
     delete process.env.OPENROUTER_API_KEY;
-    expect(visionChain().every((c) => c.provider !== 'openrouter')).toBe(true);
+    expect(visionChain().every((c) => c.provider !== 'deepseek' && c.provider !== 'openrouter')).toBe(true);
   });
 });
 
@@ -115,7 +120,7 @@ describe('extraction', () => {
     const { text, provider } = await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
 
     expect(dispatch).toHaveBeenCalledTimes(2);
-    expect(provider).toContain('openrouter');
+    expect(provider).toContain('deepseek');
     expect(text).toBe('recovered text');
   });
 
@@ -186,7 +191,7 @@ describe('rate-limit cooldown', () => {
     // Five images, as a bulk ingest would send.
     for (let i = 0; i < 5; i++) {
       const { provider } = await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
-      expect(provider).toContain('openrouter');
+      expect(provider).toContain('deepseek');
     }
 
     const mistralCalls = dispatch.mock.calls.filter((c) => c[0].provider === 'mistral');

@@ -34,6 +34,7 @@ router.get('/models', requireAuth, (req, res) => {
     provider: cfg.provider,
     paid: cfg.paid,
     unified: !!cfg.unified,
+    supportsVision: !!cfg.supportsVision,
     models: cfg.models || [],
     // null when the model cannot think — the UI greys the Thinking button out.
     reasoning: describeReasoning(cfg),

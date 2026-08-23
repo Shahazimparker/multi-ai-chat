@@ -43,6 +43,7 @@ const MODELS = {
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: 'deepseek-v4-flash',
     paid: true,
+    supportsVision: true,
     maxTokens: 128000,
     reasoning: { levels: ['high', 'max'], default: 'high', canDisable: true },
   },
@@ -52,6 +53,7 @@ const MODELS = {
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: 'deepseek-v4-pro',
     paid: true,
+    supportsVision: true,
     maxTokens: 128000,
     reasoning: { levels: ['high', 'max'], default: 'high', canDisable: true },
   },
@@ -111,6 +113,7 @@ const MODELS = {
     // GA (not preview) since 2026-08-13; free tier with rate limits.
     model: 'gemini-3.7-flash',
     paid: false,
+    supportsVision: true,
     maxTokens: 5999,
     // 3.7 dropped "minimal", which 3.6 accepted — sending it now is an error.
     reasoning: {
@@ -127,6 +130,7 @@ const MODELS = {
     // GA, and the most generous free-tier rate limits of the Gemini models.
     model: 'gemini-3.5-flash-lite',
     paid: false,
+    supportsVision: true,
     maxTokens: 5999,
     // Defaults to minimal rather than medium — Lite is the cheap, fast tier and
     // Google tunes it for the least reasoning, not a balanced amount.
@@ -149,6 +153,7 @@ const MODELS = {
     // line moved behind billing, leaving Flash and Flash-Lite on the free tier.
     model: 'gemini-3.1-pro-preview',
     paid: true,
+    supportsVision: true,
     maxTokens: 5999,
     reasoning: {
       levels: ['low', 'medium', 'high'],
@@ -200,6 +205,7 @@ const MODELS = {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: 'claude-haiku-4-5-20251001',
     paid: true,
+    supportsVision: true,
     maxTokens: 100000,
     reasoning: { levels: [], default: null, canDisable: true, label: 'Extended thinking' },
   },
@@ -209,6 +215,7 @@ const MODELS = {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: 'claude-sonnet-5',
     paid: true,
+    supportsVision: true,
     maxTokens: 200000,
     reasoning: {
       levels: ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -222,6 +229,7 @@ const MODELS = {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: 'claude-opus-4-8',
     paid: true,
+    supportsVision: true,
     maxTokens: 200000,
     reasoning: {
       levels: ['low', 'medium', 'high', 'xhigh', 'max'],
