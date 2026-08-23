@@ -121,9 +121,27 @@ app.use((req, res, next) => {
 });
 app.use(csrfProtection);
 
+const supabase = require('./config/supabase');
+
 // ── Health check (used by Vercel / uptime monitors) ────────
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+app.get('/api/health', async (req, res) => {
+  try {
+    const { error } = await supabase.from('users').select('id').limit(1);
+    if (error) throw error;
+    res.json({
+      status: 'OK',
+      database: 'connected',
+      environment: process.env.NODE_ENV || 'development',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: 'DEGRADED',
+      database: 'disconnected',
+      error: err.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 // ── API routes ──────────────────────────────────────────────

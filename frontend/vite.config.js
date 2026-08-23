@@ -25,6 +25,29 @@ export default defineConfig(({ mode }) => ({
     // Source maps ship the full un-minified source. Keep them for dev debugging
     // only; production builds must not leak source to the CDN.
     sourcemap: mode !== 'production',
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router')) {
+              return 'vendor-react';
+            }
+            if (id.includes('lucide-react')) {
+              return 'vendor-icons';
+            }
+            if (id.includes('react-markdown') || id.includes('remark-gfm') || id.includes('react-syntax-highlighter') || id.includes('refractor')) {
+              return 'vendor-markdown';
+            }
+            if (id.includes('recharts') || id.includes('d3-') || id.includes('victory-vendor')) {
+              return 'vendor-charts';
+            }
+            if (id.includes('@sentry')) {
+              return 'vendor-sentry';
+            }
+          }
+        },
+      },
+    },
   },
 
   test: {
