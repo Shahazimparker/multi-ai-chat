@@ -18,6 +18,8 @@ export const useChatSession = ({ refreshTokenStats }) => {
   const [historyLimit, setHistoryLimit] = useState(8);
   const [ragEnabled, setRagEnabled] = useState(true);
   const [storeInDb, setStoreInDb] = useState(false);
+  const storeInDbRef = useRef(false);
+  storeInDbRef.current = storeInDb;
   const [selectedCollectionIds, setSelectedCollectionIds] = useState([]);
   const [unifiedProvider, setUnifiedProvider] = useState(null);
   const [providerModelId, setProviderModelId] = useState(null);
@@ -184,7 +186,9 @@ export const useChatSession = ({ refreshTokenStats }) => {
     let blobResult = null;
     let blobUploadSucceeded = false;
 
-    if (storeInDb) {
+    const isDbMode = Boolean(storeInDbRef.current || storeInDb);
+
+    if (isDbMode) {
       if (file.size > 4.5 * 1024 * 1024) {
         const proceed = window.confirm(
           `⚠️ Storage Warning:\n\n"${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds 4.5MB.\n\nDirect database uploads (upgDB) may encounter serverless request payload limits and will consume significant PostgreSQL quota.\n\nDo you want to proceed with direct database upload anyway?`
@@ -334,7 +338,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
         xhr.send(formData);
       }
     });
-  }, [model, ragEnabled]);
+  }, [model, ragEnabled, storeInDb]);
 
   const sendMessage = useCallback(async (msgText, filesArr, image, isRetry = false, forceWebSearch = false) => {
     let finalMessage = String(msgText).trim();
