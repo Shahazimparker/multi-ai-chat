@@ -134,9 +134,21 @@ const getMimeType = (fileName) => {
 };
 const { requireAuth } = require('../middleware/auth');
 const supabase = require('../config/supabase');
-const { processUploadedFile, searchUserFilesRAG, getFileContent, getFileContentById, deleteUploadedFile, getSupportedFileType, listAllUserFiles, saveGeneratedFile } = require('../services/fileUpload.service');
+const {
+  processUploadedFile,
+  searchUserFilesRAG,
+  getFileContent,
+  getFileContentById,
+  deleteUploadedFile,
+  getSupportedFileType,
+  isRiskyFileType,
+  listAllUserFiles,
+  saveGeneratedFile,
+} = require('../services/fileUpload.service');
 const { generateImage } = require('../services/imageGeneration.service');
 const { generatePPT } = require('../services/pptGeneration.service');
+const { handleUpload } = require('@vercel/blob/client');
+const { isBlobConfigured, fetchPrivateBlobBuffer } = require('../services/blobStorage.service');
 
 
 // Use OS temp dir so uploaded files don't trigger nodemon restarts
@@ -192,6 +204,200 @@ const uploadTimeout = (req, res, next) => {
 };
 
 /**
+ * GET /api/upload/config
+ * Returns storage configuration (whether private Vercel Blob is active)
+ */
+router.get('/config', (req, res) => {
+  const blobActive = isBlobConfigured();
+  res.json({
+    blobEnabled: blobActive,
+    maxFileSizeBytes: blobActive ? 50 * 1024 * 1024 : MAX_UPLOAD_BYTES,
+    maxFileSizeLabel: blobActive ? '50MB' : '4MB',
+  });
+});
+
+/**
+ * POST /api/upload/blob-handler
+ * Direct browser-to-blob client upload token generator (@vercel/blob/client)
+ */
+router.post('/blob-handler', requireAuth, uploadHeavyLimiter, async (req, res) => {
+  try {
+    const jsonResponse = await handleUpload({
+      body: req.body,
+      request: req,
+      onBeforeGenerateToken: async (pathname, clientPayload) => {
+        if (!req.user || !req.user.id) {
+          throw new Error('Unauthorized');
+        }
+
+        if (pathname && isRiskyFileType(pathname)) {
+          const ext = path.extname(pathname).slice(1);
+          throw new Error(`Files of type ".${ext}" are executable or system binaries and cannot be uploaded for security reasons.`);
+        }
+
+        return {
+          access: 'private',
+          tokenPayload: JSON.stringify({
+            userId: req.user.id,
+            uploadedAt: Date.now(),
+          }),
+        };
+      },
+      onUploadCompleted: async ({ blob, tokenPayload }) => {
+        console.log('[BlobHandler] Direct upload completed webhook:', blob.url);
+      },
+    });
+
+    return res.json(jsonResponse);
+  } catch (err) {
+    console.error('[BlobHandler] Token generation error:', err.message);
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/upload/process-blob
+ * Process and embed a file already uploaded directly to private Vercel Blob
+ */
+router.post('/process-blob', requireAuth, uploadHeavyLimiter, uploadTimeout, async (req, res) => {
+  let sessionId = null;
+  let abortController = null;
+  let updateSession = null;
+
+  const { blobUrl, fileName, topicId, modelId, ragEnabled } = req.body;
+
+  if (!blobUrl || !fileName) {
+    return res.status(400).json({ error: 'blobUrl and fileName are required' });
+  }
+
+  abortController = new AbortController();
+  sessionId = crypto.randomUUID();
+  uploadSessions.set(sessionId, {
+    controller: abortController,
+    userId: req.user.id,
+    status: 'processing',
+    progress: 0,
+    message: 'Starting file processing...',
+    phase: 'downloading',
+    result: null,
+    error: null,
+    ts: Date.now(),
+  });
+
+  updateSession = (updates) => {
+    const s = uploadSessions.get(sessionId);
+    if (s) Object.assign(s, updates, { ts: Date.now() });
+  };
+
+  try {
+    const onDisconnect = () => {
+      console.log('[Upload:Blob] Client disconnected. Processing continues in background.');
+    };
+    req.on('close', onDisconnect);
+    req.on('aborted', onDisconnect);
+    res.on('close', onDisconnect);
+
+    const safeFileName = sanitizeFilename(fileName);
+
+    if (isRiskyFileType(safeFileName)) {
+      updateSession({ status: 'error', error: 'Blocked file type' });
+      return res.status(400).json({ error: `Files of type ".${path.extname(safeFileName).slice(1)}" are executable or system binaries and cannot be uploaded for security reasons.` });
+    }
+
+    const fileType = getSupportedFileType(safeFileName);
+
+    if (fileType === 'other') {
+      updateSession({ status: 'error', error: 'Unsupported file type' });
+      return res.status(400).json({ error: `Unsupported file type for "${fileName}". Supported: text, code, PDF, Word, Excel/CSV, images and ZIP.` });
+    }
+
+    // SSE setup
+    try {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      });
+      res.flushHeaders();
+    } catch (sseErr) {
+      console.error('[Upload:Blob] SSE setup failed:', sseErr);
+      if (!res.headersSent) {
+        return res.status(500).json({ error: 'SSE setup failed' });
+      }
+    }
+    try {
+      if (res.socket) res.socket.setNoDelay(true);
+    } catch (noDelayErr) {
+      console.error('[Upload:Blob] setNoDelay failed:', noDelayErr);
+    }
+
+    const sendProgress = (data) => {
+      if (data.type === 'progress') {
+        updateSession({ progress: data.percent, message: data.message || '', phase: data.phase || 'processing' });
+      }
+      if (!res.writableEnded && !res.destroyed) {
+        try {
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        } catch (writeErr) {
+          console.error('[Upload:Blob] SSE write error:', writeErr);
+        }
+      }
+    };
+
+    sendProgress({ type: 'init', sessionId, percent: 0, message: 'Processing uploaded file from storage...' });
+
+    const isRagEnabled = ragEnabled === 'true' || ragEnabled === true;
+
+    const result = await processUploadedFile(
+      null,
+      safeFileName,
+      fileType,
+      req.user.id,
+      topicId,
+      modelId,
+      abortController.signal,
+      isRagEnabled,
+      sendProgress,
+      blobUrl
+    );
+
+    if (result.tokensUsed > 0) {
+      const { error: tokenErr } = await supabase.rpc('increment_user_tokens', {
+        user_id: req.user.id,
+        token_amount: result.tokensUsed,
+      });
+      if (tokenErr) {
+        console.warn('[Upload:Blob] Token deduction failed:', tokenErr.message);
+      }
+    }
+
+    updateSession({ status: 'done', progress: 100, phase: 'complete', result });
+
+    sendProgress({
+      type: 'done',
+      success: true,
+      ...result,
+      message: result.message,
+      extractedText: result.extractedText,
+    });
+    res.end();
+  } catch (err) {
+    const isAbort = err.name === 'AbortError' || err.name === 'CanceledError' || err.message === 'Upload cancelled by user';
+    updateSession({ status: isAbort ? 'aborted' : 'error', error: err.message });
+    console.error(`[Upload:Blob] ${isAbort ? 'Aborted' : 'Error'}:`, err.message);
+
+    if (!res.writableEnded && !res.destroyed) {
+      try {
+        res.write(`data: ${JSON.stringify({ type: isAbort ? 'aborted' : 'error', error: err.message || 'Blob processing failed' })}\n\n`);
+        res.end();
+      } catch (writeErr) {
+        console.error('[Upload:Blob] Failed to send error via SSE:', writeErr);
+      }
+    }
+  }
+});
+
+/**
  * POST /api/upload/file
  * Upload and process a file
  */
@@ -235,6 +441,17 @@ router.post('/file', requireAuth, uploadHeavyLimiter, uploadTimeout, uploadSingl
 
     const { topicId, modelId } = req.body;
     const fileName = req.file.originalname;
+
+    if (isRiskyFileType(fileName)) {
+      updateSession({ status: 'error', error: 'Blocked file type' });
+      try {
+        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      } catch (cleanupErr) {
+        console.warn('[Upload] Failed to clean temp file:', cleanupErr.message);
+      }
+      return res.status(400).json({ error: `Files of type ".${path.extname(fileName).slice(1)}" are executable or system binaries and cannot be uploaded for security reasons.` });
+    }
+
     const fileType = getSupportedFileType(req.file.originalname);
 
     // An unrecognized extension falls into documentLoader's catch-all path, which
@@ -247,7 +464,7 @@ router.post('/file', requireAuth, uploadHeavyLimiter, uploadTimeout, uploadSingl
       } catch (cleanupErr) {
         console.warn('[Upload] Failed to clean temp file:', cleanupErr.message);
       }
-      return res.status(400).json({ error: `Unsupported file type for "${fileName}". Supported: text, code, PDF, Word, Excel/CSV, images and ZIP.` });
+      return res.status(400).json({ error: `Unsupported file type for "${fileName}". Supported: text, logs, code, PDF, Word, Excel/CSV, images and ZIP.` });
     }
 
     // ── SSE setup ──
@@ -475,7 +692,22 @@ router.get('/download/:fileId', requireAuth, async (req, res) => {
     }
     const fileName = fileData.file_name || `file_${fileId}`;
 
-    // If original binary data exists, serve it with correct MIME type
+    // If stored in private Vercel Blob, fetch and stream it
+    if (fileData.blob_url) {
+      try {
+        const safeName = sanitizeFilename(fileName);
+        const mime = getMimeType(safeName);
+        const buffer = await fetchPrivateBlobBuffer(fileData.blob_url);
+        res.setHeader('Content-Type', mime);
+        res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+        return res.send(buffer);
+      } catch (blobErr) {
+        console.error(`[Upload:Download] Failed to fetch private blob ${fileData.blob_url}:`, blobErr.message);
+        // Fall back to original_content if blob download fails
+      }
+    }
+
+    // If original binary data exists in DB, serve it with correct MIME type
     if (fileData.original_file_data) {
       const safeName = sanitizeFilename(fileName);
       const mime = getMimeType(safeName);

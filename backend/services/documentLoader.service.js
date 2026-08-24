@@ -44,46 +44,167 @@ const parsePdfBuffer = async (buffer) => {
 
 // Supported file types and their loaders
 const SUPPORTED_FORMATS = {
+  // Text & Logs
   txt: 'text',
-  csv: 'spreadsheet',
-  json: 'text',
+  text: 'text',
+  log: 'text',
+  rtf: 'text',
+  tex: 'text',
+  latex: 'text',
+  rst: 'text',
+  adoc: 'text',
+  asciidoc: 'text',
+  srt: 'text',
+  vtt: 'text',
+  sub: 'text',
+
+  // Markdowns
   md: 'text',
-  html: 'code',
-  xml: 'code',
-  sql: 'code',
-  sh: 'code',
-  bat: 'code',
-  js: 'code',
-  ts: 'code',
-  tsx: 'code',
-  jsx: 'code',
-  py: 'code',
-  java: 'code',
-  cpp: 'code',
-  c: 'code',
-  go: 'code',
-  rb: 'code',
-  php: 'code',
-  rs: 'code',
-  swift: 'code',
-  kt: 'code',
-  vue: 'code',
-  svelte: 'code',
-  css: 'code',
-  scss: 'code',
-  yaml: 'code',
-  yml: 'code',
+  markdown: 'text',
+  mdown: 'text',
+  mkdn: 'text',
+  mdx: 'text',
+
+  // Spreadsheets & Tabular Data
+  csv: 'spreadsheet',
+  tsv: 'spreadsheet',
+  tab: 'spreadsheet',
   xlsx: 'spreadsheet',
   xls: 'spreadsheet',
+  xlsm: 'spreadsheet',
+  xlsb: 'spreadsheet',
+  ods: 'spreadsheet',
+
+  // Documents
   pdf: 'pdf',
   doc: 'document',
   docx: 'document',
+  dot: 'document',
+  dotx: 'document',
+  odt: 'document',
+  epub: 'document',
+  pages: 'document',
+  ppt: 'document',
+  pptx: 'document',
+  odp: 'document',
+  key: 'document',
+
+  // Images
   jpg: 'image',
   jpeg: 'image',
   png: 'image',
   gif: 'image',
   webp: 'image',
+  bmp: 'image',
+  tiff: 'image',
+  tif: 'image',
+  ico: 'image',
+  svg: 'code',
+
+  // Archives
   zip: 'archive',
+  tar: 'archive',
+  gz: 'archive',
+  tgz: 'archive',
+  '7z': 'archive',
+  rar: 'archive',
+  bz2: 'archive',
+  xz: 'archive',
+
+  // Web & Scripting
+  html: 'code',
+  htm: 'code',
+  xhtml: 'code',
+  css: 'code',
+  scss: 'code',
+  sass: 'code',
+  less: 'code',
+  xml: 'code',
+  json: 'text',
+  jsonl: 'text',
+  ndjson: 'text',
+  geojson: 'text',
+  json5: 'text',
+  yaml: 'code',
+  yml: 'code',
+  toml: 'code',
+  ini: 'code',
+  conf: 'code',
+  cfg: 'code',
+  config: 'code',
+  properties: 'code',
+  env: 'code',
+  lock: 'code',
+
+  // Programming Languages
+  js: 'code',
+  mjs: 'code',
+  cjs: 'code',
+  jsx: 'code',
+  ts: 'code',
+  mts: 'code',
+  cts: 'code',
+  tsx: 'code',
+  py: 'code',
+  pyw: 'code',
+  ipynb: 'code',
+  java: 'code',
+  kt: 'code',
+  kts: 'code',
+  scala: 'code',
+  groovy: 'code',
+  cpp: 'code',
+  hpp: 'code',
+  cc: 'code',
+  cxx: 'code',
+  c: 'code',
+  h: 'code',
+  cs: 'code',
+  go: 'code',
+  rb: 'code',
+  php: 'code',
+  pl: 'code',
+  pm: 'code',
+  tcl: 'code',
+  lua: 'code',
+  r: 'code',
+  jl: 'code',
+  dart: 'code',
+  rs: 'code',
+  zig: 'code',
+  d: 'code',
+  nim: 'code',
+  swift: 'code',
+  m: 'code',
+  mm: 'code',
+  vue: 'code',
+  svelte: 'code',
+  astro: 'code',
+
+  // Terminal & Shells
+  sh: 'code',
+  bash: 'code',
+  zsh: 'code',
+  fish: 'code',
+  ps1: 'code',
+  psm1: 'code',
+  psd1: 'code',
+  bat: 'code',
+  cmd: 'code',
+
+  // Query & Schemas
+  sql: 'code',
+  psql: 'code',
+  plsql: 'code',
+  mysql: 'code',
+  cql: 'code',
+  graphql: 'code',
+  gql: 'code',
+  proto: 'code',
+  prisma: 'code',
+  dockerfile: 'code',
+  tf: 'code',
+  hcl: 'code',
 };
 
 /**
@@ -92,7 +213,14 @@ const SUPPORTED_FORMATS = {
  * @returns {string} loader type
  */
 const getLoaderType = (fileName) => {
-  const ext = path.extname(fileName).slice(1).toLowerCase();
+  if (!fileName || typeof fileName !== 'string') return 'unknown';
+  const base = path.basename(fileName).toLowerCase();
+
+  if (base === 'dockerfile' || base.startsWith('dockerfile.')) return 'code';
+  if (base === '.env' || base.startsWith('.env.')) return 'code';
+  if (base === '.gitignore' || base === '.dockerignore' || base === '.editorconfig') return 'code';
+
+  const ext = path.extname(base).slice(1).toLowerCase();
   return SUPPORTED_FORMATS[ext] || 'unknown';
 };
 

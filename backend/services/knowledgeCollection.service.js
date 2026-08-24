@@ -198,12 +198,17 @@ const deleteCollection = async (collectionId, userId) => {
 const deleteDocument = async (documentId, userId) => {
   const { data: doc } = await supabase
     .from('knowledge_documents')
-    .select('id, collection_id, user_id')
+    .select('id, collection_id, user_id, blob_url')
     .eq('id', documentId)
     .single();
 
   if (!doc || doc.user_id !== userId) {
     throw new Error('Document not found or unauthorized');
+  }
+
+  if (doc.blob_url) {
+    const { deleteBlobFromStorage } = require('./blobStorage.service');
+    await deleteBlobFromStorage(doc.blob_url);
   }
 
   const { error } = await supabase

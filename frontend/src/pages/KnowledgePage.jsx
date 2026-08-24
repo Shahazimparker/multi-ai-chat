@@ -9,10 +9,18 @@ import {
   CheckCircle2, Clock, AlertCircle, Database, Layers, Eye, RefreshCw, X, Shield, ExternalLink
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
-import api from '../config/api';
+import { upload as vercelBlobUpload } from '@vercel/blob/client';
+import api, { API_BASE_URL } from '../config/api';
 import { useAuth } from '../context/AuthContext';
 import ThemeToggle from '../components/layout/ThemeToggle';
 import './KnowledgePage.css';
+
+const BLOCKED_RISKY_EXTENSIONS = new Set([
+  'exe', 'dll', 'so', 'dylib', 'bin', 'com', 'scr', 'sys', 'drv',
+  'msi', 'msp', 'cpl', 'msc', 'hta', 'vbs', 'vbe', 'wsf', 'wsh',
+  'jar', 'apk', 'dmg', 'iso', 'img', 'deb', 'rpm', 'app', 'gadget',
+  'pif', 'vb', 'reg', 'chm'
+]);
 
 const KnowledgePage = () => {
   const { user } = useAuth();
@@ -144,7 +152,13 @@ const KnowledgePage = () => {
     e.stopPropagation();
     setIsDragging(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setUploadFile(e.dataTransfer.files[0]);
+      const file = e.dataTransfer.files[0];
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (BLOCKED_RISKY_EXTENSIONS.has(ext)) {
+        setErrorMessage(`Files of type ".${ext}" are executable or system binaries and cannot be added for security reasons.`);
+        return;
+      }
+      setUploadFile(file);
       setErrorMessage('');
     }
   };
@@ -153,19 +167,61 @@ const KnowledgePage = () => {
     e.preventDefault();
     if (!uploadFile || !activeCollection) return;
 
-    const formData = new FormData();
-    formData.append('file', uploadFile);
+    const ext = uploadFile.name.split('.').pop().toLowerCase();
+    if (BLOCKED_RISKY_EXTENSIONS.has(ext)) {
+      setErrorMessage(`Files of type ".${ext}" are executable or system binaries and cannot be added for security reasons.`);
+      return;
+    }
+
+    if (uploadFile.size > 50 * 1024 * 1024) {
+      setErrorMessage('File size exceeds the 50MB limit');
+      return;
+    }
 
     try {
       setActionLoading(true);
-      setStatusMessage('Ingesting & generating Parent-Child vector embeddings...');
       setErrorMessage('');
 
-      await api.post(`/knowledge/collections/${activeCollection.id}/documents/upload`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      let blobResult = null;
+      let blobUploadSucceeded = false;
+
+      try {
+        setStatusMessage(`Uploading "${uploadFile.name}" to private storage...`);
+        blobResult = await vercelBlobUpload(uploadFile.name, uploadFile, {
+          access: 'private',
+          handleUploadUrl: `${API_BASE_URL}/upload/blob-handler`,
+          onUploadProgress: (progress) => {
+            setStatusMessage(`Uploading to private storage (${Math.round(progress.percentage || 0)}%)...`);
+          },
+        });
+        if (blobResult?.url) {
+          blobUploadSucceeded = true;
+        }
+      } catch (blobErr) {
+        console.warn('[KnowledgeUpload] Direct blob upload failed, falling back:', blobErr.message);
+        if (uploadFile.size > 4 * 1024 * 1024) {
+          throw new Error(blobErr.message || 'Storage upload failed');
+        }
+      }
+
+      setStatusMessage('Ingesting & generating Parent-Child vector embeddings...');
+
+      if (blobUploadSucceeded) {
+        await api.post(`/knowledge/collections/${activeCollection.id}/documents/process-blob`, {
+          blobUrl: blobResult.url,
+          fileName: uploadFile.name,
+          fileSize: uploadFile.size,
+        });
+      } else {
+        const formData = new FormData();
+        formData.append('file', uploadFile);
+        await api.post(`/knowledge/collections/${activeCollection.id}/documents/upload`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+      }
+
       setShowUploadModal(false);
       setUploadFile(null);
       setStatusMessage('');
@@ -594,12 +650,12 @@ const KnowledgePage = () => {
                     setUploadFile(e.target.files[0] || null);
                     setErrorMessage('');
                   }}
-                  accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.md,.json,.js,.ts,.tsx,.jsx,.py,.html,.css,.sql,.yaml,.yml,.zip"
+                  accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.tsv,.txt,.log,.rtf,.tex,.md,.markdown,.json,.jsonl,.js,.mjs,.cjs,.ts,.tsx,.jsx,.py,.java,.c,.cpp,.h,.cs,.go,.rs,.rb,.php,.swift,.kt,.sh,.bash,.zsh,.ps1,.bat,.html,.css,.scss,.sql,.yaml,.yml,.toml,.xml,.zip"
                 />
                 <label htmlFor="km-file-upload" className="dropzone-label">
                   <Upload size={32} />
                   <span>{uploadFile ? uploadFile.name : 'Click to select or drag a file here'}</span>
-                  <small>Supports PDF, DOCX, CSV, Excel, TXT, Markdown, JSON, Code, ZIP</small>
+                  <small>Supports PDF, DOCX, CSV/TSV, Excel, TXT, Logs, Markdown, JSON, Code, ZIP</small>
                 </label>
               </div>
               {statusMessage && <div className="km-status">{statusMessage}</div>}

@@ -2,12 +2,14 @@
 
 This document is the technical reference for the current codebase state.
 
-## Architecture
+## Architecture & Cloud Infrastructure
 
-- Frontend: React app in `frontend/`
-- Backend: Node.js/Express API in `backend/`
-- Database: Supabase/PostgreSQL with `pgvector`
-- Deployment: Vercel (`frontend/vercel.json`, `backend/vercel.json`)
+- **Frontend**: React app in `frontend/` deployed on **Vercel (Free / Hobby Tier)** in region **Mumbai (`bom1`)**
+- **Backend**: Node.js/Express Serverless API in `backend/` deployed on **Vercel (Free / Hobby Tier)** in region **Mumbai (`bom1`)** with `maxDuration: 300`
+- **File Storage**: **Private Vercel Blob** (`multi-chat-upload-storage`) in **Mumbai (`bom1`)** supporting direct client-to-blob streaming up to **50MB** (`@vercel/blob/client`)
+- **Database**: Supabase PostgreSQL + `pgvector` hosted in **Singapore (`ap-southeast-1`)** on **Free Tier (500MB DB Limit)** using lean `blob_url` pointer storage
+- **Deployment Config**: `frontend/vercel.json`, `backend/vercel.json` (configured for `"regions": ["bom1"]`)
+- **Agent Rules**: [AGENTS.md](../AGENTS.md)
 
 ---
 

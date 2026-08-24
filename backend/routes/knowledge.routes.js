@@ -171,6 +171,15 @@ router.post('/collections/:id/documents/upload', handleMulterUpload, async (req,
   const collectionId = req.params.id;
   const tempPath = req.file.path;
   const originalName = sanitizeFilename(req.file.originalname);
+  const ext = path.extname(originalName).slice(1).toLowerCase();
+
+  const { isRiskyFileType } = require('../services/fileUpload.service');
+  if (isRiskyFileType(originalName)) {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch { /* clean up */ }
+    return res.status(400).json({ error: `Files of type ".${ext}" are executable or system binaries and cannot be added to the Knowledge Base.` });
+  }
 
   try {
     // 1. Verify collection access
@@ -248,6 +257,94 @@ router.post('/collections/:id/documents/upload', handleMulterUpload, async (req,
     try {
       if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
     } catch { /* clean up */ }
+  }
+});
+
+// ── POST /api/knowledge/collections/:id/documents/process-blob — ingest from Vercel Blob ──
+router.post('/collections/:id/documents/process-blob', knowledgeHeavyLimiter, async (req, res) => {
+  const collectionId = req.params.id;
+  const { blobUrl, fileName, fileSize } = req.body;
+
+  if (!blobUrl || !fileName) {
+    return res.status(400).json({ error: 'blobUrl and fileName are required' });
+  }
+
+  const originalName = sanitizeFilename(fileName);
+  const ext = path.extname(originalName).slice(1).toLowerCase();
+
+  const { isRiskyFileType } = require('../services/fileUpload.service');
+  if (isRiskyFileType(originalName)) {
+    return res.status(400).json({ error: `Files of type ".${ext}" are executable or system binaries and cannot be added to the Knowledge Base.` });
+  }
+
+  try {
+    // 1. Verify collection access
+    const collection = await getCollectionById(collectionId, req.user.id);
+    if (!collection.isOwner && req.user.role !== 'admin') {
+      throw new Error('You do not have write access to this collection');
+    }
+
+    // 2. Fetch private blob buffer
+    const { fetchPrivateBlobBuffer } = require('../services/blobStorage.service');
+    const fileBuffer = await fetchPrivateBlobBuffer(blobUrl);
+
+    // 3. Extract content
+    let extractedText = '';
+    try {
+      const loaded = await loadDocument(
+        fileBuffer,
+        originalName,
+        createVisionCallback(),
+        createPdfOcrCallback(),
+      );
+      extractedText = loaded?.content || '';
+    } catch (loadErr) {
+      throw new Error(`Could not extract text from "${originalName}": ${loadErr.message}`, { cause: loadErr });
+    }
+
+    if (!extractedText || !extractedText.trim()) {
+      throw new Error('Could not extract text content from uploaded file');
+    }
+
+    // 4. Create document record in DB
+    const { data: newDoc, error: docError } = await supabase
+      .from('knowledge_documents')
+      .insert({
+        collection_id: collectionId,
+        user_id: req.user.id,
+        title: originalName,
+        source_type: 'file',
+        file_type: ext,
+        file_size: fileSize || fileBuffer.length,
+        blob_url: blobUrl,
+        status: 'processing',
+      })
+      .select()
+      .single();
+
+    if (docError) throw docError;
+
+    // 5. Ingest and chunk into knowledge_chunks
+    const ingestResult = await ingestDocumentContent({
+      documentId: newDoc.id,
+      collectionId,
+      userId: req.user.id,
+      title: originalName,
+      content: extractedText,
+      embedProvider: collection.embedding_provider || 'openrouter',
+    });
+
+    res.status(201).json({
+      success: true,
+      document: {
+        ...newDoc,
+        status: 'indexed',
+        chunk_count: ingestResult.chunkCount,
+      },
+    });
+  } catch (err) {
+    console.error('[KnowledgeRoute:Blob] Process error:', err.message);
+    res.status(500).json({ error: err.message || 'Blob document ingestion failed' });
   }
 });
 

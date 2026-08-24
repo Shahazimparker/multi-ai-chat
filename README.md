@@ -2,32 +2,34 @@
 
 Unified AI chat platform with authentication, real provider token streaming, reasoning model support, Knowledge Base (RAG 2.0), file-aware chat, human-in-the-loop approvals, token controls, and admin analytics.
 
-## Current Scope
+## Current Scope & Deployment Environment
 
-- Frontend: React (`frontend/`)
-- Backend: Express API (`backend/`)
-- Database: Supabase PostgreSQL + `pgvector` (`database/`)
-- Deployment target: Vercel (frontend + backend)
+- **Frontend**: React SPA (`frontend/`) deployed on **Vercel (Free / Hobby Tier)** in **Mumbai, India (`bom1`)**
+- **Backend**: Express Serverless API (`backend/`) deployed on **Vercel (Free / Hobby Tier)** in **Mumbai, India (`bom1`)** with `maxDuration: 300s`
+- **File Storage**: **Private Vercel Blob** store (`multi-chat-upload-storage`) located in **Mumbai (`bom1`)** supporting direct client uploads up to **50MB**
+- **Database**: **Supabase PostgreSQL** + `pgvector` in **Singapore (`ap-southeast-1`)** on **Free Tier (500MB DB cap)** with lean `blob_url` pointer storage
+- **AI Integration Context**: Full agent rules and guidelines documented in [AGENTS.md](./AGENTS.md)
 
 ## Core Capabilities
 
 - **14 configured AI models** across DeepSeek, Groq, Gemini, Mistral, Claude, OpenRouter; plus live model discovery for `openrouter`, `together`, `anyapi`
 - **Real streaming**: All 10 providers stream native tokens. No artificial delays. Tool-call rounds send status events; the final answer streams naturally.
+- **Direct 50MB File Uploads**: Client-to-Vercel-Blob direct upload pipeline (`@vercel/blob/client`) completely bypassing Vercel's 4.5MB serverless edge body limit. Supports all known formats (PDF, DOCX, CSV, Excel, TXT, Logs, Code, Images, ZIP) while security-gating risky executables (`.exe`, `.dll`, `.msi`, etc.).
+- **Supabase DB Quota Protection**: Raw file binaries are kept in private blob storage; only lean metadata and vector embeddings are stored in PostgreSQL to preserve the 500MB free tier quota.
 - **Reasoning / Thinking mode**: per-model effort levels (low/medium/high/max/xhigh) with a collapsible thought-process panel; chain-of-thought stored in DB and reloaded from history
 - **Knowledge Base (RAG 2.0)**: named collections; ingest via file upload, web crawl, or raw text; RAPTOR hierarchical summarization trees; GraphRAG entity/relation extraction; multi-query expansion; Cohere cross-encoder reranking; dense + sparse + graph retrieval fusion
 - **Temporal grounding**: current date/time/week injected into every system prompt; per-user IANA timezone preference
 - **Shared pipeline** (`chatPipeline.service.js`) keeps JSON and streaming behavior aligned
 - **Human-in-the-loop approvals**: all 10 `GENERATE_*` tools (PPT, Image, PDF, Excel, DOCX, CSV, Chart, HTML, JSON, Markdown) gated by inline Yes/Other/No; persisted in Supabase; IDOR-safe
-- Authenticated chat flows with `httpOnly` cookie auth, double-submit CSRF, and idle logout
+- **Authenticated chat flows** with `httpOnly` cookie auth, double-submit CSRF, and idle logout
 - **Serverless-safe rate limiting** via Supabase counters; brute-force lockout on failed logins
-- Semantic query cache, RAG context with hybrid reranking (cosine+BM25+Jaccard+RRF), history summarization, cross-chat memory
-- File upload/search integration; ZIP safety limits; vision extraction at ingest; PDF OCR fallback
-- Generated file download/preview uses API-client routes (baseURL-aware)
-- Web search aggregation: `Exa → Firecrawl → Tavily → SerpAPI` + LangSearch; per-chat toggle
-- URL intelligence (auto-triggered by links): dedicated readers for GitHub, GitLab, Bitbucket, StackOverflow, Notion, Confluence, arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, Gov/Legal; generic fallback via Firecrawl/Tavily/Exa
-- Admin panel (users, quotas, SQL-aggregated analytics)
-- Theme toggle; mobile navigation with Knowledge Bases link
-- Sentry integration (frontend + backend)
+- **Semantic query cache**, RAG context with hybrid reranking (cosine+BM25+Jaccard+RRF), history summarization, cross-chat memory
+- **Generated file download/preview** uses API-client routes (baseURL-aware)
+- **Web search aggregation**: `Exa → Firecrawl → Tavily → SerpAPI` + LangSearch; per-chat toggle
+- **URL intelligence (auto-triggered by links)**: dedicated readers for GitHub, GitLab, Bitbucket, StackOverflow, Notion, Confluence, arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, Gov/Legal; generic fallback via Firecrawl/Tavily/Exa
+- **Admin panel** (users, quotas, SQL-aggregated analytics)
+- **Theme toggle**; mobile navigation with Knowledge Bases link
+- **Sentry integration** (frontend + backend)
 
 ## Quick Start
 

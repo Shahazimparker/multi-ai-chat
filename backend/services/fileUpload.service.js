@@ -117,54 +117,194 @@ const getFileHash = (fileName, fileContent) => {
   return `${fileName}:${contentHash}`;
 };
 
-// Must stay a superset-free mirror of SUPPORTED_FORMATS in
-// documentLoader.service.js. An extension the loader handles but this map omits
-// resolves to 'other', which the upload route now rejects outright — so a gap
-// here silently blocks a file type that would have worked. The reverse gap is
-// just as bad: it accepts a file the loader can only turn into placeholder text.
+// Explicitly blocked executable and system binaries that pose security risks
+const BLOCKED_RISKY_EXTENSIONS = new Set([
+  // Windows & DOS Executables / Binaries
+  'exe', 'dll', 'so', 'dylib', 'bin', 'com', 'scr', 'sys', 'drv', 'cpl', 'msc', 'hta',
+  // Windows Script Hosts & Shells
+  'vbs', 'vbe', 'wsf', 'wsh', 'pif', 'gadget',
+  // Installers & Packages
+  'msi', 'msp', 'pkg', 'deb', 'rpm', 'apk', 'app', 'ipa',
+  // Disk Images & System ROMs
+  'iso', 'img', 'vmdk', 'dmg', 'toast', 'vcd',
+  // Executable Java/Flash/ActiveX
+  'jar', 'class', 'swf', 'ocx',
+  // Registry & Windows Help
+  'reg', 'chm', 'hlp'
+]);
+
+const isRiskyFileType = (fileName) => {
+  if (!fileName || typeof fileName !== 'string') return false;
+  const base = path.basename(fileName).toLowerCase();
+  const ext = path.extname(base).slice(1).toLowerCase();
+  return BLOCKED_RISKY_EXTENSIONS.has(ext);
+};
+
+// Must stay a superset-free mirror of SUPPORTED_FORMATS in documentLoader.service.js.
 const SUPPORTED_FILE_TYPES = {
+  // Text & Logs
   txt: 'txt',
+  text: 'txt',
+  log: 'txt',
+  rtf: 'txt',
+  tex: 'txt',
+  latex: 'txt',
+  rst: 'txt',
+  adoc: 'txt',
+  asciidoc: 'txt',
+  srt: 'txt',
+  vtt: 'txt',
+  sub: 'txt',
+
+  // Markdowns
+  md: 'code',
+  markdown: 'code',
+  mdown: 'code',
+  mkdn: 'code',
+  mdx: 'code',
+
+  // Spreadsheets & Tabular Data
   csv: 'csv',
+  tsv: 'csv',
+  tab: 'csv',
   xlsx: 'xlsx',
   xls: 'xlsx',
+  xlsm: 'xlsx',
+  xlsb: 'xlsx',
+  ods: 'xlsx',
+
+  // Documents
   pdf: 'pdf',
   doc: 'doc',
   docx: 'doc',
+  dot: 'doc',
+  dotx: 'doc',
+  odt: 'doc',
+  epub: 'doc',
+  pages: 'doc',
+  ppt: 'doc',
+  pptx: 'doc',
+  odp: 'doc',
+  key: 'doc',
+
+  // Images
   jpg: 'image',
   jpeg: 'image',
   png: 'image',
-  // Routed as images so extractTextFromBuffer attaches the vision callback;
-  // without that they reached ImageLoader with no way to describe themselves.
   gif: 'image',
   webp: 'image',
+  bmp: 'image',
+  tiff: 'image',
+  tif: 'image',
+  ico: 'image',
+  svg: 'code',
+
+  // Archives
   zip: 'zip',
+  tar: 'zip',
+  gz: 'zip',
+  tgz: 'zip',
+  '7z': 'zip',
+  rar: 'zip',
+  bz2: 'zip',
+  xz: 'zip',
+
+  // JavaScript / TypeScript / Web
   js: 'code',
-  ts: 'code',
-  tsx: 'code',
+  mjs: 'code',
+  cjs: 'code',
   jsx: 'code',
-  py: 'code',
-  java: 'code',
-  c: 'code',
-  cpp: 'code',
-  go: 'code',
-  rb: 'code',
+  ts: 'code',
+  mts: 'code',
+  cts: 'code',
+  tsx: 'code',
   html: 'code',
-  json: 'code',
+  htm: 'code',
+  xhtml: 'code',
   css: 'code',
   scss: 'code',
+  sass: 'code',
+  less: 'code',
+  vue: 'code',
+  svelte: 'code',
+  astro: 'code',
+
+  // Structured Data / Config
+  json: 'code',
+  jsonl: 'code',
+  ndjson: 'code',
+  geojson: 'code',
+  json5: 'code',
   xml: 'code',
   yml: 'code',
   yaml: 'code',
-  md: 'code',
-  sql: 'code',
-  sh: 'code',
-  bat: 'code',
-  php: 'code',
-  rs: 'code',
-  swift: 'code',
+  toml: 'code',
+  ini: 'code',
+  conf: 'code',
+  cfg: 'code',
+  config: 'code',
+  properties: 'code',
+  env: 'code',
+  lock: 'code',
+
+  // Backend / Systems / Other Code Languages
+  py: 'code',
+  pyw: 'code',
+  ipynb: 'code',
+  java: 'code',
   kt: 'code',
-  vue: 'code',
-  svelte: 'code',
+  kts: 'code',
+  scala: 'code',
+  groovy: 'code',
+  c: 'code',
+  h: 'code',
+  cpp: 'code',
+  hpp: 'code',
+  cc: 'code',
+  cxx: 'code',
+  cs: 'code',
+  go: 'code',
+  rs: 'code',
+  zig: 'code',
+  d: 'code',
+  nim: 'code',
+  rb: 'code',
+  php: 'code',
+  pl: 'code',
+  pm: 'code',
+  tcl: 'code',
+  lua: 'code',
+  r: 'code',
+  jl: 'code',
+  dart: 'code',
+  swift: 'code',
+  m: 'code',
+  mm: 'code',
+
+  // Scripts / Shell
+  sh: 'code',
+  bash: 'code',
+  zsh: 'code',
+  fish: 'code',
+  ps1: 'code',
+  psm1: 'code',
+  psd1: 'code',
+  bat: 'code',
+  cmd: 'code',
+
+  // Query & Schemas
+  sql: 'code',
+  psql: 'code',
+  plsql: 'code',
+  mysql: 'code',
+  cql: 'code',
+  graphql: 'code',
+  gql: 'code',
+  proto: 'code',
+  prisma: 'code',
+  dockerfile: 'code',
+  tf: 'code',
+  hcl: 'code',
 };
 
 // ==================== STORAGE CONFIG ====================
@@ -198,7 +338,18 @@ const ensureUploadDir = () => {
 ensureUploadDir();
 
 const getSupportedFileType = (fileName) => {
-  const ext = path.extname(fileName).slice(1).toLowerCase();
+  if (!fileName || typeof fileName !== 'string') return 'other';
+  const base = path.basename(fileName).toLowerCase();
+
+  // Handle special dotfiles like Dockerfile, .env, .gitignore
+  if (base === 'dockerfile' || base.startsWith('dockerfile.')) return 'code';
+  if (base === '.env' || base.startsWith('.env.')) return 'code';
+  if (base === '.gitignore' || base === '.dockerignore' || base === '.editorconfig') return 'code';
+
+  const ext = path.extname(base).slice(1).toLowerCase();
+  if (BLOCKED_RISKY_EXTENSIONS.has(ext)) {
+    return 'other';
+  }
   return SUPPORTED_FILE_TYPES[ext] || 'other';
 };
 
@@ -284,7 +435,7 @@ File ready for queries.`,
  * Store file + LLM response in RAG (globally, not per-topic)
  * This allows RAG to retrieve past file analyses for any query
  */
-const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userId, topicId, signal = null, ragEnabled = true, provider = 'openrouter', onProgress = null, fileBuffer = null) => {
+const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userId, topicId, signal = null, ragEnabled = true, provider = 'openrouter', onProgress = null, fileBuffer = null, blobUrl = null) => {
   let ragRecord = null;
   let fileRecord = null;
   let totalEmbedTokens = 0;
@@ -361,13 +512,16 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
       // against a query vector from a different model.
       const embeddingSpace = chunkSpace || LEGACY_SPACE;
 
+      // When blobUrl is available, omit binary base64 from DB to stay under 500MB DB quota
+      const rawFileB64 = (fileBuffer && !blobUrl) ? fileBuffer.toString('base64') : null;
+
       const { data: ragData, error: ragError } = await supabase
         .rpc('insert_rag_document', {
           p_user_id: userId, p_topic_id: topicId || null,
           p_file_name: fileName, p_file_hash: fileHash,
           p_file_type: fileType, p_original_content: sanitizedContent,
           p_llm_analysis: sanitizedAnalysis, p_embedding: fileVector,
-          p_original_file_b64: fileBuffer ? fileBuffer.toString('base64') : null,
+          p_original_file_b64: rawFileB64,
           p_embedding_space: embeddingSpace,
         });
 
@@ -384,14 +538,29 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
       }
       ragRecord = { id: insertedId };
 
+      // Record blob_url in uploaded_files_rag if available
+      if (blobUrl && ragRecord.id) {
+        try {
+          await supabase
+            .from('uploaded_files_rag')
+            .update({ blob_url: blobUrl })
+            .eq('id', ragRecord.id);
+        } catch (colErr) {
+          console.warn(`[FileUpload] Optional blob_url column write failed: ${colErr.message}`);
+        }
+      }
+
       if (chunks.length > 1) {
+        const fileInsertPayload = {
+          user_id: userId, topic_id: topicId,
+          file_name: fileName, file_type: fileType,
+          content_text: sanitizedContent, provider: DEFAULT_PROVIDER,
+          embedding: fileVector, embedding_space: embeddingSpace,
+        };
+        if (blobUrl) fileInsertPayload.blob_url = blobUrl;
+
         const { data: fr, error: fileErr } = await supabase
-          .from('uploaded_files').insert({
-            user_id: userId, topic_id: topicId,
-            file_name: fileName, file_type: fileType,
-            content_text: sanitizedContent, provider: DEFAULT_PROVIDER,
-            embedding: fileVector, embedding_space: embeddingSpace,
-          }).select('id').single();
+          .from('uploaded_files').insert(fileInsertPayload).select('id').single();
 
         if (!fileErr && fr) {
           fileRecord = fr;
@@ -418,7 +587,7 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
         });
       }
 
-      console.log(`[FileUpload] Stored in RAG: ${fileName} (hash: ${fileHash}, chunks: ${chunks.length}, embedTokens: ${totalEmbedTokens})`);
+      console.log(`[FileUpload] Stored in RAG: ${fileName} (hash: ${fileHash}, chunks: ${chunks.length}, embedTokens: ${totalEmbedTokens}, blob: ${Boolean(blobUrl)})`);
       }
       return { ragId: ragRecord?.id || null, fileId: fileRecord?.id || null, embedTokens: totalEmbedTokens };
     } catch (err) {
@@ -655,24 +824,38 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
 /**
  * Main: Process uploaded file
  */
-const processUploadedFile = async (filePath, fileName, fileType, userId, topicId, modelId, signal = null, ragEnabled = true, onProgress = null) => {
-
+const processUploadedFile = async (filePathOrBuffer, fileName, fileType, userId, topicId, modelId, signal = null, ragEnabled = true, onProgress = null, blobUrl = null) => {
+  let isTempFile = false;
+  let tempFilePath = null;
   try {
     if (signal?.aborted) {
-      cleanupTempFile(filePath);
+      if (typeof filePathOrBuffer === 'string') cleanupTempFile(filePathOrBuffer);
       throw new Error('Upload cancelled by user');
     }
-    console.log(`[FileUpload] Processing: ${fileName}`);
+    console.log(`[FileUpload] Processing: ${fileName} (blob: ${Boolean(blobUrl)})`);
 
-    if (fileType === 'zip') {
-      const result = await processZipFile(filePath, fileName, userId, topicId, modelId, signal, ragEnabled, onProgress);
-      cleanupTempFile(filePath);
-      return result;
+    let buffer;
+    if (typeof filePathOrBuffer === 'string') {
+      tempFilePath = filePathOrBuffer;
+      isTempFile = true;
+      if (fileType === 'zip') {
+        const result = await processZipFile(tempFilePath, fileName, userId, topicId, modelId, signal, ragEnabled, onProgress);
+        cleanupTempFile(tempFilePath);
+        return result;
+      }
+      buffer = fs.readFileSync(tempFilePath);
+    } else if (Buffer.isBuffer(filePathOrBuffer)) {
+      buffer = filePathOrBuffer;
+    } else if (blobUrl) {
+      onProgress?.({ type: 'progress', phase: 'downloading', percent: 5, message: 'Fetching private file from storage...' });
+      const { fetchPrivateBlobBuffer } = require('./blobStorage.service');
+      buffer = await fetchPrivateBlobBuffer(blobUrl);
+    } else {
+      throw new Error('No valid file source or blob URL provided for processing');
     }
 
     // 1. Extract text from file
-    onProgress?.({ type: 'progress', phase: 'extracting', percent: 5, message: 'Extracting text from file...' });
-    const buffer = fs.readFileSync(filePath);
+    onProgress?.({ type: 'progress', phase: 'extracting', percent: 15, message: 'Extracting text from file...' });
     const extractedText = await extractTextFromBuffer(buffer, fileType, modelId, signal, fileName);
 
     if (!extractedText || extractedText.length < 10) {
@@ -687,7 +870,7 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
       llmAnalysis = result.llmAnalysis;
       tokensUsed = result.tokensUsed;
 
-      cleanupTempFile(filePath);
+      if (isTempFile && tempFilePath) cleanupTempFile(tempFilePath);
 
       onProgress?.({ type: 'progress', phase: 'complete', percent: 100, message: 'File processed successfully' });
 
@@ -695,13 +878,13 @@ const processUploadedFile = async (filePath, fileName, fileType, userId, topicId
         fileName,
         fileType,
         ragId: null,
+        blobUrl,
         contentLength: extractedText.length,
         tokensUsed,
         extractedText: extractedText.slice(0, 5000),
         message: `✅ File "${fileName}" uploaded. Content ready for chat.`
       };
     }
-
 
     // Only reach here if ragEnabled = true
     onProgress?.({ type: 'progress', phase: 'analyzing', percent: 20, message: 'Preparing file for RAG storage...' });
@@ -725,21 +908,22 @@ File ready for queries.`;
         onProgress({ ...data, percent: Math.min(mapped, 95) });
       }
     } : null;
-    const saveResult = await saveFileToRAG(fileName, fileType, extractedText, llmAnalysis, userId, topicId, signal, ragEnabled, 'openrouter', embedOnProgress, buffer);
+    const saveResult = await saveFileToRAG(fileName, fileType, extractedText, llmAnalysis, userId, topicId, signal, ragEnabled, 'openrouter', embedOnProgress, buffer, blobUrl);
     const ragId = saveResult.ragId;
-    tokensUsed = saveResult.embedTokens;  // ← actual embedding token cost
+    tokensUsed = saveResult.embedTokens;
 
-    // 4. Cleanup temp file
-    cleanupTempFile(filePath);
+    // 4. Cleanup temp file if created
+    if (isTempFile && tempFilePath) cleanupTempFile(tempFilePath);
 
     onProgress?.({ type: 'progress', phase: 'complete', percent: 100, message: 'File processed successfully' });
 
-    console.log(`[FileUpload] Success: ${fileName} analyzed and stored (tokens: ${tokensUsed})`);
+    console.log(`[FileUpload] Success: ${fileName} analyzed and stored (tokens: ${tokensUsed}, blob: ${Boolean(blobUrl)})`);
 
     return {
       fileName,
       fileType,
       ragId,
+      blobUrl,
       contentLength: extractedText.length,
       tokensUsed,
       extractedText: extractedText.slice(0, 5000),
@@ -747,7 +931,7 @@ File ready for queries.`;
     };
   } catch (err) {
     console.error('[FileUpload] Failed:', err);
-    cleanupTempFile(filePath);
+    if (isTempFile && tempFilePath) cleanupTempFile(tempFilePath);
     throw err;
   }
 };
@@ -936,7 +1120,7 @@ const getFileContentById = async (fileId, userId) => {
 
     const { data, error } = await supabase
       .from('uploaded_files_rag')
-      .select('id, file_name, file_type, original_content, original_file_data, llm_analysis, created_at')
+      .select('id, file_name, file_type, original_content, original_file_data, llm_analysis, blob_url, created_at')
       .eq('id', fileId)
       .eq('user_id', userId)
       .single();
@@ -954,6 +1138,22 @@ const getFileContentById = async (fileId, userId) => {
 };
 
 const deleteUploadedFile = async (fileId, userId) => {
+  try {
+    const { data: fileRec } = await supabase
+      .from('uploaded_files_rag')
+      .select('id, blob_url')
+      .eq('id', fileId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (fileRec?.blob_url) {
+      const { deleteBlobFromStorage } = require('./blobStorage.service');
+      await deleteBlobFromStorage(fileRec.blob_url);
+    }
+  } catch (lookupErr) {
+    console.warn('[deleteUploadedFile] Blob lookup before delete failed:', lookupErr.message);
+  }
+
   const { error } = await supabase
     .from('uploaded_files_rag')
     .delete()
@@ -1130,6 +1330,8 @@ module.exports = {
   getTempDir,
   ensureUploadDir,
   getSupportedFileType,
+  isRiskyFileType,
+  BLOCKED_RISKY_EXTENSIONS,
   getFileHash,
   analyzeFileWithLLM,
   processZipFile, // exported for unit tests to exercise the ZIP safety limits directly

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { upload as vercelBlobUpload } from '@vercel/blob/client';
 import api, { API_BASE_URL } from '../../config/api';
 import { createSseParser } from '../../utils/sse';
 import { getCsrfToken } from '../../utils/sessionBroadcast';
@@ -177,26 +178,53 @@ export const useChatSession = ({ refreshTokenStats }) => {
 
   const uploadSingleFile = useCallback(async (file, topicIdToUse) => {
     setUploadProgress(0);
-    setUploadMessage('');
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('modelId', model.id);
-    formData.append('ragEnabled', ragEnabled);
-    if (topicIdToUse) formData.append('topicId', topicIdToUse);
+    setUploadMessage(`Uploading ${file.name}...`);
+
+    let blobResult = null;
+    let blobUploadSucceeded = false;
+
+    try {
+      blobResult = await vercelBlobUpload(file.name, file, {
+        access: 'private',
+        handleUploadUrl: `${API_BASE_URL}/upload/blob-handler`,
+        onUploadProgress: (progress) => {
+          const pct = Math.round((progress.percentage || 0) * 0.45);
+          setUploadProgress(pct);
+          setUploadMessage(`Uploading to secure storage (${Math.round(progress.percentage || 0)}%)...`);
+        },
+        abortSignal: uploadAbortRef.current?.signal,
+      });
+      if (blobResult?.url) {
+        blobUploadSucceeded = true;
+      }
+    } catch (blobErr) {
+      console.warn('[ChatSession] Direct blob upload error or fallback:', blobErr.message);
+      if (file.size > 4 * 1024 * 1024) {
+        throw new Error(blobErr.message || 'File upload to storage failed');
+      }
+    }
+
     return await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', `${API_BASE_URL}/upload/file`);
+      const endpoint = blobUploadSucceeded
+        ? `${API_BASE_URL}/upload/process-blob`
+        : `${API_BASE_URL}/upload/file`;
+
+      xhr.open('POST', endpoint);
       xhr.withCredentials = true;
       xhr.timeout = 600000;
       const csrfToken = getCsrfToken();
       if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
 
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) setUploadProgress(Math.round((event.loaded / event.total) * 100));
-      };
+      if (!blobUploadSucceeded) {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) setUploadProgress(Math.round((event.loaded / event.total) * 100));
+        };
+      } else {
+        xhr.setRequestHeader('Content-Type', 'application/json');
+      }
 
-      // Per-request state. This used to live on `window.__uploadSseError`, which
-      // meant two concurrent uploads clobbered each other's error.
+      // Per-request state.
       const parser = createSseParser();
       let parsedLen = 0;
       let sseError = null;
@@ -213,7 +241,10 @@ export const useChatSession = ({ refreshTokenStats }) => {
           }
           if (data.type === 'done') doneEvent = data;
           if (data.type === 'progress' && typeof data.percent === 'number') {
-            setUploadProgress(data.percent);
+            const displayPercent = blobUploadSucceeded
+              ? 45 + Math.round((data.percent / 100) * 55)
+              : data.percent;
+            setUploadProgress(displayPercent);
             if (data.message) setUploadMessage(data.message);
           }
         }
@@ -235,7 +266,6 @@ export const useChatSession = ({ refreshTokenStats }) => {
           return;
         }
 
-        // Non-2xx: the body is usually a plain JSON error, not an SSE stream.
         let errorMessage = sseError || 'Upload failed';
         if (!sseError) {
           try {
@@ -255,7 +285,23 @@ export const useChatSession = ({ refreshTokenStats }) => {
       if (uploadAbortRef.current?.signal) {
         uploadAbortRef.current.signal.addEventListener('abort', () => xhr.abort());
       }
-      xhr.send(formData);
+
+      if (blobUploadSucceeded) {
+        xhr.send(JSON.stringify({
+          blobUrl: blobResult.url,
+          fileName: file.name,
+          topicId: topicIdToUse || null,
+          modelId: model.id,
+          ragEnabled,
+        }));
+      } else {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('modelId', model.id);
+        formData.append('ragEnabled', ragEnabled);
+        if (topicIdToUse) formData.append('topicId', topicIdToUse);
+        xhr.send(formData);
+      }
     });
   }, [model, ragEnabled]);
 

@@ -129,17 +129,39 @@ describe('processZipFile — file type filtering', () => {
 });
 
 describe('getSupportedFileType', () => {
-  const { getSupportedFileType } = require('../../services/fileUpload.service');
+  const { getSupportedFileType, isRiskyFileType } = require('../../services/fileUpload.service');
 
-  it('returns "other" for unrecognized extensions', () => {
+  it('returns "other" for unrecognized and risky extensions', () => {
     expect(getSupportedFileType('payload.exe')).toBe('other');
     expect(getSupportedFileType('lib.dll')).toBe('other');
+    expect(getSupportedFileType('setup.msi')).toBe('other');
+    expect(getSupportedFileType('script.vbs')).toBe('other');
+  });
+
+  it('identifies risky binary/executable formats via isRiskyFileType', () => {
+    expect(isRiskyFileType('virus.exe')).toBe(true);
+    expect(isRiskyFileType('library.dll')).toBe(true);
+    expect(isRiskyFileType('driver.sys')).toBe(true);
+    expect(isRiskyFileType('installer.msi')).toBe(true);
+    expect(isRiskyFileType('app.apk')).toBe(true);
+    expect(isRiskyFileType('script.vbs')).toBe(true);
+
+    expect(isRiskyFileType('notes.txt')).toBe(false);
+    expect(isRiskyFileType('server.log')).toBe(false);
+    expect(isRiskyFileType('app.js')).toBe(false);
+    expect(isRiskyFileType('doc.pdf')).toBe(false);
   });
 
   it('returns the mapped type for supported extensions', () => {
     expect(getSupportedFileType('notes.txt')).toBe('txt');
+    expect(getSupportedFileType('system.log')).toBe('txt');
     expect(getSupportedFileType('archive.zip')).toBe('zip');
     expect(getSupportedFileType('main.py')).toBe('code');
+    expect(getSupportedFileType('deploy.ps1')).toBe('code');
+    expect(getSupportedFileType('data.csv')).toBe('csv');
+    expect(getSupportedFileType('data.tsv')).toBe('csv');
+    expect(getSupportedFileType('query.sql')).toBe('code');
+    expect(getSupportedFileType('config.jsonl')).toBe('code');
   });
 });
 
@@ -161,7 +183,7 @@ describe('upload type map matches the document loader', () => {
     const end = src.indexOf('\n};', start);
     expect(end, `${constName} not terminated in ${file}`).toBeGreaterThan(start);
     const body = src.slice(start, end);
-    return [...body.matchAll(/^\s{2}([a-z0-9]+):/gm)].map((m) => m[1]).sort();
+    return [...body.matchAll(/^\s{2}['"]?([a-z0-9]+)['"]?:/gm)].map((m) => m[1]).sort();
   };
 
   it('supports exactly the extensions documentLoader can load', () => {
@@ -175,10 +197,10 @@ describe('upload type map matches the document loader', () => {
 
   it('classifies the extensions that regressed', () => {
     const { getSupportedFileType } = require('../../services/fileUpload.service');
-    for (const ext of ['tsx', 'jsx', 'c', 'scss']) {
-      expect(getSupportedFileType(`a.${ext}`), ext).toBe('code');
+    for (const ext of ['tsx', 'jsx', 'c', 'scss', 'log', 'tsv', 'ps1', 'sql']) {
+      expect(getSupportedFileType(`a.${ext}`)).not.toBe('other');
     }
-    for (const ext of ['gif', 'webp']) {
+    for (const ext of ['gif', 'webp', 'png', 'jpg']) {
       expect(getSupportedFileType(`a.${ext}`), ext).toBe('image');
     }
     expect(getSupportedFileType('a.xls')).toBe('xlsx');

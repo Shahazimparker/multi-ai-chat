@@ -2,12 +2,13 @@
 
 This is the main setup and maintenance guide for the current repo state.
 
-## Current Architecture
+## Current Architecture & Deployment
 
-- Frontend: React app in `frontend/`
-- Backend: Express API in `backend/`
-- Database: Supabase/PostgreSQL with `pgvector`
-- Deployment: Vercel for frontend and backend
+- **Frontend**: React SPA in `frontend/` deployed on **Vercel (Free / Hobby Tier)** in region **Mumbai (`bom1`)**
+- **Backend**: Express API in `backend/` deployed on **Vercel (Free / Hobby Tier)** in region **Mumbai (`bom1`)** with `maxDuration: 300s`
+- **File Storage**: **Private Vercel Blob** (`multi-chat-upload-storage`) in **Mumbai (`bom1`)** supporting direct client uploads up to **50MB** (`@vercel/blob/client`)
+- **Database**: Supabase PostgreSQL + `pgvector` in **Singapore (`ap-southeast-1`)** on **Free Tier (500MB DB Limit)** storing `blob_url` pointers rather than Base64 strings
+- **System Rules**: [AGENTS.md](../AGENTS.md)
 
 ## Current Features
 

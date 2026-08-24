@@ -4,6 +4,7 @@
   "private": true,
   "dependencies": {
     "@sentry/react": "^10.69.0",
+    "@vercel/blob": "^2.8.0",
     "axios": "^1.19.0",
     "lucide-react": "^1.28.0",
     "react": "^19.2.8",
