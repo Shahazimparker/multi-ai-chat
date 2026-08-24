@@ -9,7 +9,7 @@ import {
   CheckCircle2, Clock, AlertCircle, Database, Layers, Eye, RefreshCw, X, Shield, ExternalLink
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
-import { upload as vercelBlobUpload } from '@vercel/blob/client';
+import { put as vercelBlobPut } from '@vercel/blob/client';
 import api, { API_BASE_URL } from '../config/api';
 import { useAuth } from '../context/AuthContext';
 import ThemeToggle from '../components/layout/ThemeToggle';
@@ -186,14 +186,31 @@ const KnowledgePage = () => {
       let blobUploadSucceeded = false;
 
       try {
+        setStatusMessage(`Authorizing upload...`);
+        const tokenRes = await api.post('/upload/blob-handler', {
+          type: 'blob.generate-client-token',
+          payload: {
+            pathname: uploadFile.name,
+            clientPayload: null,
+            multipart: uploadFile.size > 5 * 1024 * 1024,
+          },
+        });
+
+        const clientToken = tokenRes.data?.clientToken;
+        if (!clientToken) {
+          throw new Error('Failed to generate upload authorization token');
+        }
+
         setStatusMessage(`Uploading "${uploadFile.name}" to private storage...`);
-        blobResult = await vercelBlobUpload(uploadFile.name, uploadFile, {
+        blobResult = await vercelBlobPut(uploadFile.name, uploadFile, {
           access: 'private',
-          handleUploadUrl: `${API_BASE_URL}/upload/blob-handler`,
+          token: clientToken,
+          multipart: uploadFile.size > 5 * 1024 * 1024,
           onUploadProgress: (progress) => {
             setStatusMessage(`Uploading to private storage (${Math.round(progress.percentage || 0)}%)...`);
           },
         });
+
         if (blobResult?.url) {
           blobUploadSucceeded = true;
         }

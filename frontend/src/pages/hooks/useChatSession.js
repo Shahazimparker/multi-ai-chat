@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { upload as vercelBlobUpload } from '@vercel/blob/client';
+import { put as vercelBlobPut } from '@vercel/blob/client';
 import api, { API_BASE_URL } from '../../config/api';
 import { createSseParser } from '../../utils/sse';
 import { getCsrfToken } from '../../utils/sessionBroadcast';
@@ -184,9 +184,26 @@ export const useChatSession = ({ refreshTokenStats }) => {
     let blobUploadSucceeded = false;
 
     try {
-      blobResult = await vercelBlobUpload(file.name, file, {
+      setUploadMessage(`Authorizing upload...`);
+      const tokenRes = await api.post('/upload/blob-handler', {
+        type: 'blob.generate-client-token',
+        payload: {
+          pathname: file.name,
+          clientPayload: null,
+          multipart: file.size > 5 * 1024 * 1024,
+        },
+      });
+
+      const clientToken = tokenRes.data?.clientToken;
+      if (!clientToken) {
+        throw new Error('Failed to generate upload authorization token');
+      }
+
+      setUploadMessage(`Uploading to secure storage...`);
+      blobResult = await vercelBlobPut(file.name, file, {
         access: 'private',
-        handleUploadUrl: `${API_BASE_URL}/upload/blob-handler`,
+        token: clientToken,
+        multipart: file.size > 5 * 1024 * 1024,
         onUploadProgress: (progress) => {
           const pct = Math.round((progress.percentage || 0) * 0.45);
           setUploadProgress(pct);
@@ -194,6 +211,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
         },
         abortSignal: uploadAbortRef.current?.signal,
       });
+
       if (blobResult?.url) {
         blobUploadSucceeded = true;
       }
