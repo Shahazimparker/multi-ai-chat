@@ -1141,7 +1141,7 @@ const deleteUploadedFile = async (fileId, userId) => {
   try {
     const { data: fileRec } = await supabase
       .from('uploaded_files_rag')
-      .select('id, blob_url')
+      .select('id, file_name, topic_id, blob_url')
       .eq('id', fileId)
       .eq('user_id', userId)
       .maybeSingle();
@@ -1150,8 +1150,17 @@ const deleteUploadedFile = async (fileId, userId) => {
       const { deleteBlobFromStorage } = require('./blobStorage.service');
       await deleteBlobFromStorage(fileRec.blob_url);
     }
+
+    if (fileRec?.file_name && fileRec?.topic_id) {
+      await supabase
+        .from('uploaded_files')
+        .delete()
+        .eq('user_id', userId)
+        .eq('topic_id', fileRec.topic_id)
+        .eq('file_name', fileRec.file_name);
+    }
   } catch (lookupErr) {
-    console.warn('[deleteUploadedFile] Blob lookup before delete failed:', lookupErr.message);
+    console.warn('[deleteUploadedFile] Lookup before delete failed:', lookupErr.message);
   }
 
   const { error } = await supabase
