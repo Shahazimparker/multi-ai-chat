@@ -237,6 +237,7 @@ router.post('/blob-handler', requireAuth, uploadHeavyLimiter, async (req, res) =
 
         return {
           access: 'private',
+          addRandomSuffix: true,
           tokenPayload: JSON.stringify({
             userId: req.user.id,
             uploadedAt: Date.now(),

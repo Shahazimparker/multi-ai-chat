@@ -1002,44 +1002,119 @@ const cleanupTempFile = (filePath) => {
  */
 const searchUserFilesRAG = async (query, userId, topicId, signal = null, provider = 'openrouter') => {
   try {
-    if (!userId || !topicId) return { results: [], embedTokens: 0 };
+    if (!userId) return { results: [], embedTokens: 0 };
 
-    // Generate embedding for the query
-    const { embedText } = require('./rag.service');
-    const embedResult = await embedText(query, 'openrouter', 3, signal, userId);
-    if (!embedResult) {
-      console.warn('[FileSearch] Embedding failed');
-      return { results: [], embedTokens: 0 };
+    const results = [];
+    let embedTokens = 0;
+
+    // 1. Direct Keyword / Regex Line Search across original_content (instant across all 32k+ lines)
+    try {
+      let fileQuery = supabase
+        .from('uploaded_files_rag')
+        .select('id, file_name, original_content')
+        .eq('user_id', userId);
+
+      if (topicId) {
+        fileQuery = fileQuery.eq('topic_id', topicId);
+      }
+
+      let { data: files } = await fileQuery.order('created_at', { ascending: false }).limit(10);
+      if ((!files || files.length === 0) && topicId) {
+        const fallbackRes = await supabase
+          .from('uploaded_files_rag')
+          .select('id, file_name, original_content')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false })
+          .limit(10);
+        files = fallbackRes.data;
+      }
+
+      if (files && files.length > 0) {
+        const queryLower = query.toLowerCase().trim();
+        const terms = queryLower.split(/\s+/).filter(t => t.length > 1);
+
+        for (const f of files) {
+          if (!f.original_content) continue;
+          const lines = f.original_content.split('\n');
+          const matchedLineIndices = [];
+
+          for (let i = 0; i < lines.length; i++) {
+            const lineLower = lines[i].toLowerCase();
+            if (lineLower.includes(queryLower) || (terms.length > 1 && terms.every(t => lineLower.includes(t)))) {
+              matchedLineIndices.push(i);
+              if (matchedLineIndices.length >= 15) break;
+            }
+          }
+
+          // If no multi-term exact match, match significant terms
+          if (matchedLineIndices.length === 0 && terms.length > 0) {
+            for (let i = 0; i < lines.length; i++) {
+              const lineLower = lines[i].toLowerCase();
+              if (terms.some(t => t.length >= 3 && lineLower.includes(t))) {
+                matchedLineIndices.push(i);
+                if (matchedLineIndices.length >= 10) break;
+              }
+            }
+          }
+
+          // Extract surrounding context window (4 lines before and 4 lines after)
+          const seenRanges = new Set();
+          for (const idx of matchedLineIndices) {
+            const startLine = Math.max(0, idx - 4);
+            const endLine = Math.min(lines.length - 1, idx + 5);
+            const rangeKey = `${startLine}-${endLine}`;
+            if (seenRanges.has(rangeKey)) continue;
+            seenRanges.add(rangeKey);
+
+            const snippet = lines.slice(startLine, endLine + 1).join('\n');
+            results.push({
+              file_id: f.id,
+              file_name: f.file_name,
+              chunk_text: `[Lines ${startLine + 1} to ${endLine + 1} of ${lines.length}]\n${snippet}`,
+              similarity: 1.0,
+            });
+          }
+        }
+      }
+    } catch (grepErr) {
+      console.warn('[FileSearch] Keyword grep warning:', grepErr.message);
     }
-    const queryVector = embedResult.vector;
-    const embedTokens = embedResult.tokensUsed;
-    const embedSpace = embedResult.space || LEGACY_SPACE;
 
-    // Use DB-side vector search via IVFFLAT index (search_uploaded_files RPC)
-    const { data, error } = await supabase.rpc('search_uploaded_files', {
-      query_embedding: queryVector,
-      user_id_param: userId,
-      provider_param: provider,
-      match_count: 5,
-      topic_id_param: topicId,
-      space_param: embedSpace,
-    });
+    // 2. Vector Search complement
+    try {
+      const { embedText } = require('./rag.service');
+      const embedResult = await embedText(query, 'openrouter', 3, signal, userId);
+      if (embedResult?.vector) {
+        embedTokens = embedResult.tokensUsed;
+        const queryVector = embedResult.vector;
+        const embedSpace = embedResult.space || LEGACY_SPACE;
 
-    if (error) {
-      console.error('[FileSearch] RPC error:', error);
-      return { results: [], embedTokens };
+        const { data, error } = await supabase.rpc('search_uploaded_files', {
+          query_embedding: queryVector,
+          user_id_param: userId,
+          provider_param: provider,
+          match_count: 5,
+          topic_id_param: topicId || null,
+          space_param: embedSpace,
+        });
+
+        if (!error && data && data.length > 0) {
+          for (const r of data) {
+            if (!results.some(existing => existing.file_id === r.file_id && existing.chunk_text.includes(r.chunk_text.slice(0, 50)))) {
+              results.push({
+                file_id: r.file_id,
+                file_name: r.file_name,
+                chunk_text: trimTextByTokens(r.chunk_text, 2000),
+                similarity: r.similarity,
+              });
+            }
+          }
+        }
+      }
+    } catch (vectorErr) {
+      console.warn('[FileSearch] Vector search warning:', vectorErr.message);
     }
-    if (!data || data.length === 0) {
-      console.warn('[FileSearch] No matching chunks found');
-      return { results: [], embedTokens };
-    }
 
-    const results = data.map(r => ({
-      file_id: r.file_id,
-      file_name: r.file_name,
-      chunk_text: trimTextByTokens(r.chunk_text, 2000),
-      similarity: r.similarity,
-    }));
     return { results, embedTokens };
   } catch (err) {
     console.error('[FileSearch] Failed:', err);

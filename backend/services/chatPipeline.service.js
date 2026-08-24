@@ -753,7 +753,7 @@ ${page.text}`)
       }
     }
 
-    const fileContext = buildFileContext(fileResults, totalFileCount);
+    const fileContext = buildFileContext(fileResults, totalFileCount, forceWebSearch);
 
     // ── 7. History context ────────────────────────────────────
     const historyOpts = {
@@ -897,7 +897,7 @@ ${page.text}`)
 
     const toolLines = [
       ...kbToolLines,
-      ...(forceWebSearch ? ['1. Web Search: [WEB_SEARCH:query="your search query"]'] : []),
+      ...(forceWebSearch ? ['1. Web Search: [WEB_SEARCH:query="your search query"] — Use for real-time web info or researching unknown database/system error codes, panics, and outage bugs from uploaded logs.'] : []),
       '2. Generate Image (DALL-E 3): [GENERATE_IMAGE:prompt=detailed image description here]',
       '   - Use when the user asks you to generate, create, or draw an image/picture/photo',
       '   - Write the most descriptive prompt possible for best results',

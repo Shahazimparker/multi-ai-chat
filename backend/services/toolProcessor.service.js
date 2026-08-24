@@ -197,20 +197,24 @@ const requestToolApproval = async (toolName, context, onStatus, abortSignal = nu
   }
 };
 
-const buildFileContext = (fileResults, totalFileCount) => {
+const buildFileContext = (fileResults, totalFileCount, forceWebSearch = false) => {
   const fileCountNote = totalFileCount > fileResults.length
     ? `\n(Showing ${fileResults.length} of ${totalFileCount} total files — use SEARCH_FILES to find older ones)`
+    : '';
+
+  const webInstruction = forceWebSearch
+    ? `\n3. WEB_SEARCH FOR LOG DIAGNOSTICS & ERROR CODES: If you find unfamiliar error codes, database signatures (e.g. SQL30012, ORA-00600, Sybase/ASE/Postgres/MySQL errors), or system anomalies in an uploaded log file, use [WEB_SEARCH:query="..."] to look up the official vendor root-cause and known bugs on the web. Then use [SEARCH_FILES:query="..."] to cross-reference and verify those parameters in the log for an accurate, up-to-date diagnostic report.`
     : '';
 
   return fileResults.length > 0
     ? `[AVAILABLE UPLOADED FILES]\n${fileResults
       .map(r => `- ${r.file_name} (id: ${r.file_id})`)
       .join('\n')}${fileCountNote}\n[END UPLOADED FILES]\n\n` +
-    `You have access to two tools for uploaded files:\n` +
-    `1. SEARCH_FILES — use when the user asks what a file contains or which file has specific data. ` +
-    `Respond with: [SEARCH_FILES:query=<search text>] and I will return brief snippets of matching files.\n` +
-    `2. GET_FILE — use when you need the full content of a specific file. ` +
-    `Respond with: [GET_FILE:id=<file_id>] and I will inject the full content.`
+    `You have access to tools for uploaded files and logs:\n` +
+    `1. SEARCH_FILES — use to grep or search for specific errors, timestamps, processes, or keywords across the entire file. ` +
+    `Respond with: [SEARCH_FILES:query=<search text>] and I will return the matching lines with surrounding context.\n` +
+    `2. GET_FILE — use when you need the diagnostic digest or full content of a specific file. ` +
+    `Respond with: [GET_FILE:id=<file_id>] or [GET_FILE:<file_name>] and I will inject the content.${webInstruction}`
     : '';
 };
 
@@ -254,6 +258,87 @@ const runPPTGeneration = async ({ parsed, reply = '', user, topicId, onStatus, c
   };
 };
 
+/**
+ * Automatically extract critical incident anomalies, errors, fatal crashes,
+ * and high-entropy log events across massive files (10MB-50MB / 30,000+ lines).
+ */
+const extractDiagnosticDigest = (rawText, fileName) => {
+  if (!rawText) return '[No content available]';
+  const lines = rawText.split('\n');
+  const totalLines = lines.length;
+  if (rawText.length <= 250000 && totalLines <= 1200) {
+    return rawText;
+  }
+
+  // 1. First 120 lines (Boot / Startup / Initialization context)
+  const headLines = lines.slice(0, 120).join('\n');
+
+  // 2. High-Severity Anomaly & Incident Pattern Scanner across Linux, DBs & Apps
+  const CRITICAL_PATTERNS = [
+    // Process Kill / Termination / Panics / OOM
+    /\b(out of memory|oom[-_]?killer|killed\s+process|killing\s+process|sigkill|sigterm|sigsegv|sigbus|core dumped|segmentation fault|segfault|kernel panic|panic|stack overflow)\b/i,
+    // Severity keywords, Exceptions & Database Deadlocks
+    /\b(fatal|critical|emergency|severe|exception|unhandled|traceback|deadlock|lock wait timeout|corruption|corrupted|abort|aborted|assertion failed)\b/i,
+    // System Resource & Hardware / I/O Failures
+    /\b(cannot allocate memory|resource temporarily unavailable|disk full|no space left on device|read-only file system|i\/o error|device error|hardware error|bus error)\b/i,
+    // Network, Connection & Service Failures
+    /\b(connection refused|connection reset|timed out|timeout|max connections reached|too many open files|broken pipe|network unreachable)\b/i,
+    // Crash, Termination & Service Down Lifecycles
+    /\b(crashed|crash|crashing|failed to start|stopped unexpectedly|terminated unexpectedly|shutting down unexpectedly|service down|server terminated|down|offline)\b/i,
+    // Explicit Error & Failure Markers
+    /\b(error:?|err:?|failure:?|failed:?)\b/i,
+  ];
+
+  const matchedLineIndices = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (CRITICAL_PATTERNS.some(pat => pat.test(line))) {
+      matchedLineIndices.push(i);
+    }
+  }
+
+  // Group nearby line matches into incident clusters (with 3 lines before and 3 lines after)
+  const clusters = [];
+  const visited = new Set();
+
+  for (const idx of matchedLineIndices) {
+    if (visited.has(idx)) continue;
+    const start = Math.max(0, idx - 3);
+    const end = Math.min(lines.length - 1, idx + 4);
+    for (let j = start; j <= end; j++) visited.add(j);
+
+    const clusterSnippet = lines.slice(start, end + 1).map((l, offset) => {
+      const lineNo = start + offset + 1;
+      return `${lineNo}: ${l}`;
+    }).join('\n');
+
+    clusters.push({
+      line: idx + 1,
+      snippet: clusterSnippet,
+    });
+
+    if (clusters.length >= 35) break; // Keep top 35 high-signal incident clusters
+  }
+
+  // 3. Last 150 lines (Shutdown / Crash termination state)
+  const tailLines = lines.slice(-150).map((l, offset) => `${totalLines - 150 + offset + 1}: ${l}`).join('\n');
+
+  let incidentBlock = '';
+  if (clusters.length > 0) {
+    incidentBlock = `--- CRITICAL ERROR & ANOMALY INCIDENTS DETECTED ACROSS ALL ${totalLines} LINES (${clusters.length} clusters found) ---\n` +
+      clusters.map((c, i) => `[Incident Cluster #${i + 1} around Line ${c.line}]\n${c.snippet}`).join('\n\n') + '\n\n';
+  } else {
+    incidentBlock = `--- NO FATAL ANOMALIES AUTOMATICALLY DETECTED IN MIDDLE SECTION ---\n\n`;
+  }
+
+  return `[DIAGNOSTIC LOG SUMMARY: ${fileName} (${totalLines} total lines, ${(rawText.length / (1024 * 1024)).toFixed(1)}MB)]
+--- FILE START (Lines 1 to 120) ---
+${headLines}
+
+${incidentBlock}--- FILE END (Lines ${Math.max(1, totalLines - 150)} to ${totalLines}) ---
+${tailLines}`;
+};
+
 const processToolCall = async ({
   reply,
   aiResponse,
@@ -277,8 +362,8 @@ const processToolCall = async ({
 
     const resultBlock = searchResults.length > 0
       ? `[SEARCH RESULTS for "${query}"]\n${searchResults
-        .map(r => `- ${r.file_name} (id: ${r.file_id}): ${r.chunk_text.slice(0, 300)}`)
-        .join('\n')}\n[END SEARCH RESULTS]`
+        .map(r => `- ${r.file_name} (id: ${r.file_id}):\n${r.chunk_text.slice(0, 1200)}`)
+        .join('\n\n')}\n[END SEARCH RESULTS]`
       : `[SEARCH RESULTS for "${query}"]\nNo matching files found.\n[END SEARCH RESULTS]`;
 
     return {
@@ -308,19 +393,9 @@ const processToolCall = async ({
     }
 
     const rawContent = fileData.original_content || fileData.llm_analysis || '[No content available]';
-    let fileContentToSend = rawContent;
+    const fileContentToSend = extractDiagnosticDigest(rawContent, fileData.file_name);
 
-    if (rawContent.length > 250000) {
-      const lines = rawContent.split('\n');
-      const totalLines = lines.length;
-      const headCount = Math.min(500, Math.floor(totalLines / 2));
-      const tailCount = Math.min(500, totalLines - headCount);
-      const headText = lines.slice(0, headCount).join('\n');
-      const tailText = lines.slice(-tailCount).join('\n');
-      fileContentToSend = `[Large file: ${totalLines} total lines, ${(rawContent.length / (1024 * 1024)).toFixed(1)}MB total]\n--- FIRST ${headCount} LINES (Line 1 to ${headCount}) ---\n${headText}\n\n--- [${totalLines - headCount - tailCount} MIDDLE LINES OMITTED FOR MODEL CONTEXT LIMIT] ---\n\n--- LAST ${tailCount} LINES (Line ${totalLines - tailCount + 1} to ${totalLines}) ---\n${tailText}`;
-    }
-
-    const contentBlock = `[FILE CONTENT: ${fileData.file_name}]\n\`\`\`\n${fileContentToSend}\n\`\`\`\n[END FILE CONTENT]\n\nNow answer the user's question based on this file content. Be concise and accurate.`;
+    const contentBlock = `[FILE CONTENT: ${fileData.file_name}]\n\`\`\`\n${fileContentToSend}\n\`\`\`\n[END FILE CONTENT]\n\nNow answer the user's question based on this file content and diagnostic summary. Be concise, precise, and accurate.`;
 
     return {
       handled: true,

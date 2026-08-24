@@ -186,11 +186,15 @@ const KnowledgePage = () => {
       let blobUploadSucceeded = false;
 
       try {
+        const cleanFileName = (uploadFile.name || 'document').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const collectionFolder = activeCollection?.id || 'general';
+        const blobPathname = `knowledge/${collectionFolder}/${Date.now()}_${cleanFileName}`;
+
         setStatusMessage(`Authorizing upload...`);
         const tokenRes = await api.post('/upload/blob-handler', {
           type: 'blob.generate-client-token',
           payload: {
-            pathname: uploadFile.name,
+            pathname: blobPathname,
             clientPayload: null,
             multipart: uploadFile.size > 5 * 1024 * 1024,
           },
@@ -202,7 +206,7 @@ const KnowledgePage = () => {
         }
 
         setStatusMessage(`Uploading "${uploadFile.name}" to private storage...`);
-        blobResult = await vercelBlobPut(uploadFile.name, uploadFile, {
+        blobResult = await vercelBlobPut(blobPathname, uploadFile, {
           access: 'private',
           token: clientToken,
           multipart: uploadFile.size > 5 * 1024 * 1024,

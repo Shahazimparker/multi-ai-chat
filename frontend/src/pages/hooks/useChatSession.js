@@ -248,11 +248,15 @@ export const useChatSession = ({ refreshTokenStats }) => {
       }
     } else {
       try {
+        const cleanFileName = (file.name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const topicFolder = activeTopic?.id || 'general';
+        const blobPathname = `uploads/${topicFolder}/${Date.now()}_${cleanFileName}`;
+
         setUploadMessage(`Authorizing upload...`);
         const tokenRes = await api.post('/upload/blob-handler', {
           type: 'blob.generate-client-token',
           payload: {
-            pathname: file.name,
+            pathname: blobPathname,
             clientPayload: null,
             multipart: file.size > 5 * 1024 * 1024,
           },
@@ -264,7 +268,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
         }
 
         setUploadMessage(`Uploading to secure storage...`);
-        blobResult = await vercelBlobPut(file.name, file, {
+        blobResult = await vercelBlobPut(blobPathname, file, {
           access: 'private',
           token: clientToken,
           multipart: file.size > 5 * 1024 * 1024,
