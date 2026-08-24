@@ -1173,6 +1173,17 @@ const getFileContent = async (fileIdOrName, userId, topicId = null) => {
 
     const data = records[0];
 
+    // If stored in private Vercel Blob and original_content is empty, fetch directly from Blob
+    if (data && !data.original_content && data.blob_url) {
+      try {
+        const { fetchPrivateBlobBuffer } = require('./blobStorage.service');
+        const buf = await fetchPrivateBlobBuffer(data.blob_url);
+        if (buf) data.original_content = buf.toString('utf-8');
+      } catch (bErr) {
+        console.warn('[FileContent] Blob fetch fallback warning:', bErr.message);
+      }
+    }
+
     // Reconstruct full text from rag_chunks if original_content was truncated
     if (data && !data.blob_url && !data.original_file_data && data.original_content?.includes('Truncated for RPC storage')) {
       try {
