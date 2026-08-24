@@ -398,6 +398,297 @@ router.post('/process-blob', requireAuth, uploadHeavyLimiter, uploadTimeout, asy
 });
 
 /**
+ * In-memory fallback chunk storage for local dev / single instance
+ */
+const inMemoryChunkStaging = new Map();
+
+/**
+ * POST /api/upload/chunk/init
+ * Initialize a chunked upload session for direct DB upload (upgDB)
+ */
+router.post('/chunk/init', requireAuth, uploadHeavyLimiter, async (req, res) => {
+  try {
+    const { fileName, fileSize, fileType, totalChunks } = req.body;
+    if (!fileName) return res.status(400).json({ error: 'fileName is required' });
+
+    if (isRiskyFileType(fileName)) {
+      const ext = path.extname(fileName).slice(1);
+      return res.status(400).json({ error: `Files of type ".${ext}" are executable or system binaries and cannot be uploaded for security reasons.` });
+    }
+
+    const detectedType = getSupportedFileType(fileName);
+    if (detectedType === 'other') {
+      return res.status(400).json({ error: `Unsupported file type for "${fileName}".` });
+    }
+
+    const uploadId = crypto.randomUUID();
+    inMemoryChunkStaging.set(uploadId, {
+      userId: req.user.id,
+      fileName,
+      fileType: detectedType,
+      totalChunks: parseInt(totalChunks, 10) || 1,
+      chunks: new Map(),
+      createdAt: Date.now(),
+    });
+
+    res.json({
+      uploadId,
+      chunkSize: 3 * 1024 * 1024,
+      totalChunks: parseInt(totalChunks, 10) || 1,
+      fileName,
+    });
+  } catch (err) {
+    console.error('[Upload:Chunk:Init] Failed:', err);
+    res.status(500).json({ error: err.message || 'Failed to initialize chunk upload' });
+  }
+});
+
+/**
+ * POST /api/upload/chunk/:uploadId
+ * Upload a single chunk slice
+ */
+router.post('/chunk/:uploadId', requireAuth, async (req, res) => {
+  try {
+    const { uploadId } = req.params;
+    const { chunkIndex, totalChunks, fileName, fileType, chunkData } = req.body;
+
+    if (chunkIndex === undefined || !chunkData) {
+      return res.status(400).json({ error: 'chunkIndex and chunkData are required' });
+    }
+
+    const parsedIndex = parseInt(chunkIndex, 10);
+    const parsedTotal = parseInt(totalChunks, 10) || 1;
+
+    // Cache in memory for quick retrieval
+    let memSession = inMemoryChunkStaging.get(uploadId);
+    if (!memSession) {
+      memSession = {
+        userId: req.user.id,
+        fileName: fileName || 'file',
+        fileType: fileType || 'txt',
+        totalChunks: parsedTotal,
+        chunks: new Map(),
+        createdAt: Date.now(),
+      };
+      inMemoryChunkStaging.set(uploadId, memSession);
+    }
+    memSession.chunks.set(parsedIndex, chunkData);
+
+    // Persist to Supabase staging table for distributed Vercel serverless instances
+    try {
+      await supabase
+        .from('upload_chunks_staging')
+        .upsert({
+          upload_id: uploadId,
+          user_id: req.user.id,
+          chunk_index: parsedIndex,
+          total_chunks: parsedTotal,
+          file_name: fileName || 'file',
+          file_type: fileType || 'txt',
+          chunk_data: chunkData,
+          created_at: new Date().toISOString(),
+        }, { onConflict: 'upload_id,chunk_index' });
+    } catch (dbErr) {
+      // If table doesn't exist yet, in-memory Map provides local fallback
+      console.warn('[Upload:Chunk] DB staging write warning (using memory):', dbErr.message);
+    }
+
+    res.json({ success: true, uploadId, chunkIndex: parsedIndex });
+  } catch (err) {
+    console.error('[Upload:Chunk] Failed to save chunk:', err);
+    res.status(500).json({ error: err.message || 'Failed to save chunk' });
+  }
+});
+
+/**
+ * POST /api/upload/chunk/:uploadId/finalize
+ * Assemble chunks and process file directly into database (upgDB) with SSE streaming
+ */
+router.post('/chunk/:uploadId/finalize', requireAuth, uploadTimeout, async (req, res) => {
+  let sessionId = null;
+  let abortController = null;
+  let updateSession = null;
+
+  try {
+    const { uploadId } = req.params;
+    const { topicId, modelId, ragEnabled } = req.body;
+
+    abortController = new AbortController();
+    sessionId = crypto.randomUUID();
+
+    uploadSessions.set(sessionId, {
+      controller: abortController,
+      userId: req.user.id,
+      status: 'processing',
+      progress: 0,
+      message: 'Reassembling file chunks...',
+      phase: 'uploading',
+      result: null,
+      error: null,
+      createdAt: Date.now(),
+    });
+
+    updateSession = (updates) => {
+      const sess = uploadSessions.get(sessionId);
+      if (sess) {
+        Object.assign(sess, updates);
+        uploadSessions.set(sessionId, sess);
+      }
+    };
+
+    const onDisconnect = () => {
+      if (abortController) abortController.abort();
+      updateSession({ status: 'aborted', error: 'Client disconnected' });
+    };
+    req.on('close', onDisconnect);
+    res.on('close', onDisconnect);
+
+    // ── Setup SSE ──
+    try {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      });
+      res.flushHeaders();
+    } catch (sseErr) {
+      console.error('[Upload:Chunk:Finalize] SSE setup failed:', sseErr);
+    }
+
+    try {
+      if (typeof res.socket?.setNoDelay === 'function') res.socket.setNoDelay(true);
+    } catch {}
+
+    const sendProgress = (data) => {
+      if (data.type === 'progress') {
+        updateSession({ progress: data.percent, message: data.message || '', phase: data.phase || 'processing' });
+      }
+      if (!res.writableEnded && !res.destroyed) {
+        try {
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        } catch (writeErr) {
+          console.error('[Upload:Chunk:Finalize] SSE write error:', writeErr);
+        }
+      }
+    };
+
+    sendProgress({ type: 'init', sessionId, percent: 0, message: 'Reassembling file chunks...' });
+
+    // Retrieve chunks: check in-memory first, fallback to Supabase upload_chunks_staging
+    let fileName = 'file';
+    let fileType = 'txt';
+    let totalChunks = 1;
+    let chunksList = [];
+
+    const memSession = inMemoryChunkStaging.get(uploadId);
+    if (memSession && memSession.chunks.size >= memSession.totalChunks) {
+      fileName = memSession.fileName;
+      fileType = memSession.fileType;
+      totalChunks = memSession.totalChunks;
+      for (let i = 0; i < totalChunks; i++) {
+        const cData = memSession.chunks.get(i);
+        if (cData) chunksList.push(Buffer.from(cData, 'base64'));
+      }
+    } else {
+      // Fetch from Supabase staging table
+      const { data: dbChunks, error: dbErr } = await supabase
+        .from('upload_chunks_staging')
+        .select('*')
+        .eq('upload_id', uploadId)
+        .eq('user_id', req.user.id)
+        .order('chunk_index', { ascending: true });
+
+      if (dbErr || !dbChunks || dbChunks.length === 0) {
+        throw new Error('No uploaded chunks found for this upload session.');
+      }
+
+      fileName = dbChunks[0].file_name;
+      fileType = dbChunks[0].file_type;
+      totalChunks = dbChunks[0].total_chunks;
+
+      if (dbChunks.length < totalChunks) {
+        throw new Error(`Incomplete chunk upload: received ${dbChunks.length} of ${totalChunks} chunks.`);
+      }
+
+      chunksList = dbChunks.map((c) => Buffer.from(c.chunk_data, 'base64'));
+    }
+
+    const fileBuffer = Buffer.concat(chunksList);
+    sendProgress({ type: 'progress', percent: 20, message: 'Processing direct database ingestion...' });
+
+    // Cleanup staging table & memory
+    inMemoryChunkStaging.delete(uploadId);
+    try {
+      await supabase.from('upload_chunks_staging').delete().eq('upload_id', uploadId);
+    } catch {}
+
+    const isRagEnabled = ragEnabled === 'true' || ragEnabled === true;
+    const detectedType = getSupportedFileType(fileName);
+
+    const result = await processSingleFile(
+      fileBuffer,
+      fileName,
+      detectedType,
+      req.user.id,
+      topicId || null,
+      modelId || null,
+      abortController.signal,
+      isRagEnabled,
+      sendProgress,
+      null // blobUrl is null => stores raw file in PostgreSQL
+    );
+
+    if (result.tokensUsed > 0) {
+      const { error: tokenErr } = await supabase.rpc('increment_user_tokens', {
+        user_id: req.user.id,
+        token_amount: result.tokensUsed,
+      });
+      if (!tokenErr) {
+        console.log(`[Upload:Chunk:Finalize] Deducted ${result.tokensUsed} tokens for file embedding`);
+      }
+    }
+
+    updateSession({ status: 'done', progress: 100, phase: 'complete', result });
+
+    sendProgress({
+      type: 'done',
+      success: true,
+      ...result,
+      message: result.message,
+      extractedText: result.extractedText,
+    });
+    res.end();
+
+  } catch (err) {
+    const isAbort = err.name === 'AbortError' || err.name === 'CanceledError' || err.message === 'Upload cancelled by user';
+    if (updateSession) updateSession({ status: isAbort ? 'aborted' : 'error', error: err.message });
+    console.error(`[Upload:Chunk:Finalize] ${isAbort ? 'Aborted' : 'Error'}:`, err.message);
+
+    if (!res.writableEnded && !res.destroyed) {
+      try {
+        res.write(`data: ${JSON.stringify({ type: isAbort ? 'aborted' : 'error', error: err.message || 'Chunk finalization failed' })}\n\n`);
+        res.end();
+      } catch (writeErr) {
+        console.error('[Upload:Chunk:Finalize] Failed to send error via SSE:', writeErr);
+      }
+    }
+  }
+});
+
+/**
+ * POST /api/upload/chunk/:uploadId/abort
+ * Cancel chunked upload and delete staging data
+ */
+router.post('/chunk/:uploadId/abort', requireAuth, async (req, res) => {
+  const { uploadId } = req.params;
+  inMemoryChunkStaging.delete(uploadId);
+  try {
+    await supabase.from('upload_chunks_staging').delete().eq('upload_id', uploadId);
+  } catch {}
+  res.json({ message: 'Chunk upload aborted and cleaned' });
+});
+
+/**
  * POST /api/upload/file
  * Upload and process a file
  */

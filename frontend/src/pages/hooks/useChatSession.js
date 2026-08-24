@@ -185,19 +185,67 @@ export const useChatSession = ({ refreshTokenStats }) => {
 
     let blobResult = null;
     let blobUploadSucceeded = false;
+    let chunkUploadId = null;
 
     const isDbMode = Boolean(storeInDbRef.current || storeInDb);
 
     if (isDbMode) {
-      if (file.size > 4.5 * 1024 * 1024) {
-        const proceed = window.confirm(
-          `⚠️ Storage Warning:\n\n"${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds 4.5MB.\n\nDirect database uploads (upgDB) may encounter serverless request payload limits and will consume significant PostgreSQL quota.\n\nDo you want to proceed with direct database upload anyway?`
-        );
-        if (!proceed) {
-          throw new Error('Upload cancelled. Uncheck "upgDB" in Advanced settings to upload files up to 50MB via secure storage.');
+      if (file.size > 3.5 * 1024 * 1024) {
+        const CHUNK_SIZE = 3 * 1024 * 1024;
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        setUploadMessage(`Splitting ${file.name} into ${totalChunks} chunks for database upload...`);
+
+        const initRes = await api.post('/upload/chunk/init', {
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type,
+          totalChunks,
+        });
+
+        chunkUploadId = initRes.data?.uploadId;
+        if (!chunkUploadId) {
+          throw new Error('Failed to initialize chunked database upload');
         }
+
+        for (let i = 0; i < totalChunks; i++) {
+          if (uploadAbortRef.current?.signal?.aborted) {
+            await api.post(`/upload/chunk/${chunkUploadId}/abort`).catch(() => {});
+            throw new DOMException('Aborted', 'AbortError');
+          }
+
+          const start = i * CHUNK_SIZE;
+          const end = Math.min(file.size, start + CHUNK_SIZE);
+          const blobSlice = file.slice(start, end);
+
+          const reader = new FileReader();
+          const base64Data = await new Promise((resolve, reject) => {
+            reader.onloadend = () => {
+              const res = reader.result;
+              const base64 = typeof res === 'string' ? res.split(',')[1] : '';
+              resolve(base64);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(blobSlice);
+          });
+
+          setUploadMessage(`Uploading chunk ${i + 1} of ${totalChunks} directly to database...`);
+          setUploadProgress(Math.round(((i + 0.5) / totalChunks) * 50));
+
+          await api.post(`/upload/chunk/${chunkUploadId}`, {
+            chunkIndex: i,
+            totalChunks,
+            fileName: file.name,
+            fileType: file.type,
+            chunkData: base64Data,
+          });
+
+          setUploadProgress(Math.round(((i + 1) / totalChunks) * 50));
+        }
+
+        setUploadMessage(`Reassembling & indexing ${file.name}...`);
+      } else {
+        setUploadMessage(`Uploading ${file.name} directly to database...`);
       }
-      setUploadMessage(`Uploading ${file.name} directly to database...`);
     } else {
       try {
         setUploadMessage(`Authorizing upload...`);
@@ -241,9 +289,12 @@ export const useChatSession = ({ refreshTokenStats }) => {
 
     return await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      const endpoint = blobUploadSucceeded
-        ? `${API_BASE_URL}/upload/process-blob`
-        : `${API_BASE_URL}/upload/file`;
+      let endpoint = `${API_BASE_URL}/upload/file`;
+      if (blobUploadSucceeded) {
+        endpoint = `${API_BASE_URL}/upload/process-blob`;
+      } else if (chunkUploadId) {
+        endpoint = `${API_BASE_URL}/upload/chunk/${chunkUploadId}/finalize`;
+      }
 
       xhr.open('POST', endpoint);
       xhr.withCredentials = true;
@@ -251,12 +302,12 @@ export const useChatSession = ({ refreshTokenStats }) => {
       const csrfToken = getCsrfToken();
       if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
 
-      if (!blobUploadSucceeded) {
+      if (blobUploadSucceeded || chunkUploadId) {
+        xhr.setRequestHeader('Content-Type', 'application/json');
+      } else {
         xhr.upload.onprogress = (event) => {
           if (event.lengthComputable) setUploadProgress(Math.round((event.loaded / event.total) * 100));
         };
-      } else {
-        xhr.setRequestHeader('Content-Type', 'application/json');
       }
 
       // Per-request state.
@@ -276,8 +327,8 @@ export const useChatSession = ({ refreshTokenStats }) => {
           }
           if (data.type === 'done') doneEvent = data;
           if (data.type === 'progress' && typeof data.percent === 'number') {
-            const displayPercent = blobUploadSucceeded
-              ? 45 + Math.round((data.percent / 100) * 55)
+            const displayPercent = blobUploadSucceeded || chunkUploadId
+              ? 50 + Math.round((data.percent / 100) * 50)
               : data.percent;
             setUploadProgress(displayPercent);
             if (data.message) setUploadMessage(data.message);
@@ -321,10 +372,9 @@ export const useChatSession = ({ refreshTokenStats }) => {
         uploadAbortRef.current.signal.addEventListener('abort', () => xhr.abort());
       }
 
-      if (blobUploadSucceeded) {
+      if (blobUploadSucceeded || chunkUploadId) {
         xhr.send(JSON.stringify({
-          blobUrl: blobResult.url,
-          fileName: file.name,
+          ...(blobUploadSucceeded ? { blobUrl: blobResult.url, fileName: file.name } : {}),
           topicId: topicIdToUse || null,
           modelId: model.id,
           ragEnabled,
