@@ -307,8 +307,20 @@ const processToolCall = async ({
       };
     }
 
-    const fileContent = fileData.original_content || fileData.llm_analysis || '[No content available]';
-    const contentBlock = `[FILE CONTENT: ${fileData.file_name}]\n\`\`\`\n${fileContent}\n\`\`\`\n[END FILE CONTENT]\n\nNow answer the user's question based on this file content. Be concise and accurate.`;
+    const rawContent = fileData.original_content || fileData.llm_analysis || '[No content available]';
+    let fileContentToSend = rawContent;
+
+    if (rawContent.length > 250000) {
+      const lines = rawContent.split('\n');
+      const totalLines = lines.length;
+      const headCount = Math.min(500, Math.floor(totalLines / 2));
+      const tailCount = Math.min(500, totalLines - headCount);
+      const headText = lines.slice(0, headCount).join('\n');
+      const tailText = lines.slice(-tailCount).join('\n');
+      fileContentToSend = `[Large file: ${totalLines} total lines, ${(rawContent.length / (1024 * 1024)).toFixed(1)}MB total]\n--- FIRST ${headCount} LINES (Line 1 to ${headCount}) ---\n${headText}\n\n--- [${totalLines - headCount - tailCount} MIDDLE LINES OMITTED FOR MODEL CONTEXT LIMIT] ---\n\n--- LAST ${tailCount} LINES (Line ${totalLines - tailCount + 1} to ${totalLines}) ---\n${tailText}`;
+    }
+
+    const contentBlock = `[FILE CONTENT: ${fileData.file_name}]\n\`\`\`\n${fileContentToSend}\n\`\`\`\n[END FILE CONTENT]\n\nNow answer the user's question based on this file content. Be concise and accurate.`;
 
     return {
       handled: true,

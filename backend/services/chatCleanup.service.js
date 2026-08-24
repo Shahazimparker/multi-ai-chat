@@ -72,9 +72,9 @@ const classifyError = (messageText) => {
   let errorType = 'unknown';
   let userMessage = 'The selected LLM is temporarily unavailable.';
 
-  if (/413|too large|request too large/i.test(msg)) {
+  if (/413|too large|request too large|context length|maximum context|context_length_exceeded|tokens/i.test(msg)) {
     errorType = 'request_too_large';
-    userMessage = 'This model does not support such a large request. Please select another model with a higher token limit and try again.';
+    userMessage = 'This request exceeds the model token context limit. Please select another model with a higher token limit or try again.';
   } else if (/quota|insufficient|credit|billing|exceeded/i.test(msg)) {
     errorType = 'quota_exhausted';
     userMessage = 'The selected LLM token quota is exhausted.';

@@ -569,15 +569,17 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
       }
       ragRecord = { id: insertedId };
 
-      // Record blob_url in uploaded_files_rag if available
-      if (blobUrl && ragRecord.id) {
+      // Update full sanitizedContent directly in uploaded_files_rag to guarantee 100% full file persistence
+      if (ragRecord.id) {
         try {
+          const updatePayload = { original_content: sanitizedContent };
+          if (blobUrl) updatePayload.blob_url = blobUrl;
           await supabase
             .from('uploaded_files_rag')
-            .update({ blob_url: blobUrl })
+            .update(updatePayload)
             .eq('id', ragRecord.id);
         } catch (colErr) {
-          console.warn(`[FileUpload] Optional blob_url column write failed: ${colErr.message}`);
+          console.warn(`[FileUpload] Full original_content column update failed: ${colErr.message}`);
         }
       }
 
