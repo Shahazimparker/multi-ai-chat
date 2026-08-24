@@ -17,6 +17,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
   const [memoryMode, setMemoryMode] = useState('accurate');
   const [historyLimit, setHistoryLimit] = useState(8);
   const [ragEnabled, setRagEnabled] = useState(true);
+  const [storeInDb, setStoreInDb] = useState(false);
   const [selectedCollectionIds, setSelectedCollectionIds] = useState([]);
   const [unifiedProvider, setUnifiedProvider] = useState(null);
   const [providerModelId, setProviderModelId] = useState(null);
@@ -183,42 +184,54 @@ export const useChatSession = ({ refreshTokenStats }) => {
     let blobResult = null;
     let blobUploadSucceeded = false;
 
-    try {
-      setUploadMessage(`Authorizing upload...`);
-      const tokenRes = await api.post('/upload/blob-handler', {
-        type: 'blob.generate-client-token',
-        payload: {
-          pathname: file.name,
-          clientPayload: null,
+    if (storeInDb) {
+      if (file.size > 4.5 * 1024 * 1024) {
+        const proceed = window.confirm(
+          `⚠️ Storage Warning:\n\n"${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds 4.5MB.\n\nDirect database uploads (upgDB) may encounter serverless request payload limits and will consume significant PostgreSQL quota.\n\nDo you want to proceed with direct database upload anyway?`
+        );
+        if (!proceed) {
+          throw new Error('Upload cancelled. Uncheck "upgDB" in Advanced settings to upload files up to 50MB via secure storage.');
+        }
+      }
+      setUploadMessage(`Uploading ${file.name} directly to database...`);
+    } else {
+      try {
+        setUploadMessage(`Authorizing upload...`);
+        const tokenRes = await api.post('/upload/blob-handler', {
+          type: 'blob.generate-client-token',
+          payload: {
+            pathname: file.name,
+            clientPayload: null,
+            multipart: file.size > 5 * 1024 * 1024,
+          },
+        });
+
+        const clientToken = tokenRes.data?.clientToken;
+        if (!clientToken) {
+          throw new Error('Failed to generate upload authorization token');
+        }
+
+        setUploadMessage(`Uploading to secure storage...`);
+        blobResult = await vercelBlobPut(file.name, file, {
+          access: 'private',
+          token: clientToken,
           multipart: file.size > 5 * 1024 * 1024,
-        },
-      });
+          onUploadProgress: (progress) => {
+            const pct = Math.round((progress.percentage || 0) * 0.45);
+            setUploadProgress(pct);
+            setUploadMessage(`Uploading to secure storage (${Math.round(progress.percentage || 0)}%)...`);
+          },
+          abortSignal: uploadAbortRef.current?.signal,
+        });
 
-      const clientToken = tokenRes.data?.clientToken;
-      if (!clientToken) {
-        throw new Error('Failed to generate upload authorization token');
-      }
-
-      setUploadMessage(`Uploading to secure storage...`);
-      blobResult = await vercelBlobPut(file.name, file, {
-        access: 'private',
-        token: clientToken,
-        multipart: file.size > 5 * 1024 * 1024,
-        onUploadProgress: (progress) => {
-          const pct = Math.round((progress.percentage || 0) * 0.45);
-          setUploadProgress(pct);
-          setUploadMessage(`Uploading to secure storage (${Math.round(progress.percentage || 0)}%)...`);
-        },
-        abortSignal: uploadAbortRef.current?.signal,
-      });
-
-      if (blobResult?.url) {
-        blobUploadSucceeded = true;
-      }
-    } catch (blobErr) {
-      console.warn('[ChatSession] Direct blob upload error or fallback:', blobErr.message);
-      if (file.size > 4 * 1024 * 1024) {
-        throw new Error(blobErr.message || 'File upload to storage failed');
+        if (blobResult?.url) {
+          blobUploadSucceeded = true;
+        }
+      } catch (blobErr) {
+        console.warn('[ChatSession] Direct blob upload error or fallback:', blobErr.message);
+        if (file.size > 4 * 1024 * 1024) {
+          throw new Error(blobErr.message || 'File upload to storage failed');
+        }
       }
     }
 
@@ -812,6 +825,8 @@ export const useChatSession = ({ refreshTokenStats }) => {
     setHistoryLimit,
     ragEnabled,
     setRagEnabled,
+    storeInDb,
+    setStoreInDb,
     selectedCollectionIds,
     setSelectedCollectionIds,
     unifiedProvider,

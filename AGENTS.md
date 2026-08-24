@@ -40,6 +40,8 @@ This document provides essential context about the codebase, deployment environm
    - File downloads are proxied and streamed via `GET /api/upload/download/:fileId` with user authentication and ownership validation.
 4. **Pasted Image Compression**:
    - Clipboard screenshots are compressed to <= 1600px / JPEG 85% via HTML5 Canvas in `useChatComposer.js` before being sent over chat stream payloads.
+5. **Direct DB Upload Toggle (`upgDB`)**:
+   - In `ChatMemoryControls.jsx` under Advanced settings, users can optionally check `upgDB` (`storeInDb: true`) to bypass Vercel Blob and store files directly in PostgreSQL Base64 (`<= 4.5MB`), while default remains Vercel Blob (up to 50MB).
 
 ---
 

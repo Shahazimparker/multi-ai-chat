@@ -7,6 +7,8 @@ const ChatMemoryControls = ({
   setHistoryLimit,
   ragEnabled,
   setRagEnabled,
+  storeInDb,
+  setStoreInDb,
   showAdvancedMemory,
   setShowAdvancedMemory,
 }) => (
@@ -57,6 +59,15 @@ const ChatMemoryControls = ({
         <label className="memory-toggle-control">
           <input type="checkbox" checked={ragEnabled} onChange={(event) => setRagEnabled(event.target.checked)} />
           RAG on
+        </label>
+
+        <label className="memory-toggle-control" title="Store full file binary directly in PostgreSQL database instead of Vercel Blob storage (max 4.5MB)">
+          <input
+            type="checkbox"
+            checked={Boolean(storeInDb)}
+            onChange={(event) => setStoreInDb?.(event.target.checked)}
+          />
+          upgDB
         </label>
       </>
     )}
