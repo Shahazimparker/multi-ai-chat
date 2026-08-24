@@ -625,7 +625,7 @@ router.post('/chunk/:uploadId/finalize', requireAuth, uploadTimeout, async (req,
     const isRagEnabled = ragEnabled === 'true' || ragEnabled === true;
     const detectedType = getSupportedFileType(fileName);
 
-    const result = await processSingleFile(
+    const result = await processUploadedFile(
       fileBuffer,
       fileName,
       detectedType,
