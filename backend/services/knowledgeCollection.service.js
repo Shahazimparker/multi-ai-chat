@@ -179,6 +179,25 @@ const deleteCollection = async (collectionId, userId) => {
     throw new Error('Collection not found or unauthorized');
   }
 
+  // Clean up all document blobs belonging to this collection
+  try {
+    const { data: docs } = await supabase
+      .from('knowledge_documents')
+      .select('blob_url')
+      .eq('collection_id', collectionId);
+
+    if (docs && docs.length > 0) {
+      const { deleteBlobFromStorage } = require('./blobStorage.service');
+      await Promise.allSettled(
+        docs
+          .filter((d) => Boolean(d.blob_url))
+          .map((d) => deleteBlobFromStorage(d.blob_url))
+      );
+    }
+  } catch (blobErr) {
+    console.warn('[KnowledgeCollection] Collection blob cleanup error:', blobErr.message);
+  }
+
   const { error } = await supabase
     .from('knowledge_collections')
     .delete()

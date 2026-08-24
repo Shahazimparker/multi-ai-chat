@@ -69,6 +69,26 @@ const deleteTopic = async (req, res) => {
 
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
+    // Clean up blobs from storage associated with this topic
+    try {
+      const { data: topicFiles } = await supabase
+        .from('uploaded_files_rag')
+        .select('blob_url')
+        .eq('topic_id', topicId)
+        .eq('user_id', user.id);
+
+      if (topicFiles && topicFiles.length > 0) {
+        const { deleteBlobFromStorage } = require('../services/blobStorage.service');
+        await Promise.allSettled(
+          topicFiles
+            .filter((f) => Boolean(f.blob_url))
+            .map((f) => deleteBlobFromStorage(f.blob_url))
+        );
+      }
+    } catch (blobErr) {
+      console.warn('[History] Topic blob cleanup error:', blobErr.message);
+    }
+
     // Explicitly delete generated/uploaded files for this topic first.
     // The uploaded_files_rag FK is ON DELETE SET NULL, so the RPC alone may leave
     // orphaned rows if the deployed function predates the uploaded_files_rag cleanup step.

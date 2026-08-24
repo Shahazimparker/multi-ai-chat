@@ -151,6 +151,26 @@ const deleteUser = async (req, res) => {
       return res.status(400).json({ error: 'Cannot delete your own account' });
     }
 
+    // Clean up all blobs stored in Vercel Blob for this user (chat uploads & knowledge documents)
+    try {
+      const [ragBlobs, docBlobs] = await Promise.all([
+        supabase.from('uploaded_files_rag').select('blob_url').eq('user_id', id),
+        supabase.from('knowledge_documents').select('blob_url').eq('user_id', id),
+      ]);
+
+      const urls = [
+        ...(ragBlobs.data || []).map((r) => r.blob_url),
+        ...(docBlobs.data || []).map((d) => d.blob_url),
+      ].filter(Boolean);
+
+      if (urls.length > 0) {
+        const { deleteBlobFromStorage } = require('../services/blobStorage.service');
+        await Promise.allSettled(urls.map((url) => deleteBlobFromStorage(url)));
+      }
+    } catch (blobErr) {
+      console.warn('[Admin] User blob storage cleanup warning:', blobErr.message);
+    }
+
     // Atomic, complete deletion: a single SECURITY DEFINER RPC removes the user
     // and every related row (memories, embeddings, knowledge base, approvals,
     // uploads, analytics, caches) in one transaction — no partial deletes.
