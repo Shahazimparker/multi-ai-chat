@@ -214,9 +214,13 @@ const buildFileContext = (fileResults, totalFileCount) => {
     : '';
 };
 
-const findSearchFileMatch = (reply) => reply.match(/\[SEARCH_FILES:query=([^\]]+)\]/);
+const findSearchFileMatch = (reply) => reply.match(/\[SEARCH_FILES:query=([^\]]+)\]/i);
 const findSearchKBMatch = (reply) => reply.match(/\[SEARCH_KB:query=(?:"|')([^"']+)(?:"|')\]/i) || reply.match(/\[SEARCH_KB:query=([^\]]+)\]/i);
-const findGetFileMatch = (reply) => reply.match(/\[GET_FILE:id=([^\]]+)\]/);
+const findGetFileMatch = (reply) =>
+  reply.match(/\[GET_FILE:id=([^\]]+)\]/i) ||
+  reply.match(/\[GET_FILE:([^\]]+)\]/i) ||
+  reply.match(/\[READ_FILE:id=([^\]]+)\]/i) ||
+  reply.match(/\[READ_FILE:([^\]]+)\]/i);
 const findWebSearchMatch = (reply) => reply.match(/\[WEB_SEARCH:query=(?:"|')([^"']+)(?:"|')\]/i) || reply.match(/\[WEB_SEARCH:([^\]]+)\]/i);
 const findGenerateImageMatch = (reply) => reply.match(/\[GENERATE_IMAGE:prompt=([^\]]+)\]/i);
 const findGeneratePPTMatch = (reply) => reply.match(/\[GENERATE_PPT\]([\s\S]*?)\[\/GENERATE_PPT\]/i);
@@ -289,15 +293,15 @@ const processToolCall = async ({
 
   const getFileMatch = findGetFileMatch(reply);
   if (getFileMatch) {
-    const fileId = getFileMatch[1].trim();
-    const fileData = await getFileContent(fileId, user?.id, topicId);
+    const fileTarget = getFileMatch[1].trim().replace(/^['"]|['"]$/g, '');
+    const fileData = await getFileContent(fileTarget, user?.id, topicId);
 
     if (!fileData) {
       return {
         handled: true,
         newMessages: [
           { role: 'assistant', content: reply },
-          { role: 'user', content: `[Tool Result] File with id "${fileId}" not found or access denied.` },
+          { role: 'user', content: `[Tool Result] File "${fileTarget}" not found or access denied.` },
         ],
         embedTokens: 0,
       };

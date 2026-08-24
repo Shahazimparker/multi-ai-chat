@@ -1053,21 +1053,75 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
  * Get full file content by file_id (for hybrid tool approach)
  * Returns the complete original_content so the AI can read it on demand
  */
-const getFileContent = async (fileId, userId, topicId) => {
+const getFileContent = async (fileIdOrName, userId, topicId = null) => {
   try {
-    if (!fileId || !userId || !topicId) return null;
+    if (!fileIdOrName || !userId) return null;
 
-    const { data, error } = await supabase
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(fileIdOrName).trim());
+    let query = supabase
       .from('uploaded_files_rag')
-      .select('id, file_name, file_type, original_content, llm_analysis, created_at')
-      .eq('id', fileId)
-      .eq('user_id', userId)
-      .eq('topic_id', topicId)
-      .single();
+      .select('id, file_name, file_type, original_content, original_file_data, llm_analysis, blob_url, created_at')
+      .eq('user_id', userId);
 
-    if (error) {
-      console.error('[FileContent] Fetch error:', error.message);
+    if (isUuid) {
+      query = query.eq('id', fileIdOrName.trim());
+    } else {
+      query = query.ilike('file_name', fileIdOrName.trim());
+    }
+
+    if (topicId) {
+      query = query.eq('topic_id', topicId);
+    }
+
+    let { data: records, error } = await query.order('created_at', { ascending: false }).limit(1);
+
+    // Fallback: if topic-scoped query found nothing and topicId was passed, try user-wide
+    if ((!records || records.length === 0) && topicId) {
+      let fallbackQuery = supabase
+        .from('uploaded_files_rag')
+        .select('id, file_name, file_type, original_content, original_file_data, llm_analysis, blob_url, created_at')
+        .eq('user_id', userId);
+      if (isUuid) {
+        fallbackQuery = fallbackQuery.eq('id', fileIdOrName.trim());
+      } else {
+        fallbackQuery = fallbackQuery.ilike('file_name', fileIdOrName.trim());
+      }
+      const fallbackRes = await fallbackQuery.order('created_at', { ascending: false }).limit(1);
+      records = fallbackRes.data;
+    }
+
+    if (!records || records.length === 0) {
       return null;
+    }
+
+    const data = records[0];
+
+    // Reconstruct full text from rag_chunks if original_content was truncated
+    if (data && !data.blob_url && !data.original_file_data && data.original_content?.includes('Truncated for RPC storage')) {
+      try {
+        const { data: uFile } = await supabase
+          .from('uploaded_files')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('file_name', data.file_name)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (uFile?.id) {
+          const { data: chunks } = await supabase
+            .from('rag_chunks')
+            .select('chunk_text')
+            .eq('file_id', uFile.id)
+            .order('chunk_index', { ascending: true });
+
+          if (chunks && chunks.length > 0) {
+            data.original_content = chunks.map((c) => c.chunk_text).join('');
+          }
+        }
+      } catch (chunkErr) {
+        console.warn('[FileContent] Reassembly error:', chunkErr.message);
+      }
     }
 
     return data;
@@ -1079,7 +1133,7 @@ const getFileContent = async (fileId, userId, topicId) => {
 
 /**
  * List uploaded files for a topic (no similarity filter)
- * When topicId is null, returns files with NULL topic_id (uploaded before topic was created).
+ * Falls back to recent user uploads so newly created topics immediately see active files.
  * @param {string} userId
  * @param {string} topicId
  * @param {number} maxFiles - max files to return (default 200)
@@ -1088,18 +1142,30 @@ const listUserFiles = async (userId, topicId, maxFiles = 200) => {
   try {
     if (!userId) return [];
 
-    const query = supabase
-      .from('uploaded_files_rag')
-      .select('id, file_name, file_type, created_at', { count: 'exact' })
-      .eq('user_id', userId);
-
     if (topicId) {
-      query.eq('topic_id', topicId);
-    } else {
-      query.is('topic_id', null);
+      const { data: topicFiles, error: tErr } = await supabase
+        .from('uploaded_files_rag')
+        .select('id, file_name, file_type, created_at')
+        .eq('user_id', userId)
+        .eq('topic_id', topicId)
+        .order('created_at', { ascending: false })
+        .limit(maxFiles);
+
+      if (!tErr && topicFiles && topicFiles.length > 0) {
+        const files = topicFiles.map(r => ({
+          file_id: r.id,
+          file_name: r.file_name,
+          file_type: r.file_type,
+        }));
+        return { files, totalCount: files.length };
+      }
     }
 
-    const { data, error, count } = await query
+    // Fallback: fetch recent user files across topic or null topic (last 2 hours)
+    const { data: recentFiles, error, count } = await supabase
+      .from('uploaded_files_rag')
+      .select('id, file_name, file_type, created_at', { count: 'exact' })
+      .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(maxFiles);
 
@@ -1108,7 +1174,7 @@ const listUserFiles = async (userId, topicId, maxFiles = 200) => {
       return [];
     }
 
-    const files = (data || []).map(r => ({
+    const files = (recentFiles || []).map(r => ({
       file_id: r.id,
       file_name: r.file_name,
       file_type: r.file_type,
@@ -1173,6 +1239,33 @@ const getFileContentById = async (fileId, userId) => {
     if (error) {
       console.error('[FileContentById] error:', error.message);
       return null;
+    }
+
+    if (data && !data.blob_url && !data.original_file_data && data.original_content?.includes('Truncated for RPC storage')) {
+      try {
+        const { data: uFile } = await supabase
+          .from('uploaded_files')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('file_name', data.file_name)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (uFile?.id) {
+          const { data: chunks } = await supabase
+            .from('rag_chunks')
+            .select('chunk_text')
+            .eq('file_id', uFile.id)
+            .order('chunk_index', { ascending: true });
+
+          if (chunks && chunks.length > 0) {
+            data.original_content = chunks.map((c) => c.chunk_text).join('');
+          }
+        }
+      } catch (chunkErr) {
+        console.warn('[FileContentById] Reassembly error:', chunkErr.message);
+      }
     }
 
     return data;
