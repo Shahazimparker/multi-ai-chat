@@ -94,6 +94,7 @@ app.use(helmet());                            // sets secure HTTP headers
 // colourised and concise but strips the fields log aggregators expect.
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(express.json({ limit: '10mb' }));     // parse JSON bodies (10MB for RAG docs)
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // ── CORS — MUST run before CSRF so error responses get CORS headers ──
 const allowedOrigins = [

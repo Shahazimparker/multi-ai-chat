@@ -190,8 +190,8 @@ export const useChatSession = ({ refreshTokenStats }) => {
     const isDbMode = Boolean(storeInDbRef.current || storeInDb);
 
     if (isDbMode) {
-      if (file.size > 3.5 * 1024 * 1024) {
-        const CHUNK_SIZE = 3 * 1024 * 1024;
+      if (file.size > 2.5 * 1024 * 1024) {
+        const CHUNK_SIZE = 2 * 1024 * 1024;
         const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
         setUploadMessage(`Splitting ${file.name} into ${totalChunks} chunks for database upload...`);
 
