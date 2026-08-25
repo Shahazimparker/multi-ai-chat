@@ -197,6 +197,7 @@ All values are read from env at startup with clamped parsing:
 | `gemini-pro` | Gemini Pro 3.1 Preview | gemini | No |
 | `mistral-small` | Mistral Small | mistral | Yes |
 | `mistral-medium` | Mistral Medium | mistral | Yes |
+| `pixtral-large` | Pixtral Large | mistral | No |
 | `claude-haiku` | Claude Haiku 4.5 | claude | No |
 | `claude-sonnet-5` | Claude Sonnet 5 | claude | No |
 | `claude-opus-4-8` | Claude Opus 4.8 | claude | No |

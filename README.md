@@ -12,7 +12,7 @@ Unified AI chat platform with authentication, real provider token streaming, rea
 
 ## Core Capabilities
 
-- **14 configured AI models** across DeepSeek, Groq, Gemini, Mistral, Claude, OpenRouter; plus live model discovery for `openrouter`, `together`, `anyapi`
+- **15 configured AI models** across DeepSeek, Groq, Gemini, Mistral, Claude, OpenRouter; plus live model discovery for `openrouter`, `together`, `anyapi`
 - **Real streaming**: All 10 providers stream native tokens. No artificial delays. Tool-call rounds send status events; the final answer streams naturally.
 - **Direct 50MB File Uploads**: Client-to-Vercel-Blob direct upload pipeline (`@vercel/blob/client`) completely bypassing Vercel's 4.5MB serverless edge body limit. Supports all known formats (PDF, DOCX, CSV, Excel, TXT, Logs, Code, Images, ZIP) while security-gating risky executables (`.exe`, `.dll`, `.msi`, etc.).
 - **Supabase DB Quota Protection**: Raw file binaries are kept in private blob storage; only lean metadata and vector embeddings are stored in PostgreSQL to preserve the 500MB free tier quota.

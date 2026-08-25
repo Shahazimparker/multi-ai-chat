@@ -4,7 +4,7 @@
 
 ## Executive Summary
 
-Multi-AI Chat is a full-stack chat platform that unifies 14 configured AI models and 3 live provider catalogs behind one interface. The current implementation supports authenticated users, file upload, retrieval-augmented responses, caching, token quotas, admin management, theme persistence, and live model discovery.
+Multi-AI Chat is a full-stack chat platform that unifies 15 configured AI models and 3 live provider catalogs behind one interface. The current implementation supports authenticated users, file upload, retrieval-augmented responses, caching, token quotas, admin management, theme persistence, and live model discovery.
 
 **New since last review:** Complete Knowledge Base (RAG 2.0) system with collection management, web crawling, vision extraction, PDF OCR, RAPTOR hierarchical summarization, GraphRAG entity/relation retrieval, and Cohere cross-encoder reranking. Plus reasoning model support (chain-of-thought), temporal grounding, serverless-safe rate limiting and brute-force lockout, embedding space correctness guarantees, and idle session logout.
 
@@ -40,7 +40,7 @@ Multi-AI Chat is a full-stack chat platform that unifies 14 configured AI models
 |---|---|
 | Auth | Login, JWT cookie sessions, admin checks, brute-force lockout, idle logout |
 | Chat | Streaming + non-streaming; reasoning/thinking mode per model |
-| Models | 14 configured models (DeepSeek, Groq, Gemini, Mistral, Claude, OpenRouter) + live catalogs for `openrouter`, `together`, `anyapi` |
+| Models | 15 configured models (DeepSeek, Groq, Gemini, Mistral, Claude, OpenRouter) + live catalogs for `openrouter`, `together`, `anyapi` |
 | Reasoning | Per-model effort levels (low/medium/high/max/xhigh); chain-of-thought panel; stored in DB |
 | Memory | Per-topic history with dynamic summarization + cross-chat semantic memory (accurate mode) |
 | RAG (chat uploads) | File and document retrieval, hybrid cosine+BM25+Jaccard+RRF reranking |

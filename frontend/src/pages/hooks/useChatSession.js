@@ -407,7 +407,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
     const fileNames = files.map((entry) => entry.name);
     const userMsgContent = fileNames.length > 0
       ? (finalMessage ? `${finalMessage}\n${fileNames.map((name) => `📎 ${name}`).join('\n')}` : fileNames.map((name) => `📎 ${name}`).join('\n'))
-      : finalMessage;
+      : (finalMessage || (image ? '📷 [Image attached]' : ''));
     if (!isRetry) {
       setMessages((prev) => [...prev, { role: 'user', content: userMsgContent, created_at: new Date().toISOString() }]);
     }
@@ -807,7 +807,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
   }, [queuePopoverOpen]);
 
   const requestSend = useCallback(async ({ text, files, image, forceWebSearch }) => {
-    if (!String(text || '').trim() && (!files || files.length === 0)) return;
+    if (!String(text || '').trim() && (!files || files.length === 0) && !image) return;
     if (loading) {
       setMessageQueue((prev) => [...prev, { text, files: [...(files || [])], image, forceWebSearch: Boolean(forceWebSearch) }]);
       return;

@@ -119,7 +119,7 @@ const ChatInputPanel = ({
       <button
         className={`send-btn ${session.loading ? 'stop-btn' : ''}`}
         onClick={session.loading ? session.handleStop : handleSend}
-        disabled={session.loading ? false : (!composer.input.trim() && composer.pendingFiles.length === 0) || !session.model}
+        disabled={session.loading ? false : (!composer.input.trim() && composer.pendingFiles.length === 0 && !composer.pendingImage) || !session.model}
       >
         {session.loading ? <StopCircle size={18} /> : <Send size={18} />}
       </button>

@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 
-const visionProviders = ['openai', 'gemini', 'claude', 'deepseek'];
-const visionOpenRouterModels = ['gemini', 'gpt', 'claude', 'deepseek'];
+const visionProviders = ['openai', 'gemini', 'claude', 'deepseek', 'mistral'];
+const visionOpenRouterModels = ['gemini', 'gpt', 'claude', 'deepseek', 'mistral', 'pixtral'];
 
 const compressImageForChat = (dataUrl, maxDimension = 1600, quality = 0.85) => {
   return new Promise((resolve) => {

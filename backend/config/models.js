@@ -181,6 +181,7 @@ const MODELS = {
     apiKey: process.env.MISTRAL_API_KEY,
     model: 'mistral-small-latest',
     paid: false,
+    supportsVision: true,
     maxTokens: 32000,
   },
   'mistral-medium': {
@@ -189,7 +190,17 @@ const MODELS = {
     apiKey: process.env.MISTRAL_API_KEY,
     model: 'mistral-medium-latest',
     paid: false,
+    supportsVision: true,
     maxTokens: 32000,
+  },
+  'pixtral-large': {
+    label: 'Pixtral Large (Vision, Paid)',
+    provider: 'mistral',
+    apiKey: process.env.MISTRAL_API_KEY,
+    model: 'pixtral-large-latest',
+    paid: true,
+    supportsVision: true,
+    maxTokens: 128000,
   },
 
   // ── Anthropic Claude ──────────────────────────────────────
