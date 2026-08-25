@@ -108,8 +108,8 @@ const ModelSelector = ({
         setModels(nextModels);
 
         if (!selectedModel && nextModels.length > 0) {
-          // Default to ministral-8b if available, otherwise first model
-          const defaultModel = nextModels.find(m => m.id === 'ministral-8b') || nextModels[0];
+          // Default to mistral-small if available, otherwise first model
+          const defaultModel = nextModels.find(m => m.id === 'mistral-small') || nextModels[0];
           onModelChange(defaultModel);
         }
       })

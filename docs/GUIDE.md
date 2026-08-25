@@ -104,7 +104,7 @@ multi-ai-chat/
 - `JWT_SECRET` (≥32 chars)
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_KEY`
-- `MISTRAL_API_KEY` — **Required for the default model** (`ministral-8b`)
+- `MISTRAL_API_KEY` — **Required for the default model** (`mistral-small` / Mistral Small 4)
 
 ### Backend — Common Optional
 

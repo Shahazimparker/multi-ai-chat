@@ -438,7 +438,7 @@ const runChatPipeline = async (opts) => {
 
   // ── destructure with defaults ──────────────────────────────
   const {
-    modelId = 'ministral-8b',
+    modelId = 'mistral-small',
     message,
     image,
     topicId,
