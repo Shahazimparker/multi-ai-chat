@@ -396,6 +396,7 @@ const embedText = async (text, provider = DEFAULT_PROVIDER, retries = 3, signal 
   // Bound embedding input safely to 6,000 tokens to prevent provider crashes,
   // runaway embedding billing on 100k raw logs, and stay within Supabase 500MB free-tier limits.
   const rawText = String(text || '').trim();
+  if (!rawText) return null;
   const safeText = estimateTokens(rawText) > 6000 ? trimTextByTokens(rawText, 6000) : rawText;
   const estimatedTokens = estimateTokens(safeText);
   const space = spaceForProvider(provider);
