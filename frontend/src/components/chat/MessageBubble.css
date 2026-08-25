@@ -242,13 +242,32 @@
   padding: 3px 8px;
   font-size: 0.7rem;
   font-weight: 500;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), background 0.2s ease, border-color 0.2s ease;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 
 .copy-btn-text {
   font-size: 0.68rem;
   line-height: 1;
+}
+
+/* Reveal copy button on hover over the message or bubble, or when focused/copied */
+.message-row:hover .copy-btn,
+.msg-bubble:hover .copy-btn,
+.copy-btn:focus-visible,
+.copy-btn.copied {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* On touch/mobile devices without pointer hover, keep copy button accessible */
+@media (hover: none) {
+  .copy-btn {
+    opacity: 0.8;
+    pointer-events: auto;
+  }
 }
 
 .copy-btn:hover {

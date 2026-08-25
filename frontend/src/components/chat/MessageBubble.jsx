@@ -474,7 +474,7 @@ const MessageBubble = ({ message, onSidebarRefresh, onApprovalComplete, onClarif
         {/* Actions (left) + timestamp (bottom-right) */}
         <div className="bubble-footer">
           <div className="bubble-footer-actions">
-            <button className="copy-btn" onClick={handleCopy} title="Copy message content">
+            <button className={`copy-btn ${copied ? 'copied' : ''}`} onClick={handleCopy} title="Copy message content">
               {copied ? <Check size={12} /> : <Copy size={12} />}
               <span className="copy-btn-text">{copied ? 'Copied' : 'Copy'}</span>
             </button>

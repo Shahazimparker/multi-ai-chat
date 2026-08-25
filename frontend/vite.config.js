@@ -56,6 +56,7 @@ export default defineConfig(({ mode }) => ({
     setupFiles: ['./src/setupTests.js'],
     include: ['src/**/*.{test,spec}.{js,jsx}'],
     pool: 'threads',
+    fileParallelism: false,
     css: false,
   },
 }));
