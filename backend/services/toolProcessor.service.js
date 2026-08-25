@@ -287,6 +287,12 @@ const extractDiagnosticDigest = (rawText, fileName) => {
     /\b(crashed|crash|crashing|failed to start|stopped unexpectedly|terminated unexpectedly|shutting down unexpectedly|service down|server terminated|down|offline)\b/i,
     // Explicit Error & Failure Markers
     /\b(error:?|err:?|failure:?|failed:?)\b/i,
+    // SAP ABAP / ST22 Short Dumps & Runtime Errors
+    /\b(runtime error|short dump|rabax|rabax_state|message_type_x|tsv_tnew_page_alloc_failed|cx_sy_[a-z0-9_]+|cx_root|termination occurred in the abap program|abap program|call stack|error analysis|how to correct the error)\b/i,
+    // SAP SM21 System Log, Work Process, RFC & Gateway Errors
+    /\b(sm21|transaction cancelled|work process (?:killed|terminated|halted)|disp\+work|enqueue error|rfc_error_[a-z0-9_]+|system_failure|communication_failure|gateway error|abap dump)\b/i,
+    // SAP BTP, Cloud Foundry, XSUAA & HANA Cloud Errors
+    /\b(xsuaa|cf-appstopped|destination service|cloud connector|hana cloud|hdb_error|hdb sql error|sqlstate|db error|oauth token failed)\b/i,
   ];
 
   const matchedLineIndices = [];
