@@ -17,7 +17,10 @@ Unified AI chat platform with authentication, real provider token streaming, rea
 - **Direct 50MB File Uploads**: Client-to-Vercel-Blob direct upload pipeline (`@vercel/blob/client`) completely bypassing Vercel's 4.5MB serverless edge body limit. Supports all known formats (PDF, DOCX, CSV, Excel, TXT, Logs, Code, Images, ZIP) while security-gating risky executables (`.exe`, `.dll`, `.msi`, etc.).
 - **Supabase DB Quota Protection**: Raw file binaries are kept in private blob storage; only lean metadata and vector embeddings are stored in PostgreSQL to preserve the 500MB free tier quota.
 - **Reasoning / Thinking mode**: per-model effort levels (low/medium/high/max/xhigh) with a collapsible thought-process panel; chain-of-thought stored in DB and reloaded from history
-- **Knowledge Base (RAG 2.0)**: named collections; ingest via file upload, web crawl, or raw text; RAPTOR hierarchical summarization trees; GraphRAG entity/relation extraction; multi-query expansion; Cohere cross-encoder reranking; dense + sparse + graph retrieval fusion
+- **Log Diagnostics, SAP ST22 & Dynamic Web Loop**: Dedicated sectional extractor for SAP ST22 short dumps (Runtime Errors, Exception, Where Terminated, `>>>` code line, Call Stack, `SY-*` variables) + multi-tech crash classifier (Linux kernel panics, OOM, DB deadlocks) with Logdy & OpenObserve sliding-window clustering; dynamic live Web Search cross-referencing loop (`[WEB_SEARCH]` ➔ `[SEARCH_FILES]`) to verify unknown error codes against live documentation
+- **Collision-Proof Storage & Zero-Orphan Cascades**: Hierarchical timestamped Vercel Blob namespacing; on-demand Blob fallback; atomic cascade deletion across all 18 PostgreSQL tables and private blob storage
+- **Raw Prompt Preservation & Output Headroom**: Query compression disabled across all models to preserve raw prompt text; model context window hard caps enforced; 4,000 reserved output tokens for $\ge 32\text{k}$ models (DeepSeek, Mistral, Claude)
+- **Configurable Embedding & OCR Tiers**: `DEFAULT_EMBEDDING_PROVIDER` (default `openrouter`, supports `mistral`) with cross-provider space invariants, Mistral OCR (`mistral-ocr-latest`), and Vision fallback chains
 - **Temporal grounding**: current date/time/week injected into every system prompt; per-user IANA timezone preference
 - **Shared pipeline** (`chatPipeline.service.js`) keeps JSON and streaming behavior aligned
 - **Human-in-the-loop approvals**: all 10 `GENERATE_*` tools (PPT, Image, PDF, Excel, DOCX, CSV, Chart, HTML, JSON, Markdown) gated by inline Yes/Other/No; persisted in Supabase; IDOR-safe
@@ -28,7 +31,7 @@ Unified AI chat platform with authentication, real provider token streaming, rea
 - **Web search aggregation**: `Exa → Firecrawl → Tavily → SerpAPI` + LangSearch; per-chat toggle
 - **URL intelligence (auto-triggered by links)**: dedicated readers for GitHub, GitLab, Bitbucket, StackOverflow, Notion, Confluence, arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, Gov/Legal; generic fallback via Firecrawl/Tavily/Exa
 - **Admin panel** (users, quotas, SQL-aggregated analytics)
-- **Theme toggle**; mobile navigation with Knowledge Bases link
+- **Theme toggle & timestamps**: Light/Dark theme toggle; message timestamps pinned to bottom-right with localized 12-hour formatting and full date/time hover tooltips; mobile navigation with Knowledge Bases link
 - **Sentry integration** (frontend + backend)
 
 ## Quick Start

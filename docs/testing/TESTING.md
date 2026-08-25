@@ -37,7 +37,7 @@ npm run typecheck       # TypeScript (no emit)
 ### Frontend Subfolder
 ```bash
 cd frontend
-npm test                # frontend unit tests (vitest: src/utils/sse.test.js)
+npm test                # frontend unit tests (vitest: sse.test.js, MessageBubble.test.jsx)
 npm run test:watch      # frontend test watch mode
 ```
 
@@ -229,7 +229,8 @@ backend/
 │       ├── approval-flow.test.js          # Real approval lifecycle (SSE + respond)
 │       └── csrf-auth.test.js              # CSRF + cookie auth against real backend
 frontend/
-└── src/utils/sse.test.js                  # SSE parser unit tests (13 tests)
+├── src/utils/sse.test.js                  # SSE parser unit tests (13 tests)
+└── src/components/chat/MessageBubble.test.jsx # MessageBubble timestamp & footer tests (3 tests)
 ```
 
 ### Unit Test Coverage by Module

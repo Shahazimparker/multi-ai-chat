@@ -54,6 +54,7 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.15);
   position: relative;
   transition: all 0.3s ease;
+  white-space: pre-wrap;
 }
 
 .msg-bubble.user::before {
@@ -158,17 +159,64 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   margin-top: 8px;
   padding-top: 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.msg-bubble.user .bubble-footer {
+  border-top-color: rgba(255, 255, 255, 0.12);
+}
+
+:root[data-theme="light"] .bubble-footer {
+  border-top-color: rgba(0, 0, 0, 0.06);
+}
+
+:root[data-theme="light"] .msg-bubble.user .bubble-footer {
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+.bubble-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bubble-footer-right {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
 }
 
 .msg-timestamp {
-  font-size: 0.65rem;
-  color: rgba(255, 255, 255, 0.3);
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.55);
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  user-select: none;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.msg-timestamp .timestamp-clock-icon {
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+
+.msg-bubble.user .msg-timestamp {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+:root[data-theme="light"] .msg-bubble.user .msg-timestamp {
+  color: rgba(30, 41, 59, 0.7);
+}
+
+:root[data-theme="light"] .msg-bubble.assistant .msg-timestamp {
+  color: rgba(71, 85, 105, 0.85);
 }
 
 .copy-btn {
@@ -177,13 +225,19 @@
   gap: 4px;
   background: linear-gradient(135deg, rgba(124, 58, 237, 0.15), rgba(14, 165, 233, 0.1));
   border: 1px solid rgba(167, 139, 250, 0.25);
-  border-radius: 7px;
+  border-radius: 6px;
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.65);
-  padding: 4px 11px;
-  font-size: 0.72rem;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  color: rgba(255, 255, 255, 0.7);
+  padding: 3px 8px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.copy-btn-text {
+  font-size: 0.68rem;
+  line-height: 1;
 }
 
 .copy-btn:hover {
@@ -191,16 +245,20 @@
   border-color: rgba(236, 72, 153, 0.5);
   color: #ffffff;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(236, 72, 153, 0.25);
+  box-shadow: 0 2px 8px rgba(236, 72, 153, 0.25);
 }
 
-/* Light theme: copy button dark text */
+/* Light theme: copy button styles */
 :root[data-theme="light"] .copy-btn {
-  color: rgba(51, 65, 85, 0.85) !important;
+  color: rgba(51, 65, 85, 0.85);
+  background: rgba(241, 245, 249, 0.9);
+  border-color: rgba(203, 213, 225, 0.8);
 }
 
 :root[data-theme="light"] .copy-btn:hover {
-  color: rgba(15, 23, 42, 0.98) !important;
+  color: rgba(15, 23, 42, 0.98);
+  background: rgba(226, 232, 240, 0.95);
+  border-color: rgba(148, 163, 184, 0.8);
 }
 
 /* Message footer */

@@ -21,12 +21,31 @@ import './MessageBubble.css';
 
 // ── Helpers ──────────────────────────────────────────────────
 
-/** Format ISO timestamp to readable time */
+/** Format ISO timestamp to readable time, e.g. "7:48 PM" */
 const formatTime = (iso) => {
+  if (!iso) return '';
   try {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return '';
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+  } catch { return ''; }
+};
+
+/** Format ISO timestamp to full localized date/time for tooltip */
+const formatFullDateTime = (iso) => {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString([], {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
   } catch { return ''; }
 };
 
@@ -235,6 +254,10 @@ const CitationsPanel = ({ citations }) => {
 const MessageBubble = ({ message, onSidebarRefresh, onApprovalComplete, onClarificationSubmit }) => {
   const [copied, setCopied] = React.useState(false);
 
+  const rawTimestamp = message?.created_at || message?.createdAt || message?.timestamp || message?.time;
+  const timeDisplay = React.useMemo(() => formatTime(rawTimestamp), [rawTimestamp]);
+  const fullTimeTooltip = React.useMemo(() => formatFullDateTime(rawTimestamp), [rawTimestamp]);
+
   // Pre-parse — extract all markdown tables → CSV
   const tableCSVList = React.useMemo(() => {
     if (message.role !== 'assistant' || !message.content) return [];
@@ -426,15 +449,23 @@ const MessageBubble = ({ message, onSidebarRefresh, onApprovalComplete, onClarif
         
         {message.streaming && <span className="cursor">|</span>}
 
-        {/* Copy button + timestamp — bottom of bubble */}
+        {/* Actions (left) + timestamp (bottom-right) */}
         <div className="bubble-footer">
-          <span className="msg-timestamp">
-            <Clock size={11} />
-            {message.created_at && formatTime(message.created_at)}
-          </span>
-          <button className="copy-btn" onClick={handleCopy} title="Copy entire message">
-            {copied ? <Check size={14} /> : <Copy size={14} />}
-          </button>
+          <div className="bubble-footer-actions">
+            <button className="copy-btn" onClick={handleCopy} title="Copy message content">
+              {copied ? <Check size={12} /> : <Copy size={12} />}
+              <span className="copy-btn-text">{copied ? 'Copied' : 'Copy'}</span>
+            </button>
+          </div>
+
+          {timeDisplay ? (
+            <div className="bubble-footer-right">
+              <span className="msg-timestamp" title={fullTimeTooltip}>
+                <Clock size={11} className="timestamp-clock-icon" />
+                <time dateTime={typeof rawTimestamp === 'string' ? rawTimestamp : undefined}>{timeDisplay}</time>
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
 

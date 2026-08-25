@@ -149,7 +149,9 @@ All values are read from env at startup with clamped parsing:
 - `tokenBudget.service.js` — `estimateTokens`, `fitMessagesToBudget`, `createDynamicPromptBudget`, `smartTrimContextBlock`
 - `tokenAccounting.service.js` — prefers provider-reported token counts over local estimates
 - `analytics.service.js` — `logAnalytics` per request
-- `fileUpload.service.js` — file ingestion, embedding, ZIP safety limits
+- `fileUpload.service.js` — file ingestion, embedding, ZIP safety limits, hybrid grep/vector search, and private Blob fallback
+- `toolProcessor.service.js` — **New**: tool execution dispatcher, SRE diagnostic log digest scanner (Logdy/OpenObserve sliding-window clustering), SAP ST22 short dump sectional parser, and dynamic web error cross-referencing loop (`[WEB_SEARCH]` ➔ `[SEARCH_FILES]`)
+- `blobStorage.service.js` — **New**: wrapper for `@vercel/blob` (`get`, `del`, `head`, `setBlobClient`, `fetchPrivateBlobBuffer`, `deleteBlobFromStorage`)
 - `approvalManager.shared.js` — single `ApprovalManager` instance shared across controllers/services
 - `rateLimitStore.service.js` — **New**: Supabase-backed rate-limit store for `express-rate-limit` (serverless-safe; each `createRateLimitStore()` call returns a fresh instance to satisfy `express-rate-limit`'s store-reuse validator)
 - `humanApproval.service.js` — approval checkpoints; timeout clamped to 1-hour hard cap; process-wide WeakRef sweeper replaces per-instance `setInterval` to prevent memory leaks
@@ -277,7 +279,7 @@ Default provider: `openrouter`. Failover is only allowed within the same space. 
 - `ReasoningPanel.jsx` **New** — collapsible "Thought process" panel for reasoning models; shows "Thought for Ns" duration, collapsed by default
 - `ThinkingToggle.jsx` **New** — Thinking toggle with per-model effort-level submenu (low/medium/high/max)
 - `ModelSelector.jsx`, `UnifiedModelModal.jsx` — model picker with live provider catalogs
-- `MessageBubble.jsx` — generated-file preview/download uses API client endpoints (baseURL-safe)
+- `MessageBubble.jsx` — renders markdown, code blocks, CSV export, inline approvals, generated files, and bottom-right timestamps (`formatTime` 12-hour local time, `formatFullDateTime` tooltip, dual-theme styling)
 - `MobileNav.jsx`, `Sidebar.jsx` — navigation including Knowledge Bases link
 - Layout: `ThemeToggle.jsx`, `Toast.jsx`, `TokenBar.jsx`
 - Admin: `frontend/src/components/admin/UserModal.jsx`

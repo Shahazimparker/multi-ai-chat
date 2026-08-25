@@ -17,6 +17,7 @@ This is the main setup and maintenance guide for the current repo state.
 - **Live provider catalogs** for `openrouter`, `together`, and `anyapi`
 - **Real provider token streaming** — all 10 providers stream native tokens via SSE. No artificial delays. Tool-call rounds send status events; the final answer streams in naturally.
 - **Reasoning / Thinking mode** — per-model effort level (low/medium/high/max/xhigh) with a collapsible `ReasoningPanel` in the UI. Model chain-of-thought stored in `messages.reasoning` and shown on history reload.
+- **Message timestamps & actions** — bottom-right timestamp display on sent messages and AI responses with localized 12-hour formatting and full date/time hover tooltips; left-aligned copy actions.
 - **Shared pipeline** (`chatPipeline.service.js`) keeps legacy JSON and streaming chat behavior aligned
 - **Temporal grounding** — current date/time/week injected into every system prompt via `temporalContext.service.js`; resolves user-saved timezone preference → browser zone → `APP_DEFAULT_TIMEZONE`
 - **Authenticated chat flows** with `httpOnly` cookie auth and double-submit CSRF

@@ -778,7 +778,7 @@ export const useChatSession = ({ refreshTokenStats }) => {
       });
       const msg = err.response?.data?.error || err.message || 'Something went wrong.';
       setError(msg);
-      setMessages((prev) => [...prev, { role: 'assistant', content: `❌ Error: ${msg}` }]);
+      setMessages((prev) => [...prev, { role: 'assistant', content: `❌ Error: ${msg}`, created_at: new Date().toISOString() }]);
     } finally {
       setLoading(false);
       setUploadProgress(0);
