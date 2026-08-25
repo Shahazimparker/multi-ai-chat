@@ -220,7 +220,12 @@ router.get('/config', (req, res) => {
  * POST /api/upload/blob-handler
  * Direct browser-to-blob client upload token generator (@vercel/blob/client)
  */
-router.post('/blob-handler', requireAuth, uploadHeavyLimiter, async (req, res) => {
+router.post('/blob-handler', uploadHeavyLimiter, (req, res, next) => {
+  if (req.body?.type === 'blob.generate-client-token') {
+    return requireAuth(req, res, next);
+  }
+  next();
+}, async (req, res) => {
   try {
     const jsonResponse = await handleUpload({
       body: req.body,

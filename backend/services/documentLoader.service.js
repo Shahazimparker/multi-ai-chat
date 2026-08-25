@@ -20,8 +20,14 @@ if (typeof global.Path2D === 'undefined') {
 }
 
 const { PDFParse } = require('pdf-parse');
-const mammoth = require('mammoth');
-const ExcelJS = require('exceljs');
+try {
+  const { getData } = require('pdf-parse/worker');
+  if (typeof PDFParse?.setWorker === 'function' && typeof getData === 'function') {
+    PDFParse.setWorker(getData());
+  }
+} catch (workerErr) {
+  console.warn('[PDFLoader] Failed to set embedded PDF worker:', workerErr?.message);
+}
 
 // pdf-parse v2 replaced the `pdfParse(buffer)` callable with a `PDFParse` class
 // backed by pdfjs-dist 5.x (v1 vendored pdf.js 1.10.100 from 2018). This adapter

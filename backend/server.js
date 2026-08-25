@@ -16,6 +16,15 @@ if (typeof global.ImageData === 'undefined') {
 if (typeof global.Path2D === 'undefined') {
   global.Path2D = class Path2D {};
 }
+try {
+  const { PDFParse } = require('pdf-parse');
+  const { getData } = require('pdf-parse/worker');
+  if (typeof PDFParse?.setWorker === 'function' && typeof getData === 'function') {
+    PDFParse.setWorker(getData());
+  }
+} catch {
+  // Ignored if pdf-parse is initialized lazily
+}
 
 const express  = require('express');
 const cors     = require('cors');
@@ -153,6 +162,12 @@ app.use('/api/approval',  approvalRoutes); // persistent human approvals
 app.use('/api/history',   historyRoutes);  // chat history, topics
 app.use('/api/upload',    uploadRoutes);   // file upload, search, delete
 app.use('/api/knowledge', knowledgeRoutes); // Knowledge Base & RAG 2.0
+
+// ── Vercel Blob webhook & direct endpoint aliases ───────────
+app.use(['/blob-handler', '/api/blob-handler'], (req, res, next) => {
+  req.url = '/blob-handler';
+  uploadRoutes(req, res, next);
+});
 
 // ── 404 handler ─────────────────────────────────────────────
 app.use((req, res) => {

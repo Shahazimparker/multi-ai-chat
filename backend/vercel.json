@@ -3,7 +3,8 @@
   "regions": ["bom1"],
   "functions": {
     "api/index.js": {
-      "maxDuration": 300
+      "maxDuration": 300,
+      "includeFiles": "node_modules/pdf-parse/**"
     }
   },
   "rewrites": [
