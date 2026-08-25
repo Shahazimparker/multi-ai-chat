@@ -21,13 +21,34 @@ import './MessageBubble.css';
 
 // ── Helpers ──────────────────────────────────────────────────
 
-/** Format ISO timestamp to readable time, e.g. "7:48 PM" */
-const formatTime = (iso) => {
+/** Format ISO timestamp to readable date & time, e.g. "Today, 7:48 PM" or "Aug 25, 7:48 PM" */
+const formatDateTime = (iso) => {
   if (!iso) return '';
   try {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return '';
-    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+
+    const yesterday = new Date();
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday = d.toDateString() === yesterday.toDateString();
+
+    const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+
+    if (isToday) {
+      return `Today, ${timeStr}`;
+    }
+    if (isYesterday) {
+      return `Yesterday, ${timeStr}`;
+    }
+    const isSameYear = d.getFullYear() === now.getFullYear();
+    const dateStr = d.toLocaleDateString([], {
+      month: 'short',
+      day: 'numeric',
+      ...(isSameYear ? {} : { year: 'numeric' }),
+    });
+    return `${dateStr}, ${timeStr}`;
   } catch { return ''; }
 };
 
@@ -38,12 +59,13 @@ const formatFullDateTime = (iso) => {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return '';
     return d.toLocaleString([], {
-      weekday: 'short',
-      month: 'short',
+      weekday: 'long',
+      month: 'long',
       day: 'numeric',
       year: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
+      second: '2-digit',
       hour12: true,
     });
   } catch { return ''; }
@@ -255,7 +277,7 @@ const MessageBubble = ({ message, onSidebarRefresh, onApprovalComplete, onClarif
   const [copied, setCopied] = React.useState(false);
 
   const rawTimestamp = message?.created_at || message?.createdAt || message?.timestamp || message?.time;
-  const timeDisplay = React.useMemo(() => formatTime(rawTimestamp), [rawTimestamp]);
+  const timeDisplay = React.useMemo(() => formatDateTime(rawTimestamp), [rawTimestamp]);
   const fullTimeTooltip = React.useMemo(() => formatFullDateTime(rawTimestamp), [rawTimestamp]);
 
   // Pre-parse — extract all markdown tables → CSV
@@ -377,7 +399,7 @@ const MessageBubble = ({ message, onSidebarRefresh, onApprovalComplete, onClarif
         {message.role === 'user' ? <User size={16} /> : <Bot size={16} />}
       </div>
       
-      <div className="msg-bubble">
+      <div className={`msg-bubble ${message.role}`}>
         {/* Above the status pill and the answer: reasoning precedes both. */}
         {message.role === 'assistant' && message.reasoning && (
           <ReasoningPanel

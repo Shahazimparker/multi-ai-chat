@@ -5,7 +5,7 @@ import MessageBubble from './MessageBubble';
 
 describe('MessageBubble timestamp rendering', () => {
   it('renders timestamp for user message when created_at is provided', () => {
-    const testDate = '2026-08-25T14:30:00.000Z';
+    const testDate = new Date().toISOString();
     const message = {
       role: 'user',
       content: 'Hello, this is a test message',
@@ -14,13 +14,17 @@ describe('MessageBubble timestamp rendering', () => {
 
     const { container } = render(<MessageBubble message={message} />);
 
+    // Bubble class should have role
+    const bubbleEl = container.querySelector('.msg-bubble.user');
+    expect(bubbleEl).toBeInTheDocument();
+
     // Timestamp element should exist
     const timestampEl = container.querySelector('.msg-timestamp');
     expect(timestampEl).toBeInTheDocument();
 
     const timeEl = container.querySelector('time');
     expect(timeEl).toBeInTheDocument();
-    expect(timeEl.textContent).toBeTruthy();
+    expect(timeEl.textContent).toContain('Today');
 
     // Right-aligned wrapper should contain timestamp
     const footerRight = container.querySelector('.bubble-footer-right');
@@ -28,7 +32,7 @@ describe('MessageBubble timestamp rendering', () => {
   });
 
   it('renders timestamp for assistant message along with copy button', () => {
-    const testDate = '2026-08-25T14:35:00.000Z';
+    const testDate = new Date().toISOString();
     const message = {
       role: 'assistant',
       content: 'Here is the assistant response.',
@@ -36,6 +40,10 @@ describe('MessageBubble timestamp rendering', () => {
     };
 
     const { container } = render(<MessageBubble message={message} />);
+
+    // Bubble class should have role
+    const bubbleEl = container.querySelector('.msg-bubble.assistant');
+    expect(bubbleEl).toBeInTheDocument();
 
     // Copy button on the left
     const copyBtn = container.querySelector('.copy-btn');
