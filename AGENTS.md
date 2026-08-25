@@ -81,12 +81,12 @@ This document provides essential context about the codebase, deployment environm
 1. **Raw Prompt Preservation (Query Compression Disabled)**:
    - Query compression via secondary LLMs (OpenRouter Gemini Flash Lite) is disabled for all models to preserve raw prompt fidelity (e.g. big data, logs, code, stack traces) without unexpected background token consumption.
 2. **Model Context Windows & Hard Caps**:
-   - Each model accepts raw input up to its declared capacity (e.g., DeepSeek V4: 128K, Claude Sonnet 5: 200K, Pixtral Large: 128K, Mistral Small/Medium: 32K, Gemini/Groq: 5,999).
+   - Each model accepts raw input up to its declared capacity (e.g., Codestral: 256K, Ministral 8B: 128K, Mistral Large: 128K, DeepSeek V4: 128K, Claude Sonnet 5: 200K, Mistral Small/Medium: 32K, Gemini/Groq: 5,999).
    - If a prompt exceeds the model's allowed capacity or the user's `per_query_limit`, the backend returns an explicit `query_too_long` or `context_too_large` error rather than silently truncating the user's data.
 3. **Embedding Vector Safety (Supabase 500MB Cap)**:
    - Query embeddings and post-turn cross-chat memory embeddings (`embedText` / `embedAndStoreMessage`) are bounded to <= 6,000 / 3,000 tokens to prevent provider crashes, runaway embedding costs, and database storage bloat under Supabase's 500MB free-tier limit.
 4. **Reserved Output Tokens (4,000 Tokens)**:
-   - Reserved output tokens set to 4,000 for models with $\ge 32\text{k}$ context (DeepSeek V4, Mistral, Pixtral, Claude Sonnet) to prevent premature answer truncation during complex code/reasoning generations.
+   - Reserved output tokens set to 4,000 for models with $\ge 32\text{k}$ context (DeepSeek V4, Mistral/Ministral/Codestral, Claude Sonnet) to prevent premature answer truncation during complex code/reasoning generations.
 
 ---
 

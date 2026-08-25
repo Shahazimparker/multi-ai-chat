@@ -12,7 +12,7 @@ Unified AI chat platform with authentication, real provider token streaming, rea
 
 ## Core Capabilities
 
-- **15 configured AI models** across DeepSeek, Groq, Gemini, Mistral, Claude, OpenRouter; plus live model discovery for `openrouter`, `together`, `anyapi`
+- **17 configured AI models** across DeepSeek, Groq, Gemini, Mistral, Claude, OpenRouter; plus live model discovery for `openrouter`, `together`, `anyapi`
 - **Real streaming**: All 10 providers stream native tokens. No artificial delays. Tool-call rounds send status events; the final answer streams naturally.
 - **Direct 50MB File Uploads**: Client-to-Vercel-Blob direct upload pipeline (`@vercel/blob/client`) completely bypassing Vercel's 4.5MB serverless edge body limit. Supports all known formats (PDF, DOCX, CSV, Excel, TXT, Logs, Code, Images, ZIP) while security-gating risky executables (`.exe`, `.dll`, `.msi`, etc.).
 - **Supabase DB Quota Protection**: Raw file binaries are kept in private blob storage; only lean metadata and vector embeddings are stored in PostgreSQL to preserve the 500MB free tier quota.
@@ -28,6 +28,7 @@ Unified AI chat platform with authentication, real provider token streaming, rea
 - **Serverless-safe rate limiting** via Supabase counters; brute-force lockout on failed logins
 - **Semantic query cache**, RAG context with hybrid reranking (cosine+BM25+Jaccard+RRF), history summarization, cross-chat memory
 - **Generated file download/preview** uses API-client routes (baseURL-aware)
+- **Extensible model registry** (`backend/config/models.js`): add new models in one file; UI dynamically renders them
 - **Web search aggregation**: `Exa → Firecrawl → Tavily → SerpAPI` + LangSearch; per-chat toggle
 - **URL intelligence (auto-triggered by links)**: dedicated readers for GitHub, GitLab, Bitbucket, StackOverflow, Notion, Confluence, arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, Gov/Legal; generic fallback via Firecrawl/Tavily/Exa
 - **Admin panel** (users, quotas, SQL-aggregated analytics)
@@ -61,7 +62,7 @@ cp .env.example .env.local   # set VITE_API_URL
 npm start
 ```
 
-The default model (`deepseek-v4-flash`) requires `DEEPSEEK_API_KEY`. All other provider keys are optional.
+The default model (`ministral-8b`) requires `MISTRAL_API_KEY`. All other provider keys are optional.
 
 ## Running Tests
 

@@ -175,6 +175,23 @@ const MODELS = {
   // Groq and Gemini are left at 5999 deliberately — their free tiers meter
   // daily tokens and daily requests respectively, so bigger prompts there
   // would burn the scarce resource directly.
+  'ministral-8b': {
+    label: 'Ministral 8B (Fast, Free)',
+    provider: 'mistral',
+    apiKey: process.env.MISTRAL_API_KEY,
+    model: 'ministral-8b-latest',
+    paid: false,
+    supportsVision: true,
+    maxTokens: 128000,
+  },
+  'codestral-2508': {
+    label: 'Codestral 2508 (Code, Free)',
+    provider: 'mistral',
+    apiKey: process.env.MISTRAL_API_KEY,
+    model: 'codestral-2508',
+    paid: false,
+    maxTokens: 256000,
+  },
   'mistral-small': {
     label: 'Mistral Small (Free)',
     provider: 'mistral',
@@ -193,12 +210,12 @@ const MODELS = {
     supportsVision: true,
     maxTokens: 32000,
   },
-  'pixtral-large': {
-    label: 'Pixtral Large (Vision, Paid)',
+  'mistral-large': {
+    label: 'Mistral Large (Vision, Free)',
     provider: 'mistral',
     apiKey: process.env.MISTRAL_API_KEY,
-    model: 'pixtral-large-latest',
-    paid: true,
+    model: 'mistral-large-latest',
+    paid: false,
     supportsVision: true,
     maxTokens: 128000,
   },
@@ -279,6 +296,8 @@ const RETIRED_MODELS = {
   'deepseek-v4-pro-reasoning': 'deepseek-v4-pro',
   // Sonnet 4.6, superseded by Sonnet 5.
   'claude-sonnet': 'claude-sonnet-5',
+  'pixtral-large': 'mistral-large',
+  'codestral': 'codestral-2508',
 };
 
 module.exports = { MODELS, SUMMARY_MODEL, RETIRED_MODELS };

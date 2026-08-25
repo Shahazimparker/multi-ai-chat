@@ -108,8 +108,8 @@ const ModelSelector = ({
         setModels(nextModels);
 
         if (!selectedModel && nextModels.length > 0) {
-          // Default to deepseek-v4-flash if available, otherwise first model
-          const defaultModel = nextModels.find(m => m.id === 'deepseek-v4-flash') || nextModels[0];
+          // Default to ministral-8b if available, otherwise first model
+          const defaultModel = nextModels.find(m => m.id === 'ministral-8b') || nextModels[0];
           onModelChange(defaultModel);
         }
       })

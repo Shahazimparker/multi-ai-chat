@@ -13,7 +13,7 @@ This is the main setup and maintenance guide for the current repo state.
 ## Current Features
 
 ### Core Chat
-- **15 configured AI models** across DeepSeek, Groq, Gemini, Mistral, Claude, and OpenRouter in `backend/config/models.js`
+- **17 configured AI models** across DeepSeek, Groq, Gemini, Mistral, Claude, and OpenRouter in `backend/config/models.js`
 - **Live provider catalogs** for `openrouter`, `together`, and `anyapi`
 - **Real provider token streaming** — all 10 providers stream native tokens via SSE. No artificial delays. Tool-call rounds send status events; the final answer streams in naturally.
 - **Reasoning / Thinking mode** — per-model effort level (low/medium/high/max/xhigh) with a collapsible `ReasoningPanel` in the UI. Model chain-of-thought stored in `messages.reasoning` and shown on history reload.
@@ -104,7 +104,7 @@ multi-ai-chat/
 - `JWT_SECRET` (≥32 chars)
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_KEY`
-- `DEEPSEEK_API_KEY` — **Required for the default model** (`deepseek-v4-flash`)
+- `MISTRAL_API_KEY` — **Required for the default model** (`ministral-8b`)
 
 ### Backend — Common Optional
 

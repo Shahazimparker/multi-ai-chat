@@ -128,7 +128,7 @@ This document provides a comprehensive overview of all E2E tests (mock and real)
 
 ### Chat Functionality
 - Real token streaming
-- 15 models with default model selection (`deepseek-v4-flash`)
+- 17 models with default model selection (`ministral-8b`)
 - Reasoning effort levels and collapsible Thought Process panel
 - Per-chat web search toggle and KB collection selector
 - Sidebar chat history and topic switching
