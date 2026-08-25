@@ -5,11 +5,13 @@
 // ============================================================
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Menu, X, PlusCircle, MessageSquare, LogOut, Settings, Trash2, Pencil, Check, FileText, Clock, ChevronRight, Search, Download, Database } from 'lucide-react';
+import { Menu, X, PlusCircle, MessageSquare, LogOut, Settings, Trash2, Pencil, Check, FileText, Clock, ChevronRight, Search, Download, Database, Smartphone } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigate } from 'react-router';
 import api from '../../config/api';
 import ThemeToggle from '../layout/ThemeToggle';
+import PWAInstallModal from '../layout/PWAInstallModal';
+import usePWAInstall from '../../hooks/usePWAInstall';
 import './MobileNav.css';
 
 const RECENT_COUNT = 3;
@@ -21,6 +23,7 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
     const [topics, setTopics] = useState([]);
     const [editing, setEditing] = useState(null);
     const [editVal, setEditVal] = useState('');
+    const { canInstall, showIOSModal, setShowIOSModal, installApp } = usePWAInstall();
 
     const [chatsOpen, setChatsOpen] = useState(false);
     const [artifactsOpen, setArtifactsOpen] = useState(false);
@@ -397,6 +400,23 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
                 </div>
 
                 <div className="mobile-drawer-footer">
+                    {canInstall && (
+                        <div className="mobile-install-wrapper">
+                            <button
+                                className="mobile-install-btn"
+                                onClick={() => {
+                                    installApp();
+                                    setIsOpen(false);
+                                }}
+                                title="Install Miles AI App"
+                            >
+                                <Smartphone size={16} className="mobile-install-icon" />
+                                <span>Install Mobile App</span>
+                                <span className="mobile-install-badge">Lite</span>
+                            </button>
+                        </div>
+                    )}
+
                     <div className="mobile-user-section">
                         <div className="mobile-user-info">
                             <div className="mobile-user-avatar">
@@ -428,6 +448,8 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
                     </button>
                 </div>
             </div>
+
+            <PWAInstallModal isOpen={showIOSModal} onClose={() => setShowIOSModal(false)} />
         </>
     );
 };

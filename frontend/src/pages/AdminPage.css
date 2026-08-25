@@ -4,6 +4,7 @@
 .admin-root {
   display: flex;
   height: 100vh;
+  height: 100dvh;
   background: #080b14;
   color: #fff;
   font-family: 'Inter', sans-serif;

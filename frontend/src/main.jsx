@@ -6,8 +6,20 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/react';
+import { registerSW } from 'virtual:pwa-register';
 import './index.css';
 import App from './App';
+
+// Register PWA Service Worker for offline capability & mobile install
+registerSW({
+  immediate: true,
+  onNeedRefresh() {
+    console.log('[PWA] New content available, updating...');
+  },
+  onOfflineReady() {
+    console.log('[PWA] App is ready for offline usage');
+  }
+});
 
 // Initialize Sentry for error tracking
 if (import.meta.env.VITE_SENTRY_DSN) {

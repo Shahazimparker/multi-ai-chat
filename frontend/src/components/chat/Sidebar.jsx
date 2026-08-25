@@ -5,10 +5,12 @@
 // ============================================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { PlusCircle, MessageSquare, Trash2, Pencil, Check, X, LogOut, Settings, FileText, Clock, ChevronRight, Search, Download, Database } from 'lucide-react';
+import { PlusCircle, MessageSquare, Trash2, Pencil, Check, X, LogOut, Settings, FileText, Clock, ChevronRight, Search, Download, Database, Smartphone } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../../context/AuthContext';
 import ThemeToggle from '../layout/ThemeToggle';
+import PWAInstallModal from '../layout/PWAInstallModal';
+import usePWAInstall from '../../hooks/usePWAInstall';
 import api from '../../config/api';
 import './Sidebar.css';
 
@@ -20,6 +22,7 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
   const [topics,  setTopics]  = useState([]);
   const [editing, setEditing] = useState(null);
   const [editVal, setEditVal] = useState('');
+  const { canInstall, showIOSModal, setShowIOSModal, installApp } = usePWAInstall();
 
   // Collapse state — collapsed by default
   const [chatsOpen, setChatsOpen] = useState(false);
@@ -385,6 +388,17 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
 
       </div>
 
+      {/* Install PWA Button (when eligible) */}
+      {canInstall && (
+        <div className="sidebar-install-wrapper">
+          <button className="sidebar-install-btn" onClick={installApp} title="Install Miles AI App">
+            <Smartphone size={14} className="install-icon" />
+            <span>Install App</span>
+            <span className="install-badge">Lite</span>
+          </button>
+        </div>
+      )}
+
       {/* User footer */}
       <div className="sidebar-footer">
         <div className="user-info">
@@ -398,6 +412,8 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
           <LogOut size={15} />
         </button>
       </div>
+
+      <PWAInstallModal isOpen={showIOSModal} onClose={() => setShowIOSModal(false)} />
     </aside>
   );
 };

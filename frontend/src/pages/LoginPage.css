@@ -35,6 +35,7 @@
 
 .login-root {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -418,6 +419,7 @@
 /* ── Loading screen ───────────────────────────────── */
 .loading-screen {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
