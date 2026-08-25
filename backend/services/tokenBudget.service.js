@@ -67,20 +67,27 @@ const trimContextBlock = (block, maxTokens) => trimTextByTokens(block, maxTokens
 
 const createPromptBudget = (modelConfig = {}) => {
   const modelLimit = modelConfig.maxTokens || 4096;
-  const reservedOutputTokens = Math.min(4000, Math.max(800, Math.floor(modelLimit * 0.35)));
+  const reservedOutputTokens = modelLimit >= 32000
+    ? 4000
+    : Math.min(4000, Math.max(800, Math.floor(modelLimit * 0.35)));
   const maxPromptTokens = Math.max(1200, modelLimit - reservedOutputTokens);
 
-  // BUDGET ALLOCATION: Total 100% (toolLoopTokens reserves for agent/dispatcher overhead)
-  // For 16K model: maxPromptTokens ≈ 12000
+  const systemTokens = Math.floor(maxPromptTokens * 0.18);
+  const historyTokens = Math.floor(maxPromptTokens * 0.22);
+  const ragTokens = Math.floor(maxPromptTokens * 0.20);
+  const fileTokens = Math.floor(maxPromptTokens * 0.20);
+  const toolLoopTokens = Math.floor(maxPromptTokens * 0.12);
+  // User query gets full remaining headroom to preserve raw context for long prompts/logs
+  const queryTokens = Math.max(Math.floor(maxPromptTokens * 0.5), maxPromptTokens - systemTokens - historyTokens - ragTokens);
+
   return {
     maxPromptTokens,
-    toolLoopTokens: Math.floor(maxPromptTokens * 0.12),   // Agent decisions, token tracking, RAG scoring
-    systemTokens: Math.floor(maxPromptTokens * 0.18),
-    historyTokens: Math.floor(maxPromptTokens * 0.22),
-    ragTokens: Math.floor(maxPromptTokens * 0.20),
-    fileTokens: Math.floor(maxPromptTokens * 0.20),       // Reduced from 33% (was overcounting)
-    queryTokens: Math.floor(maxPromptTokens * 0.08),
-    // Total: 100%
+    toolLoopTokens,
+    systemTokens,
+    historyTokens,
+    ragTokens,
+    fileTokens,
+    queryTokens,
   };
 };
 
@@ -190,46 +197,48 @@ const getTopicTurnCount = async (topicId) => {
   }
 };
 
-// 3. Create dynamic budget based on conversation state
 const createDynamicPromptBudget = (turnCount, complexityScore, modelConfig = {}) => {
   const modelLimit = modelConfig.maxTokens || 8000;
-  const reservedOutputTokens = 2000;
-  const maxPromptTokens = modelLimit - reservedOutputTokens; // 6000
+  // Reserve 4000 tokens for DeepSeek (128K), Mistral (32K), Claude (100K-200K) to guarantee long output generation
+  const reservedOutputTokens = modelLimit >= 32000
+    ? 4000
+    : Math.min(2000, Math.max(800, Math.floor(modelLimit * 0.25)));
+  const maxPromptTokens = modelLimit - reservedOutputTokens;
 
   // Reserve tool-loop budget first (12% for agent overhead)
   const toolLoopTokens = Math.floor(maxPromptTokens * 0.12);
   const availableTokens = maxPromptTokens - toolLoopTokens;
 
-  // INCREASED: Larger history budget so summary + latest messages fit
-  // comfortably, preventing smartTrimContextBlock from dropping the summary
-  // (which causes topic deviation in long complex chats).
-  let historyTokens = Math.floor(availableTokens * 0.36); // Default ~1584 (was 2500)
+  // Substantially larger history budget to preserve raw long logs/messages across multiple turns
+  let historyTokens = Math.floor(availableTokens * 0.45);
 
-  // New topic - keep it lean
+  // New topic
   if (turnCount < 3) {
-    historyTokens = Math.floor(availableTokens * 0.18); // ~792 (was 1000)
+    historyTokens = Math.floor(availableTokens * 0.25);
   }
-  // Complex topic (SAP, code, technical) — needs full context
-  else if (complexityScore > 7) {
-    historyTokens = Math.floor(availableTokens * 0.58); // ~2552 (was 4000)
-  }
-  // Long conversation — needs full context
-  else if (turnCount > 15) {
-    historyTokens = Math.floor(availableTokens * 0.58); // ~2552 (was 4000)
+  // Complex/technical topic (logs, code, SAP) or deep conversation — maximize raw history
+  else if (complexityScore > 7 || turnCount > 10) {
+    historyTokens = Math.floor(availableTokens * 0.65);
   }
   // Medium complexity
   else if (complexityScore > 5) {
-    historyTokens = Math.floor(availableTokens * 0.40); // ~1760 (was 2800)
+    historyTokens = Math.floor(availableTokens * 0.50);
   }
+
+  const systemTokens = Math.floor(availableTokens * 0.20);
+  const ragTokens = Math.floor(availableTokens * 0.25);
+  const fileTokens = Math.floor(availableTokens * 0.19);
+  // User query dynamically expands to use available headroom for raw pasted logs/data
+  const queryTokens = Math.max(Math.floor(availableTokens * 0.5), availableTokens - systemTokens - historyTokens - ragTokens);
 
   return {
     maxPromptTokens,
     toolLoopTokens,                                       // Agent decisions, token tracking
-    systemTokens: Math.floor(availableTokens * 0.20),
+    systemTokens,
     historyTokens,                                        // ← DYNAMIC!
-    ragTokens: Math.floor(availableTokens * 0.25),
-    fileTokens: Math.floor(availableTokens * 0.19),
-    queryTokens: Math.floor(availableTokens * 0.11),
+    ragTokens,
+    fileTokens,
+    queryTokens,
     // Debug info
     _debug: {
       turnCount,

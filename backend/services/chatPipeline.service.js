@@ -598,17 +598,18 @@ const runChatPipeline = async (opts) => {
       };
     }
 
-    // Anonymous callers have no `per_query_limit` row, so the checks below skip
-    // them entirely. ANONYMOUS_TOKEN_LIMIT stands in as their per-request cap —
-    // without it an unauthenticated caller could spend without bound.
-    const effectivePerQueryLimit = user?.per_query_limit || ANONYMOUS_TOKEN_LIMIT;
-    const limitEnabled = perQueryLimitEnabled || isAnonymous || !user;
+    // Anonymous callers have no `per_query_limit` row, so ANONYMOUS_TOKEN_LIMIT stands in as their per-request cap.
+    const modelMaxLimit = promptBudget.maxPromptTokens || modelConfig.maxTokens || 16000;
+    const effectivePerQueryLimit = perQueryLimitEnabled && user?.per_query_limit
+      ? Math.min(user.per_query_limit, modelMaxLimit)
+      : (isAnonymous ? Math.min(ANONYMOUS_TOKEN_LIMIT, modelMaxLimit) : modelMaxLimit);
 
-    if (limitEnabled && estimatedInputTokens > effectivePerQueryLimit) {
+    if (estimatedInputTokens > effectivePerQueryLimit) {
+      const userMessage = `Query exceeds maximum allowed tokens. The limit for ${modelConfig.label || modelId} is ${effectivePerQueryLimit.toLocaleString()} tokens, but your query is ~${estimatedInputTokens.toLocaleString()} tokens.`;
       return makePipelineResult({
-        err: new Error(`Query too long. Max ${effectivePerQueryLimit} tokens per query. Your query is ~${estimatedInputTokens} tokens.`),
+        err: new Error(userMessage),
         errorType: 'query_too_long',
-        userMessage: `Query too long. Max ${effectivePerQueryLimit} tokens per query. Your query is ~${estimatedInputTokens} tokens.`,
+        userMessage,
         estimatedInputTokens,
         totalAITokens,
         billableTokens: totalAITokens,
@@ -1004,11 +1005,12 @@ ${page.text}`)
 
     const promptTokens = estimateMessagesTokens(aiMessages);
 
-    if (limitEnabled && promptTokens > effectivePerQueryLimit) {
+    if (promptTokens > effectivePerQueryLimit) {
+      const userMessage = `Query context too large after RAG/history. The limit for ${modelConfig.label || modelId} is ${effectivePerQueryLimit.toLocaleString()} tokens, but current prompt is ~${promptTokens.toLocaleString()} tokens.`;
       return makePipelineResult({
-        err: new Error(`Query context too large after RAG/history. Max ${effectivePerQueryLimit} tokens per query. Current prompt is ~${promptTokens} tokens.`),
+        err: new Error(userMessage),
         errorType: 'context_too_large',
-        userMessage: `Query context too large after RAG/history. Max ${effectivePerQueryLimit} tokens per query. Current prompt is ~${promptTokens} tokens.`,
+        userMessage,
         promptTokens,
         estimatedInputTokens,
         compressTokens,

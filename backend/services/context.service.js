@@ -132,7 +132,7 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
   }
 
   const memoryMode = options.memoryMode || 'summarized';
-  const requestedLimit = clamp(options.historyLimit || 15, 2, 25);
+  const requestedLimit = clamp(options.historyLimit || 20, 2, 50);
 
   // ✅ CHANGE: Import dynamic budget functions
   const {
@@ -167,7 +167,7 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
 
   const rawLimit = memoryMode === 'accurate'
     ? requestedLimit
-    : Math.max(requestedLimit, 25);
+    : Math.max(requestedLimit, 35);
 
   const recent = await getRecentMessages(topicId, rawLimit);
   if (recent.length === 0) return { context: [], isNewTopic: true };
@@ -183,16 +183,15 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
 
   let summaryTokens = 0;  // ← track summary LLM tokens
 
-  if (latestSummary && messagesSinceSummary < 8) {
+  if (latestSummary && messagesSinceSummary < 12) {
     olderSummaryText = latestSummary.content;
   } else {
-    // Topic-aware summarization: fetch ALL messages since last summary (fixes data loss gap)
-    // and inject current query context so LLM focuses on relevant information
+    // Topic-aware summarization: fetch messages since last summary if history grows very long
     const messagesToSummarize = latestSummary?.created_at
-      ? await getMessagesSince(topicId, latestSummary.created_at, 3000)
+      ? await getMessagesSince(topicId, latestSummary.created_at, 8000)
       : olderMessages;
 
-    if (messagesToSummarize.length >= 4) {
+    if (messagesToSummarize.length >= 6) {
       const olderText = formatMessages(messagesToSummarize);
       const textToSummarize = latestSummary
         ? `Existing summary:\n${latestSummary.content}\n\nNewer conversation:\n${olderText}`
@@ -215,10 +214,9 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
   for (let i = latestMessages.length - 1; i >= 0; i--) {
     const message = toRoleMessage(latestMessages[i]);
     const estimatedTokens = Math.ceil(String(message.content || '').length / 4) + 4;
-    // Always keep the most recent exchange (assistant reply + the user turn it
-    // answered) so a tight budget can't leave a dangling assistant message.
+    // Keep raw turns up to 95% of the history budget to preserve full raw context
     const isMinimumKeep = latestContextMessages.length < 2;
-    if (!isMinimumKeep && runningTokens + estimatedTokens > tokenBudget * 0.6) {
+    if (!isMinimumKeep && runningTokens + estimatedTokens > tokenBudget * 0.95) {
       break;
     }
     latestContextMessages.unshift(message);
@@ -250,11 +248,16 @@ const buildContextMessages = async (newQuery, topicId, options = {}, signal = nu
 };
 
 const maybeCompressQuery = async (query, signal = null) => {
+  // Query compression is disabled for all models to preserve raw prompt fidelity and avoid unexpected OpenRouter background token spend.
+  // Code is preserved below for reference / future opt-in:
+  /*
   const wordCount = query.split(/\s+/).length;
   if (wordCount < 300) return { query, tokensUsed: 0 };
 
   const result = await summarizeMemory(query, signal);
   return { query: result.summary || query, tokensUsed: result.tokensUsed || 0 };
+  */
+  return { query, tokensUsed: 0 };
 };
 
 module.exports = { buildContextMessages, maybeCompressQuery, getRecentMessages };

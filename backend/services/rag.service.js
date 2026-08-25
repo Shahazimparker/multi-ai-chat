@@ -392,12 +392,17 @@ const providerCalls = {
 const embedText = async (text, provider = DEFAULT_PROVIDER, retries = 3, signal = null, userId = null) => {
   throwIfAborted(signal);
 
-  const estimatedTokens = estimateTokens(text);
+  // Embedding models (text-embedding-3-small, etc.) have an 8,192 token limit.
+  // Bound embedding input safely to 6,000 tokens to prevent provider crashes,
+  // runaway embedding billing on 100k raw logs, and stay within Supabase 500MB free-tier limits.
+  const rawText = String(text || '').trim();
+  const safeText = estimateTokens(rawText) > 6000 ? trimTextByTokens(rawText, 6000) : rawText;
+  const estimatedTokens = estimateTokens(safeText);
   const space = spaceForProvider(provider);
 
   // Keyed by space, not provider: an openai vector is a legitimate cache hit
   // for an openrouter request because both are text-embedding-3-small.
-  const cacheKey = getCacheKey(text, space, userId);
+  const cacheKey = getCacheKey(safeText, space, userId);
   const cachedVector = getCachedEmbedding(cacheKey);
   if (cachedVector) {
     return { vector: cachedVector, tokensUsed: 0, provider, space };
@@ -417,7 +422,7 @@ const embedText = async (text, provider = DEFAULT_PROVIDER, retries = 3, signal 
     for (;;) {
       throwIfAborted(signal);
       try {
-        const result = await providerCalls[candidate](text, { signal, estimatedTokens });
+        const result = await providerCalls[candidate](safeText, { signal, estimatedTokens });
         const vector = result?.vector;
         if (!Array.isArray(vector) || vector.length === 0) {
           throw new Error('provider returned an empty vector');

@@ -713,7 +713,9 @@ const embedAndStoreMessage = async ({ userId, topicId, messageId, role, content,
   if (!userId || !topicId || !messageId || !content) return 0;
 
   try {
-    const embedResult = await embedText(content, provider, 3, null, userId);
+    // Bound memory text to 3,000 tokens to protect Supabase free-tier 500MB DB storage
+    const safeContent = estimateTokens(content) > 3000 ? trimTextByTokens(content, 3000) : content;
+    const embedResult = await embedText(safeContent, provider, 3, null, userId);
     if (!embedResult) return 0;
 
     const { vector, tokensUsed } = embedResult;
@@ -725,7 +727,7 @@ const embedAndStoreMessage = async ({ userId, topicId, messageId, role, content,
     const { error } = await supabase
       .from('message_embeddings')
       .insert(
-        { user_id: userId, topic_id: topicId, message_id: messageId, role, content, embedding: vector, embedding_space: embeddingSpace }
+        { user_id: userId, topic_id: topicId, message_id: messageId, role, content: safeContent, embedding: vector, embedding_space: embeddingSpace }
       );
 
     if (error && !error.message?.includes('duplicate key')) {

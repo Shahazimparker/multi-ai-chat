@@ -70,3 +70,15 @@ This document provides essential context about the codebase, deployment environm
 - `backend/services/rag2.service.js`: Advanced RAG 2.0 (RAPTOR trees, GraphRAG, multi-query expansion, Cohere reranking).
 - `frontend/src/pages/hooks/useChatSession.js`: Chat SSE streaming, Vercel Blob client direct upload.
 - `frontend/src/pages/KnowledgePage.jsx`: Knowledge collection management, document indexing, web crawl, chunk inspection.
+
+---
+
+## 5. Prompt Context, Model Limits & Token Rules
+
+1. **Raw Prompt Preservation (Query Compression Disabled)**:
+   - Query compression via secondary LLMs (OpenRouter Gemini Flash Lite) is disabled for all models to preserve raw prompt fidelity (e.g. big data, logs, code, stack traces) without unexpected background token consumption.
+2. **Model Context Windows & Hard Caps**:
+   - Each model accepts raw input up to its declared capacity (e.g., DeepSeek V4: 128K, Claude Sonnet 5: 200K, Mistral: 32K, Gemini/Groq: 5,999).
+   - If a prompt exceeds the model's allowed capacity or the user's `per_query_limit`, the backend returns an explicit `query_too_long` or `context_too_large` error rather than silently truncating the user's data.
+3. **Embedding Vector Safety (Supabase 500MB Cap)**:
+   - Query embeddings and post-turn cross-chat memory embeddings (`embedText` / `embedAndStoreMessage`) are bounded to <= 6,000 / 3,000 tokens to prevent provider crashes, runaway embedding costs, and database storage bloat under Supabase's 500MB free-tier limit.
