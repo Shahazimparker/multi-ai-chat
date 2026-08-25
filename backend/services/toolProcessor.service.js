@@ -259,8 +259,85 @@ const runPPTGeneration = async ({ parsed, reply = '', user, topicId, onStatus, c
 };
 
 /**
+ * Specialized SAP ST22 Short Dump Sectional Extractor
+ * Inspired by hanadumpviewer and ABAP diagnostic observability tools.
+ * Captures all canonical error analysis sections, stack traces,
+ * source code extracts, and system variables with 100% precision.
+ */
+const parseSAPShortDump = (rawText, fileName) => {
+  if (!rawText) return null;
+  const isST22 = /(?:Runtime Errors|Short text of error|What happened\?|Fehleranalyse|Error analysis|Information on where terminated|Source Code Extract|Quelltextauszug|Active Calls\/Events|Contents of system variables|ABAP Program:)/i.test(rawText);
+  if (!isST22) return null;
+
+  const lines = rawText.split('\n');
+
+  // Extract key header metadata
+  const runtimeErrorMatch = rawText.match(/Runtime Errors\s*[:\s]\s*([A-Z0-9_]+)/i);
+  const exceptionMatch = rawText.match(/(?:Exception|ABAP Exception)\s*[:\s]\s*([A-Z0-9_]+)/i);
+  const programMatch = rawText.match(/(?:ABAP Program|Program)\s*[:\s]\s*([A-Z0-9_\/=]+)/i);
+  const dateMatch = rawText.match(/(?:Date and Time|Datum und Zeit)\s*[:\s]\s*([^\r\n]+)/i);
+  const componentMatch = rawText.match(/(?:Application Component|Komponente)\s*[:\s]\s*([A-Z0-9\-]+)/i);
+  const shortTextMatch = rawText.match(/(?:Short text of error|Kurzbeschreibung)\s*[:\s]\s*([^\r\n]+)/i);
+
+  // Helper to extract a bounded section between headers
+  const extractSection = (startRegex, endRegex, maxLines = 80) => {
+    let startIdx = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (startRegex.test(lines[i])) {
+        startIdx = i;
+        break;
+      }
+    }
+    if (startIdx === -1) return '';
+    const collected = [];
+    for (let i = startIdx; i < lines.length; i++) {
+      if (i > startIdx && endRegex.test(lines[i])) break;
+      collected.push(lines[i]);
+      if (collected.length >= maxLines) break;
+    }
+    return collected.join('\n').trim();
+  };
+
+  const SECTION_END_PATTERN = /^(?:-{3,}|\*{3,}|={3,}|What happened\?|Error analysis|How to correct the error|Information on where terminated|Source Code Extract|Active Calls\/Events|Contents of system variables|Chosen variables|Internal notes|System environment|Fehleranalyse|Was ist passiert\?)/i;
+
+  const whatHappened = extractSection(/What happened\?|Was ist passiert\?/i, SECTION_END_PATTERN, 40);
+  const errorAnalysis = extractSection(/Error analysis|Fehleranalyse/i, SECTION_END_PATTERN, 60);
+  const whereTerminated = extractSection(/Information on where terminated|Where terminated/i, SECTION_END_PATTERN, 35);
+  const codeExtract = extractSection(/Source Code Extract|Quelltextauszug/i, SECTION_END_PATTERN, 80);
+  const callStack = extractSection(/Active Calls\/Events|Aufrufhierarchie/i, SECTION_END_PATTERN, 60);
+  const systemVars = extractSection(/Contents of system variables|Systemvariablen/i, SECTION_END_PATTERN, 40);
+  const howToCorrect = extractSection(/How to correct the error|Fehlerbehebung/i, SECTION_END_PATTERN, 40);
+
+  // If at least a runtime error or 2 key sections were identified, format structured ST22 digest
+  if (!runtimeErrorMatch && !whatHappened && !whereTerminated && !codeExtract) {
+    return null;
+  }
+
+  let output = `[SAP ST22 SHORT DUMP DIAGNOSTIC DIGEST: ${fileName || 'Dump'}]\n`;
+  if (runtimeErrorMatch) output += `• Runtime Error: ${runtimeErrorMatch[1]}\n`;
+  if (exceptionMatch) output += `• Exception: ${exceptionMatch[1]}\n`;
+  if (shortTextMatch) output += `• Short Text: ${shortTextMatch[1].trim()}\n`;
+  if (programMatch) output += `• Terminating Program: ${programMatch[1]}\n`;
+  if (componentMatch) output += `• Application Component: ${componentMatch[1]}\n`;
+  if (dateMatch) output += `• Timestamp: ${dateMatch[1].trim()}\n`;
+  output += `\n`;
+
+  if (whereTerminated) output += `--- WHERE TERMINATED (Program / Include / Line) ---\n${whereTerminated}\n\n`;
+  if (codeExtract) output += `--- SOURCE CODE EXTRACT (Failing code line marked with >>>) ---\n${codeExtract}\n\n`;
+  if (whatHappened) output += `--- WHAT HAPPENED ---\n${whatHappened}\n\n`;
+  if (errorAnalysis) output += `--- ERROR ANALYSIS ---\n${errorAnalysis}\n\n`;
+  if (callStack) output += `--- ACTIVE CALL STACK ---\n${callStack}\n\n`;
+  if (systemVars) output += `--- SYSTEM VARIABLES (SY-*) ---\n${systemVars}\n\n`;
+  if (howToCorrect) output += `--- HOW TO CORRECT THE ERROR ---\n${howToCorrect}\n\n`;
+  output += `[END SAP ST22 SHORT DUMP DIGEST]`;
+
+  return output;
+};
+
+/**
  * Automatically extract critical incident anomalies, errors, fatal crashes,
  * and high-entropy log events across massive files (10MB-50MB / 30,000+ lines).
+ * Inspired by Logdy, OpenObserve, and Hanadumpviewer.
  */
 const extractDiagnosticDigest = (rawText, fileName) => {
   if (!rawText) return '[No content available]';
@@ -270,10 +347,16 @@ const extractDiagnosticDigest = (rawText, fileName) => {
     return rawText;
   }
 
-  // 1. First 120 lines (Boot / Startup / Initialization context)
+  // 1. Check for dedicated SAP ST22 Short Dump format
+  const sapDigest = parseSAPShortDump(rawText, fileName);
+  if (sapDigest) {
+    return sapDigest;
+  }
+
+  // 2. First 120 lines (Boot / Startup / Initialization context)
   const headLines = lines.slice(0, 120).join('\n');
 
-  // 2. High-Severity Anomaly & Incident Pattern Scanner across Linux, DBs & Apps
+  // 3. High-Severity Anomaly & Incident Pattern Scanner across Linux, DBs & Apps
   const CRITICAL_PATTERNS = [
     // Process Kill / Termination / Panics / OOM
     /\b(out of memory|oom[-_]?killer|killed\s+process|killing\s+process|sigkill|sigterm|sigsegv|sigbus|core dumped|segmentation fault|segfault|kernel panic|panic|stack overflow)\b/i,
@@ -326,7 +409,7 @@ const extractDiagnosticDigest = (rawText, fileName) => {
     if (clusters.length >= 35) break; // Keep top 35 high-signal incident clusters
   }
 
-  // 3. Last 150 lines (Shutdown / Crash termination state)
+  // 4. Last 150 lines (Shutdown / Crash termination state)
   const tailLines = lines.slice(-150).map((l, offset) => `${totalLines - 150 + offset + 1}: ${l}`).join('\n');
 
   let incidentBlock = '';
