@@ -41,7 +41,9 @@ const PROVIDERS = {
   mistral:    { space: 'mistral-embed',    model: 'mistral-embed',                 envKey: 'MISTRAL_API_KEY' },
 };
 
-const DEFAULT_PROVIDER = 'openrouter';
+const DEFAULT_PROVIDER = (process.env.DEFAULT_EMBEDDING_PROVIDER && PROVIDERS[process.env.DEFAULT_EMBEDDING_PROVIDER.toLowerCase()])
+  ? process.env.DEFAULT_EMBEDDING_PROVIDER.toLowerCase()
+  : 'openrouter';
 
 /** The space every row written before the space column existed belongs to. */
 const LEGACY_SPACE = 'openai-te3-small';
@@ -49,7 +51,7 @@ const LEGACY_SPACE = 'openai-te3-small';
 const getProviderSpec = (provider) => PROVIDERS[provider] || PROVIDERS[DEFAULT_PROVIDER];
 
 /** The space a provider writes into. Safe to call with unknown/undefined input. */
-const spaceForProvider = (provider) => getProviderSpec(provider).space;
+const spaceForProvider = (provider) => (provider && PROVIDERS[provider]) ? PROVIDERS[provider].space : LEGACY_SPACE;
 
 const hasCredentials = (provider) => {
   const spec = PROVIDERS[provider];
