@@ -195,10 +195,10 @@ All values are read from env at startup with clamped parsing:
 | `gemini-flash` | Gemini Flash 3.7 | gemini | Yes |
 | `gemini-flash-lite` | Gemini Flash-Lite 3.5 | gemini | Yes |
 | `gemini-pro` | Gemini Pro 3.1 Preview | gemini | No |
-| `ministral-8b` | Ministral 8B | mistral | Yes |
+| `ministral-14b` | Ministral 14B | mistral | Yes |
 | `codestral-2508` | Codestral 2508 | mistral | Yes |
-| `mistral-small` | Mistral Small 4 (Default) | mistral | Yes |
-| `mistral-medium` | Mistral Medium | mistral | Yes |
+| `mistral-small` | Mistral Small 4 | mistral | Yes |
+| `mistral-medium` | Mistral Medium 2508 (Default) | mistral | Yes |
 | `mistral-large` | Mistral Large | mistral | Yes |
 | `claude-haiku` | Claude Haiku 4.5 | claude | No |
 | `claude-sonnet-5` | Claude Sonnet 5 | claude | No |

@@ -175,11 +175,11 @@ const MODELS = {
   // Groq and Gemini are left at 5999 deliberately — their free tiers meter
   // daily tokens and daily requests respectively, so bigger prompts there
   // would burn the scarce resource directly.
-  'ministral-8b': {
-    label: 'Ministral 8B (Fast, Free)',
+  'ministral-14b': {
+    label: 'Ministral 14B (Vision, Free)',
     provider: 'mistral',
     apiKey: process.env.MISTRAL_API_KEY,
-    model: 'ministral-8b-latest',
+    model: 'ministral-14b-2512',
     paid: false,
     supportsVision: true,
     maxTokens: 128000,

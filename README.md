@@ -62,7 +62,7 @@ cp .env.example .env.local   # set VITE_API_URL
 npm start
 ```
 
-The default model (`mistral-small` / Mistral Small 4) requires `MISTRAL_API_KEY`. All other provider keys are optional.
+The default model (`mistral-medium` / Mistral Medium 2508) requires `MISTRAL_API_KEY`. All other provider keys are optional.
 
 ## Running Tests
 
