@@ -17,21 +17,26 @@ const MIN_PASSWORD_LENGTH = 8;
 
 // ── GET /api/admin/users — list all users ──────────────────
 const getUsers = async (req, res) => {
-  const { data, error } = await supabase
-    .from('users')
-    .select('id, email, username, role, is_active, locked_until, total_tokens, used_tokens, per_query_limit, session_minutes, expires_at, created_at')
-    .order('created_at', { ascending: false });
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, email, username, role, is_active, locked_until, total_tokens, used_tokens, per_query_limit, session_minutes, expires_at, created_at')
+      .order('created_at', { ascending: false });
 
-  if (error) return res.status(500).json({ error: error.message });
+    if (error) return res.status(500).json({ error: error.message });
 
-  // Attach is_login_locked flag — locked if locked_until is in the future
-  const now = new Date();
-  const usersWithLock = (data || []).map(u => ({
-    ...u,
-    is_login_locked: !!(u.locked_until && new Date(u.locked_until) > now),
-  }));
+    // Attach is_login_locked flag — locked if locked_until is in the future
+    const now = new Date();
+    const usersWithLock = (data || []).map(u => ({
+      ...u,
+      is_login_locked: !!(u.locked_until && new Date(u.locked_until) > now),
+    }));
 
-  res.json({ users: usersWithLock });
+    res.json({ users: usersWithLock });
+  } catch (err) {
+    console.error('[Admin] Get users error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 // ── POST /api/admin/users — create new user ────────────────
@@ -187,16 +192,33 @@ const deleteUser = async (req, res) => {
 
 // ── POST /api/admin/users/:id/reset-tokens — reset quota ──
 const resetTokens = async (req, res) => {
-  const { id } = req.params;
-  const { total_tokens } = req.body;
+  try {
+    const { id } = req.params;
+    const body = req.body || {};
+    const total_tokens = body.total_tokens;
 
-  const { error } = await supabase
-    .from('users')
-    .update({ used_tokens: 0, ...(total_tokens ? { total_tokens } : {}) })
-    .eq('id', id);
+    const updates = { used_tokens: 0 };
+    if (total_tokens !== undefined && total_tokens !== null && total_tokens !== '') {
+      const parsed = parseInt(total_tokens, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        updates.total_tokens = parsed;
+      }
+    }
 
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ message: 'Token quota reset' });
+    const { error } = await supabase
+      .from('users')
+      .update(updates)
+      .eq('id', id);
+
+    if (error) {
+      console.error('[Admin] Reset tokens error:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
+    res.json({ message: 'Token quota reset' });
+  } catch (err) {
+    console.error('[Admin] Reset tokens unexpected error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 // ── GET /api/admin/analytics — usage analytics ─────────────

@@ -5,7 +5,7 @@
 // the three guards: role enum, password policy, and last-admin protection.
 
 const supabase = require('../../config/supabase');
-const { updateUser, deleteUser, getAnalytics } = require('../../controllers/admin.controller');
+const { updateUser, deleteUser, getAnalytics, resetTokens } = require('../../controllers/admin.controller');
 
 const makeRes = () => {
   const res = {};
@@ -172,5 +172,35 @@ describe('getAnalytics', () => {
 
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({ error: 'agg failed' });
+  });
+});
+
+describe('resetTokens', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('resets used_tokens to 0 with empty body', async () => {
+    vi.spyOn(supabase, 'from').mockReturnValue({
+      update: vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ error: null }),
+      }),
+    });
+
+    const res = makeRes();
+    await resetTokens({ params: { id: 'u1' } }, res);
+
+    expect(res.json).toHaveBeenCalledWith({ message: 'Token quota reset' });
+  });
+
+  it('updates total_tokens when provided', async () => {
+    const updateSpy = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null }),
+    });
+    vi.spyOn(supabase, 'from').mockReturnValue({ update: updateSpy });
+
+    const res = makeRes();
+    await resetTokens({ params: { id: 'u1' }, body: { total_tokens: 500000 } }, res);
+
+    expect(updateSpy).toHaveBeenCalledWith({ used_tokens: 0, total_tokens: 500000 });
+    expect(res.json).toHaveBeenCalledWith({ message: 'Token quota reset' });
   });
 });
