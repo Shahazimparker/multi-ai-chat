@@ -14,6 +14,8 @@ const AUTH_COOKIE_NAME = 'auth_token';
 // it only proves the request came from a document that can read our cookies.
 const CSRF_COOKIE_NAME = 'csrf_token';
 const DEFAULT_SESSION_MINUTES = 60;
+const REMEMBER_ME_DAYS = 30;
+const REMEMBER_ME_SECONDS = REMEMBER_ME_DAYS * 24 * 60 * 60; // 30 days in seconds (2,592,000s)
 
 const parseRememberMe = (value) =>
   value === true || value === 'true' || value === 1 || value === '1';
@@ -21,13 +23,13 @@ const parseRememberMe = (value) =>
 /**
  * The session window, in seconds.
  *
- * Note this is now an *idle* window, not an absolute one: the middleware slides
- * it forward while the user keeps making requests. It bounds how long a session
- * can sit untouched before it dies, which is what the admin-facing "Session
- * Duration" field is meant to control.
+ * For Remember Me sessions: 30 days persistent window.
+ * For regular sessions: idle window bounded by user's session_minutes (default 60m).
  */
-const getSessionSeconds = (user) =>
-  (user?.session_minutes || DEFAULT_SESSION_MINUTES) * 60;
+const getSessionSeconds = (user, rememberMe = false) =>
+  parseRememberMe(rememberMe)
+    ? REMEMBER_ME_SECONDS
+    : (user?.session_minutes || DEFAULT_SESSION_MINUTES) * 60;
 
 // clearCookie only matches a cookie whose attributes line up with the ones it
 // was set with, so both paths have to build these identically.
@@ -75,7 +77,7 @@ const issueCsrfCookie = (res, { maxAge, reuseToken } = {}) => {
  */
 const issueAuthCookie = (res, user, rememberMe, reuseCsrfToken) => {
   const remember = parseRememberMe(rememberMe);
-  const seconds = getSessionSeconds(user);
+  const seconds = getSessionSeconds(user, remember);
 
   const token = jwt.sign(
     { userId: user.id, role: user.role, rememberMe: remember },
@@ -100,6 +102,8 @@ module.exports = {
   AUTH_COOKIE_NAME,
   CSRF_COOKIE_NAME,
   DEFAULT_SESSION_MINUTES,
+  REMEMBER_ME_DAYS,
+  REMEMBER_ME_SECONDS,
   parseRememberMe,
   getSessionSeconds,
   buildCookieOptions,

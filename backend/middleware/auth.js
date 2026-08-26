@@ -81,8 +81,10 @@ const createAuthMiddleware = ({ optional = false } = {}) => async (req, res, nex
     // never see the new one.
     if (!bearerToken && cookieToken) {
       const csrfCookie = getCookieValue(req.headers.cookie, CSRF_COOKIE_NAME);
+      const remember = parseRememberMe(decoded.rememberMe);
+      const sessionSeconds = getSessionSeconds(user, remember);
       const secondsLeft = decoded.exp - Math.floor(Date.now() / 1000);
-      if (secondsLeft < getSessionSeconds(user) * REFRESH_AFTER_FRACTION) {
+      if (secondsLeft < sessionSeconds * REFRESH_AFTER_FRACTION) {
         // Falsy for tokens minted before rememberMe was in the payload, which
         // degrades to a session cookie rather than failing the request.
         // The caller's existing CSRF token rides along so the refresh extends
@@ -94,9 +96,8 @@ const createAuthMiddleware = ({ optional = false } = {}) => async (req, res, nex
         // runs app-wide before this one, so it has already turned away any
         // write; repairing it here means a plain GET (the app issues one on
         // mount) heals the session before the user ever sees a 403.
-        const remember = parseRememberMe(decoded.rememberMe);
         issueCsrfCookie(res, {
-          maxAge: remember ? getSessionSeconds(user) * 1000 : undefined,
+          maxAge: remember ? sessionSeconds * 1000 : undefined,
         });
       }
     }
