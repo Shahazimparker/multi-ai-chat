@@ -13,6 +13,7 @@ module.exports = defineConfig({
     // vitest's transform. Document generation (pptx, pdf, xlsx) is also slow.
     testTimeout: 30000,
     hookTimeout: 30000,
+    fileParallelism: false,
     coverage: {
       provider: 'v8',
       include: [

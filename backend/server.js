@@ -98,7 +98,21 @@ app.use(sentryRequestHandler());
 app.use(sentryTracingHandler());
 
 // ── Security & logging middleware ──────────────────────────
-app.use(helmet());                            // sets secure HTTP headers
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: process.env.NODE_ENV === 'production' ? {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https://*.blob.vercel-storage.com', 'https://blob.vercel-storage.com'],
+      connectSrc: ["'self'", 'https://*.supabase.co', 'https://*.blob.vercel-storage.com', 'https://blob.vercel-storage.com'],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: [],
+    },
+  } : false,
+}));                            // sets secure HTTP headers
 // 'combined' (Apache-style) in production for parseable access logs; 'dev' is
 // colourised and concise but strips the fields log aggregators expect.
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));

@@ -83,8 +83,34 @@ const getBlobMetadata = async (blobUrl) => {
   }
 };
 
+/**
+ * Validates that a blob URL comes from an authorized Vercel Blob hostname and matches expected path prefixes.
+ * @param {string} blobUrl
+ * @param {string[]} [allowedPrefixes] - e.g. ['uploads/', 'knowledge/']
+ * @returns {boolean}
+ */
+const isValidVercelBlobUrl = (blobUrl, allowedPrefixes = []) => {
+  if (!blobUrl || typeof blobUrl !== 'string') return false;
+  try {
+    const parsed = new URL(blobUrl);
+    const host = parsed.hostname.toLowerCase();
+    const isVercelHost = host.endsWith('.blob.vercel-storage.com') || host === 'blob.vercel-storage.com';
+    if (!isVercelHost) return false;
+
+    if (allowedPrefixes && allowedPrefixes.length > 0) {
+      const pathname = parsed.pathname.replace(/^\/+/, '');
+      const matchesPrefix = allowedPrefixes.some(prefix => pathname.startsWith(prefix));
+      if (!matchesPrefix) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 module.exports = {
   isBlobConfigured,
+  isValidVercelBlobUrl,
   fetchPrivateBlobBuffer,
   fetchPrivateBlobStream,
   deleteBlobFromStorage,

@@ -2,6 +2,8 @@ declare const process: {
   env: Record<string, string | undefined>;
 };
 
+declare const global: any;
+
 declare module 'express-rate-limit' {
   const rateLimit: any;
   export = rateLimit;
@@ -50,8 +52,13 @@ declare module 'mammoth' {
 }
 
 declare module 'pdf-parse' {
+  export const PDFParse: any;
   const pdfParse: any;
   export = pdfParse;
+}
+
+declare module 'pdf-parse/worker' {
+  export const getData: any;
 }
 
 // exceljs ships its own index.d.ts, but tsconfig sets `noResolve: true`, so

@@ -148,7 +148,7 @@ const {
 const { generateImage } = require('../services/imageGeneration.service');
 const { generatePPT } = require('../services/pptGeneration.service');
 const { handleUpload } = require('@vercel/blob/client');
-const { isBlobConfigured, fetchPrivateBlobBuffer } = require('../services/blobStorage.service');
+const { isBlobConfigured, fetchPrivateBlobBuffer, isValidVercelBlobUrl } = require('../services/blobStorage.service');
 
 
 // Use OS temp dir so uploaded files don't trigger nodemon restarts
@@ -274,6 +274,10 @@ router.post('/process-blob', requireAuth, uploadHeavyLimiter, uploadTimeout, asy
 
   if (!blobUrl || !fileName) {
     return res.status(400).json({ error: 'blobUrl and fileName are required' });
+  }
+
+  if (!isValidVercelBlobUrl(blobUrl, ['uploads/', 'knowledge/'])) {
+    return res.status(400).json({ error: 'Invalid or unauthorized blob storage URL' });
   }
 
   abortController = new AbortController();
@@ -407,6 +411,19 @@ router.post('/process-blob', requireAuth, uploadHeavyLimiter, uploadTimeout, asy
  * In-memory fallback chunk storage for local dev / single instance
  */
 const inMemoryChunkStaging = new Map();
+const CHUNK_STAGING_TTL_MS = 60 * 60 * 1000; // 1 hour TTL for abandoned staged uploads
+
+const sweepExpiredChunkStaging = () => {
+  const now = Date.now();
+  for (const [uploadId, sess] of inMemoryChunkStaging) {
+    if (now - (sess.createdAt || 0) > CHUNK_STAGING_TTL_MS) {
+      inMemoryChunkStaging.delete(uploadId);
+    }
+  }
+};
+
+// Periodic TTL sweep every 15 minutes (unref'd to not hold Node process open)
+setInterval(sweepExpiredChunkStaging, 15 * 60 * 1000).unref();
 
 /**
  * POST /api/upload/chunk/init
@@ -414,6 +431,7 @@ const inMemoryChunkStaging = new Map();
  */
 router.post('/chunk/init', requireAuth, uploadHeavyLimiter, async (req, res) => {
   try {
+    sweepExpiredChunkStaging();
     const { fileName, fileSize, fileType, totalChunks } = req.body;
     if (!fileName) return res.status(400).json({ error: 'fileName is required' });
 
@@ -439,7 +457,7 @@ router.post('/chunk/init', requireAuth, uploadHeavyLimiter, async (req, res) => 
 
     res.json({
       uploadId,
-      chunkSize: 3 * 1024 * 1024,
+      chunkSize: 2 * 1024 * 1024,
       totalChunks: parseInt(totalChunks, 10) || 1,
       fileName,
     });
@@ -453,7 +471,7 @@ router.post('/chunk/init', requireAuth, uploadHeavyLimiter, async (req, res) => 
  * POST /api/upload/chunk/:uploadId
  * Upload a single chunk slice
  */
-router.post('/chunk/:uploadId', requireAuth, async (req, res) => {
+router.post('/chunk/:uploadId', requireAuth, uploadHeavyLimiter, async (req, res) => {
   try {
     const { uploadId } = req.params;
     const { chunkIndex, totalChunks, fileName, fileType, chunkData } = req.body;
@@ -465,9 +483,13 @@ router.post('/chunk/:uploadId', requireAuth, async (req, res) => {
     const parsedIndex = parseInt(chunkIndex, 10);
     const parsedTotal = parseInt(totalChunks, 10) || 1;
 
-    // Cache in memory for quick retrieval
+    // Cache in memory for quick retrieval and verify user ownership
     let memSession = inMemoryChunkStaging.get(uploadId);
-    if (!memSession) {
+    if (memSession) {
+      if (memSession.userId !== req.user.id && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Unauthorized: upload session belongs to another user' });
+      }
+    } else {
       memSession = {
         userId: req.user.id,
         fileName: fileName || 'file',
@@ -510,7 +532,7 @@ router.post('/chunk/:uploadId', requireAuth, async (req, res) => {
  * POST /api/upload/chunk/:uploadId/finalize
  * Assemble chunks and process file directly into database (upgDB) with SSE streaming
  */
-router.post('/chunk/:uploadId/finalize', requireAuth, uploadTimeout, async (req, res) => {
+router.post('/chunk/:uploadId/finalize', requireAuth, uploadHeavyLimiter, uploadTimeout, async (req, res) => {
   let sessionId = null;
   let abortController = null;
   let updateSession = null;
@@ -518,6 +540,11 @@ router.post('/chunk/:uploadId/finalize', requireAuth, uploadTimeout, async (req,
   try {
     const { uploadId } = req.params;
     const { topicId, modelId, ragEnabled } = req.body;
+
+    const memSession = inMemoryChunkStaging.get(uploadId);
+    if (memSession && memSession.userId !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Unauthorized: upload session belongs to another user' });
+    }
 
     abortController = new AbortController();
     sessionId = crypto.randomUUID();
@@ -563,7 +590,9 @@ router.post('/chunk/:uploadId/finalize', requireAuth, uploadTimeout, async (req,
 
     try {
       if (typeof res.socket?.setNoDelay === 'function') res.socket.setNoDelay(true);
-    } catch {}
+    } catch {
+      // Ignore if setNoDelay is unsupported in the current runtime environment
+    }
 
     const sendProgress = (data) => {
       if (data.type === 'progress') {
@@ -586,7 +615,6 @@ router.post('/chunk/:uploadId/finalize', requireAuth, uploadTimeout, async (req,
     let totalChunks = 1;
     let chunksList = [];
 
-    const memSession = inMemoryChunkStaging.get(uploadId);
     if (memSession && memSession.chunks.size >= memSession.totalChunks) {
       fileName = memSession.fileName;
       fileType = memSession.fileType;
@@ -625,8 +653,10 @@ router.post('/chunk/:uploadId/finalize', requireAuth, uploadTimeout, async (req,
     // Cleanup staging table & memory
     inMemoryChunkStaging.delete(uploadId);
     try {
-      await supabase.from('upload_chunks_staging').delete().eq('upload_id', uploadId);
-    } catch {}
+      await supabase.from('upload_chunks_staging').delete().eq('upload_id', uploadId).eq('user_id', req.user.id);
+    } catch {
+      // Ignore staging cleanup failure
+    }
 
     const isRagEnabled = ragEnabled === 'true' || ragEnabled === true;
     const detectedType = getSupportedFileType(fileName);
@@ -685,12 +715,20 @@ router.post('/chunk/:uploadId/finalize', requireAuth, uploadTimeout, async (req,
  * POST /api/upload/chunk/:uploadId/abort
  * Cancel chunked upload and delete staging data
  */
-router.post('/chunk/:uploadId/abort', requireAuth, async (req, res) => {
+router.post('/chunk/:uploadId/abort', requireAuth, uploadHeavyLimiter, async (req, res) => {
   const { uploadId } = req.params;
-  inMemoryChunkStaging.delete(uploadId);
+  const memSession = inMemoryChunkStaging.get(uploadId);
+  if (memSession) {
+    if (memSession.userId !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Unauthorized: upload session belongs to another user' });
+    }
+    inMemoryChunkStaging.delete(uploadId);
+  }
   try {
-    await supabase.from('upload_chunks_staging').delete().eq('upload_id', uploadId);
-  } catch {}
+    await supabase.from('upload_chunks_staging').delete().eq('upload_id', uploadId).eq('user_id', req.user.id);
+  } catch {
+    // Ignore staging cleanup failure on abort
+  }
   res.json({ message: 'Chunk upload aborted and cleaned' });
 });
 

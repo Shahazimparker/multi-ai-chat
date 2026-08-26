@@ -269,6 +269,11 @@ router.post('/collections/:id/documents/process-blob', knowledgeHeavyLimiter, as
     return res.status(400).json({ error: 'blobUrl and fileName are required' });
   }
 
+  const { isValidVercelBlobUrl } = require('../services/blobStorage.service');
+  if (!isValidVercelBlobUrl(blobUrl, ['knowledge/', 'uploads/'])) {
+    return res.status(400).json({ error: 'Invalid or unauthorized blob storage URL' });
+  }
+
   const originalName = sanitizeFilename(fileName);
   const ext = path.extname(originalName).slice(1).toLowerCase();
 

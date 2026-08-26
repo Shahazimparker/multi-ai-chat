@@ -35,7 +35,7 @@ Test Breakdown:
   - uploads a real text file and receives response
   - artifacts sidebar opens and search works
 - `chat.real.spec.ts` (5 tests)
-  - chat uses deepseek-v4-flash by default
+  - chat uses default model (mistral-medium) by default
   - sends real chat message and gets live response
   - vague PPT request shows clarification box
   - approval prompt can be rejected cleanly

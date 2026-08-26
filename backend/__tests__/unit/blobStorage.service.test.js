@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// vitest globals: describe, it, expect, vi, beforeEach, afterEach
 const blobService = require('../../services/blobStorage.service');
 
 describe('blobStorage.service', () => {
@@ -55,5 +55,20 @@ describe('blobStorage.service', () => {
     await blobService.deleteBlobFromStorage('https://blob.vercel-storage.com/delete-me.pdf');
 
     expect(mockBlobClient.del).toHaveBeenCalledWith('https://blob.vercel-storage.com/delete-me.pdf');
+  });
+
+  describe('isValidVercelBlobUrl', () => {
+    it('validates authentic Vercel Blob URLs with allowed prefixes', () => {
+      expect(blobService.isValidVercelBlobUrl('https://multi-chat-upload-storage.bom1.blob.vercel-storage.com/uploads/topic-1/123_doc.pdf', ['uploads/'])).toBe(true);
+      expect(blobService.isValidVercelBlobUrl('https://blob.vercel-storage.com/knowledge/col-1/123_doc.pdf', ['knowledge/'])).toBe(true);
+      expect(blobService.isValidVercelBlobUrl('https://blob.vercel-storage.com/uploads/topic-1/123_doc.pdf')).toBe(true);
+    });
+
+    it('rejects external or unapproved domains and prefixes', () => {
+      expect(blobService.isValidVercelBlobUrl('https://evil.com/uploads/doc.pdf', ['uploads/'])).toBe(false);
+      expect(blobService.isValidVercelBlobUrl('https://blob.vercel-storage.com/system/passwords.txt', ['uploads/'])).toBe(false);
+      expect(blobService.isValidVercelBlobUrl('not-a-url', ['uploads/'])).toBe(false);
+      expect(blobService.isValidVercelBlobUrl(null)).toBe(false);
+    });
   });
 });

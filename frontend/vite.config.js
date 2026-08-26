@@ -117,7 +117,7 @@ export default defineConfig(({ mode }) => ({
     environment: 'jsdom',
     setupFiles: ['./src/setupTests.js'],
     include: ['src/**/*.{test,spec}.{js,jsx}'],
-    pool: 'forks',
+    pool: 'threads',
     fileParallelism: false,
     css: false,
   },

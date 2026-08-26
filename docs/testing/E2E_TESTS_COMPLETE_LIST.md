@@ -83,7 +83,7 @@
 
 **8. Real Chat Tests** (`chat.real.spec.ts` — 5 tests)
 ```
-- Chat screen uses deepseek-v4-flash by default
+- Chat screen uses default model (mistral-medium) by default
 - Sends a real chat message and receives a live response
 - Vague PPT request shows clarification box
 - Approval prompt can be rejected cleanly

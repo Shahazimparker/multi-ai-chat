@@ -41,8 +41,10 @@ export async function createStorageState(browser: Browser, fileName: string, use
   return filePath;
 }
 
-export async function expectDeepSeekSelected(page: Page) {
-  await expect(page.locator('.model-trigger')).toContainText('DeepSeek V4 Flash');
+export async function expectDefaultModelSelected(page: Page) {
+  // The code default is mistral-medium (ModelSelector.jsx). Assert it exactly —
+  // an alternation here would also pass if the default regressed to another model.
+  await expect(page.locator('.model-trigger')).toContainText('Mistral Medium');
 }
 
 export async function waitForAssistantMessage(page: Page) {

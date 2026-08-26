@@ -88,7 +88,7 @@ This document provides a comprehensive overview of all E2E tests (mock and real)
 ---
 
 ### `chat.real.spec.ts` (5 tests)
-1. Chat screen uses deepseek-v4-flash by default
+1. Chat screen uses default model (mistral-medium) by default
 2. Sends a real chat message and receives a live response
 3. Vague PPT request shows clarification box
 4. Approval prompt can be rejected cleanly

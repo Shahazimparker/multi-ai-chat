@@ -44,7 +44,7 @@ This document provides essential context about the codebase, deployment environm
    - Clipboard screenshots are compressed to <= 1600px / JPEG 85% via HTML5 Canvas in `useChatComposer.js` before being sent over chat stream payloads.
 5. **Direct DB Upload Toggle (`upgDB`)**:
    - In `ChatMemoryControls.jsx` under Advanced settings, users can check `upgDB` (`storeInDb: true`) to store files directly in PostgreSQL Base64.
-   - For files > 3.5MB in `upgDB` mode, client slices files into 3MB chunks via `/api/upload/chunk/*` to bypass Vercel's 4.5MB edge limit before assembling in Postgres. Default remains Vercel Blob (up to 50MB).
+   - For files > 2.5MB in `upgDB` mode, client slices files into 2MB chunks via `/api/upload/chunk/*` to bypass Vercel's 4.5MB edge limit before assembling in Postgres. Default remains Vercel Blob (up to 50MB).
 
 ---
 
@@ -78,8 +78,9 @@ This document provides essential context about the codebase, deployment environm
 
 ## 5. Prompt Context, Model Limits & Token Rules
 
-1. **Raw Prompt Preservation (Query Compression Disabled)**:
+1. **Raw Prompt Preservation (Secondary LLM Query Compression Disabled)**:
    - Query compression via secondary LLMs (OpenRouter Gemini Flash Lite) is disabled for all models to preserve raw prompt fidelity (e.g. big data, logs, code, stack traces) without unexpected background token consumption.
+   - A lightweight local regex pass (`compressPrompt`) removes conversational polite filler phrases (e.g. "please help me") for inputs >50 characters without altering substantive prompt payload.
 2. **Model Context Windows & Hard Caps**:
    - Each model accepts raw input up to its declared capacity (e.g., Codestral: 256K, Ministral 14B: 128K, Mistral Small / Medium / Large: 128K, DeepSeek V4: 128K, Claude Sonnet 5: 200K, Gemini/Groq: 5,999).
    - If a prompt exceeds the model's allowed capacity or the user's `per_query_limit`, the backend returns an explicit `query_too_long` or `context_too_large` error rather than silently truncating the user's data.

@@ -135,9 +135,20 @@ const callGemini = async (modelName, apiKey, messages, signal = null, modelConfi
     })
   ]);
 
-  const text = result.response.text();
-  const tokensUsed = result.response.usageMetadata?.totalTokenCount || 0;
+  let text = '';
+  try {
+    text = result.response.text();
+  } catch (textErr) {
+    console.warn('[Gemini] Response.text() notice:', textErr?.message);
+    const candidate = result.response?.candidates?.[0];
+    if (candidate?.content?.parts) {
+      text = candidate.content.parts
+        .map(p => (typeof p === 'string' ? p : p?.text || ''))
+        .join('');
+    }
+  }
 
+  const tokensUsed = result.response?.usageMetadata?.totalTokenCount || 0;
   return { text, tokensUsed };
 };
 
@@ -173,7 +184,17 @@ const callGeminiStream = async (modelName, apiKey, messages, signal = null, onCh
   let tokensUsed = 0;
 
   for await (const item of result.stream) {
-    const delta = item.text();
+    let delta = '';
+    try {
+      delta = item.text();
+    } catch (chunkErr) {
+      const candidate = item.candidates?.[0];
+      if (candidate?.content?.parts) {
+        delta = candidate.content.parts
+          .map(p => (typeof p === 'string' ? p : p?.text || ''))
+          .join('');
+      }
+    }
     if (delta) {
       fullText += delta;
       if (onChunk) onChunk(delta);
@@ -181,8 +202,21 @@ const callGeminiStream = async (modelName, apiKey, messages, signal = null, onCh
   }
 
   // Get token usage from the aggregated response
-  const response = await result.response;
-  tokensUsed = response.usageMetadata?.totalTokenCount || 0;
+  try {
+    const response = await result.response;
+    tokensUsed = response.usageMetadata?.totalTokenCount || 0;
+    if (!fullText) {
+      const candidate = response.candidates?.[0];
+      if (candidate?.content?.parts) {
+        fullText = candidate.content.parts
+          .map(p => (typeof p === 'string' ? p : p?.text || ''))
+          .join('');
+        if (fullText && onChunk) onChunk(fullText);
+      }
+    }
+  } catch (respErr) {
+    console.warn('[GeminiStream] Aggregated response resolution notice:', respErr?.message);
+  }
 
   return { text: fullText, tokensUsed };
 };

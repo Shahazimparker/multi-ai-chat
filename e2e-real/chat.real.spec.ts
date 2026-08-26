@@ -1,5 +1,5 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
-import { expectDeepSeekSelected, login, openSidebarSection, requireRealUser, waitForAssistantMessage } from './support/realHelpers';
+import { expectDefaultModelSelected, login, openSidebarSection, requireRealUser, waitForAssistantMessage } from './support/realHelpers';
 
 let context: BrowserContext;
 let page: Page;
@@ -26,12 +26,12 @@ test.describe.serial('real chat', () => {
     await expect(page).toHaveURL(/\/chat$/);
   });
 
-  test('chat screen uses deepseek-v4-flash by default', async () => {
-    await expectDeepSeekSelected(page);
+  test('chat screen uses default model (mistral-medium) by default', async () => {
+    await expectDefaultModelSelected(page);
   });
 
   test('sends a real chat message and receives a live response', async () => {
-    await expectDeepSeekSelected(page);
+    await expectDefaultModelSelected(page);
     await page.getByPlaceholder('Ask me anything').fill('Reply with exactly: REAL_E2E_OK');
     await page.locator('.send-btn').click();
     await waitForAssistantMessage(page);
