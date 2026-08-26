@@ -20,6 +20,13 @@ const { splitText } = require('./textSplitter.service');
 const { LEGACY_SPACE, DEFAULT_PROVIDER } = require('../config/embedding');
 const { createVisionCallback } = require('./visionExtraction.service');
 const { createPdfOcrCallback } = require('./pdfOcr.service');
+const {
+  RAG_RERANK_ENABLED,
+  RAG_RERANK_MODEL,
+  RAG_RERANK_TIMEOUT_MS,
+  RAG_RERANK_MIN_RELEVANCE,
+} = require('../config/chatRuntime.config');
+const { rerankDocuments, isCohereRateLimited } = require('./ai/cohere.service');
 
 /**
  * chunkContent — split text into token-aware overlapping chunks
@@ -1113,6 +1120,43 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
       }
     } catch (vectorErr) {
       console.warn('[FileSearch] Vector search warning:', vectorErr.message);
+    }
+
+    // 3. Cohere Cross-Encoder Rerank (with 429 rate limit resilience)
+    if (results.length > 1 && RAG_RERANK_ENABLED && process.env.COHERE_API_KEY) {
+      if (isCohereRateLimited()) {
+        console.warn('[FileSearch] Cohere in 429 rate limit cooldown; continuing with un-reranked file matches.');
+      } else {
+        try {
+          // Cap candidates to rerank at 25 to stay within a single search unit (100 docs)
+          const candidatesToRerank = results.slice(0, 25);
+          const { results: rerankResults, rateLimited } = await rerankDocuments(
+            query,
+            candidatesToRerank.map((r) => r.chunk_text || ''),
+            process.env.COHERE_API_KEY,
+            { model: RAG_RERANK_MODEL, signal, timeout: RAG_RERANK_TIMEOUT_MS }
+          );
+
+          if (rateLimited) {
+            console.warn('[FileSearch] Cohere 429 rate limit hit during rerank; continuing without rerank input.');
+          } else if (rerankResults && rerankResults.length > 0) {
+            const rerankedList = rerankResults.map(({ index, relevanceScore }) => ({
+              ...candidatesToRerank[index],
+              rerankScore: relevanceScore,
+            }));
+
+            // Only filter below RAG_RERANK_MIN_RELEVANCE if at least one candidate clears it
+            const relevant = rerankedList.filter((item) => item.rerankScore >= RAG_RERANK_MIN_RELEVANCE);
+            const remaining = results.slice(25);
+            results.length = 0;
+            results.push(...(relevant.length > 0 ? relevant : rerankedList), ...remaining);
+            console.log(`[FileSearch] Reranked ${candidatesToRerank.length} file candidates via ${RAG_RERANK_MODEL} (top score: ${results[0]?.rerankScore?.toFixed(3)})`);
+          }
+        } catch (rerankErr) {
+          if (rerankErr?.name === 'AbortError' || rerankErr?.name === 'CanceledError') throw rerankErr;
+          console.warn('[FileSearch] Cohere rerank unavailable (continuing with un-reranked results):', rerankErr.message);
+        }
+      }
     }
 
     return { results, embedTokens };

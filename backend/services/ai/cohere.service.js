@@ -15,6 +15,17 @@ const COHERE_RERANK_URL = 'https://api.cohere.com/v2/rerank';
 // single unit; the cap here is a guard against a caller passing a whole corpus.
 const RERANK_MAX_DOCUMENTS = 200;
 
+// Cohere Free Tier: 10 RPM / 1,000 monthly searches cap.
+// If a 429 occurs, record cooldown timestamp so subsequent queries skip
+// calling Cohere and immediately continue without rerank input.
+let rateLimitCooldownUntil = 0;
+
+const isCohereRateLimited = () => Date.now() < rateLimitCooldownUntil;
+const clearCohereRateLimitCooldown = () => { rateLimitCooldownUntil = 0; };
+const setCohereRateLimitCooldown = (seconds = 60) => {
+  rateLimitCooldownUntil = Date.now() + Math.max(1, seconds) * 1000;
+};
+
 /**
  * Shared helper to build Cohere request payload from messages array.
  */
@@ -148,6 +159,12 @@ const rerankDocuments = async (query, documents, apiKey, options = {}) => {
     timeout = 10000,
   } = options;
 
+  if (isCohereRateLimited()) {
+    const remainingSec = Math.ceil((rateLimitCooldownUntil - Date.now()) / 1000);
+    console.warn(`[Cohere] In 429 rate limit cooldown (${remainingSec}s remaining). Continuing without rerank input.`);
+    return { results: [], searchUnits: 0, rateLimited: true };
+  }
+
   if (!apiKey) throw new Error('Cohere API key is not configured');
   if (!query || !String(query).trim()) throw new Error('rerank requires a non-empty query');
   if (!Array.isArray(documents) || documents.length === 0) {
@@ -163,32 +180,48 @@ const rerankDocuments = async (query, documents, apiKey, options = {}) => {
   };
   if (topN) payload.top_n = Math.min(topN, texts.length);
 
-  const response = await axios.post(COHERE_RERANK_URL, payload, {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'X-Client-Name': 'MultiAI Chat',
-    },
-    timeout,
-    signal,
-  });
+  try {
+    const response = await axios.post(COHERE_RERANK_URL, payload, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'X-Client-Name': 'MultiAI Chat',
+      },
+      timeout,
+      signal,
+    });
 
-  const raw = response?.data?.results;
-  if (!Array.isArray(raw)) {
-    throw new Error('Cohere rerank returned no results array');
+    const raw = response?.data?.results;
+    if (!Array.isArray(raw)) {
+      throw new Error('Cohere rerank returned no results array');
+    }
+
+    // Cohere returns results already sorted by relevance, but sort defensively so
+    // callers can rely on the ordering regardless of API behaviour.
+    const results = raw
+      .filter((r) => Number.isInteger(r?.index) && r.index >= 0 && r.index < texts.length)
+      .map((r) => ({ index: r.index, relevanceScore: Number(r.relevance_score) || 0 }))
+      .sort((a, b) => b.relevanceScore - a.relevanceScore);
+
+    return {
+      results,
+      searchUnits: response?.data?.meta?.billed_units?.search_units || 0,
+    };
+  } catch (err) {
+    if (err?.name === 'AbortError' || err?.name === 'CanceledError') throw err;
+
+    const is429 = err?.response?.status === 429 || /429|rate[- ]?limit/i.test(err?.message || '');
+    if (is429) {
+      const retryAfterHeader = err?.response?.headers?.['retry-after'];
+      const retryAfterSec = parseInt(retryAfterHeader, 10);
+      const cooldownSec = !isNaN(retryAfterSec) && retryAfterSec > 0 ? retryAfterSec : 60;
+      setCohereRateLimitCooldown(cooldownSec);
+      console.warn(`[Cohere] HTTP 429 Rate Limit reached (Free tier 10 RPM / 1000/mo cap). Cooldown active for ${cooldownSec}s. Continuing without rerank input.`);
+      return { results: [], searchUnits: 0, rateLimited: true };
+    }
+
+    throw err;
   }
-
-  // Cohere returns results already sorted by relevance, but sort defensively so
-  // callers can rely on the ordering regardless of API behaviour.
-  const results = raw
-    .filter((r) => Number.isInteger(r?.index) && r.index >= 0 && r.index < texts.length)
-    .map((r) => ({ index: r.index, relevanceScore: Number(r.relevance_score) || 0 }))
-    .sort((a, b) => b.relevanceScore - a.relevanceScore);
-
-  return {
-    results,
-    searchUnits: response?.data?.meta?.billed_units?.search_units || 0,
-  };
 };
 
 /**
@@ -280,4 +313,12 @@ const rerankWithLlm = async (query, documents, options = {}) => {
   return { results, calibrated: false };
 };
 
-module.exports = { callCohere, callCohereStream, rerankDocuments, rerankWithLlm };
+module.exports = {
+  callCohere,
+  callCohereStream,
+  rerankDocuments,
+  rerankWithLlm,
+  isCohereRateLimited,
+  clearCohereRateLimitCooldown,
+  setCohereRateLimitCooldown,
+};

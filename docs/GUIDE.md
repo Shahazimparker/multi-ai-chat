@@ -35,7 +35,7 @@ Full knowledge management system at `/knowledge`:
 - Search (RAG 2.0): multi-query expansion + HyDE (optional) + dense + sparse (FTS/inverted index) + GraphRAG + RRF fusion + Cohere cross-encoder reranking
 
 ### RAG & Context
-- **Chat-upload RAG** (existing): hybrid reranking cosine+BM25+Jaccard+RRF for per-topic uploaded files
+- **Chat-upload RAG & File/Log Search**: Cohere cross-encoder reranking (`rerank-v3.5`) across keyword grep lines and pgvector chunks with free-tier 429 rate limit resilience (10 RPM cooldown circuit-breaker, non-blocking fallback to hybrid cosine+BM25+Jaccard+RRF).
 - **Cross-chat memory** (`accurate` mode): `embedAndStoreMessage` / `searchMemory` in `memory.service.js`; stored in `message_embeddings`, searched via `search_memory` Supabase RPC; 600 token budget
 - **Semantic cache** (pgvector cosine ≥ 0.92); exact cache disabled to prevent stale answers
 - **URL intelligence** (auto-triggered by links, independent of Web toggle): dedicated readers for GitHub/GitLab/Bitbucket/StackOverflow, Notion/Confluence, arXiv, PubMed, Google Docs, SharePoint, Medium/Substack, YouTube, Reddit, Quora, Gov/Legal; generic fallback via Firecrawl/Tavily/Exa

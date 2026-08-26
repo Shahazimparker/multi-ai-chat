@@ -199,6 +199,7 @@ backend/
 │   │   ├── raptor.test.js                 # RAPTOR tree: deterministic clustering, summary penalty
 │   │   ├── rateLimitStore.test.js         # SupabaseRateLimitStore fresh instance per call
 │   │   ├── rerank.test.js                 # Cohere cross-encoder reranking, fallback on outage
+│   │   ├── rerankFiles.test.js            # Cohere rerank for uploaded files/logs with 429 resilience
 │   │   ├── retrieverHybrid.test.js        # HybridRetriever RRF fusion
 │   │   ├── sanitize.test.js               # XSS sanitization, whitespace preservation
 │   │   ├── searchKB.tool.test.js          # [SEARCH_KB] tool — loop prevention on empty results
@@ -262,6 +263,7 @@ frontend/
 | `temporalContext.test.js` | Zone resolution priority, ISO block rendering |
 | `rag2.test.js` | `ingestDocumentContent`, `searchKnowledgeCollections`, crawler helpers |
 | `rerank.test.js` | Cohere API wrapper, fallback to RRF on outage |
+| `rerankFiles.test.js` | Cohere rerank on uploaded files/logs, 429 rate-limit cooldown & non-blocking fallback |
 | `raptor.test.js` | Deterministic k-means, summary penalty, primary-text wins tie |
 | `knowledgeGraph.test.js` | Entity/relation extraction, no hallucinated edges |
 | `queryTransform.test.js` | Multi-query expansion, HyDE, original query preserved |

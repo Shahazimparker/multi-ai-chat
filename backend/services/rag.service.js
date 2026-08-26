@@ -17,6 +17,13 @@ const {
   resolveProviderChain,
   padVector,
 } = require('../config/embedding');
+const {
+  RAG_RERANK_ENABLED,
+  RAG_RERANK_MODEL,
+  RAG_RERANK_TIMEOUT_MS,
+  RAG_RERANK_MIN_RELEVANCE,
+} = require('../config/chatRuntime.config');
+const { rerankDocuments, isCohereRateLimited } = require('./ai/cohere.service');
 const RAG_HYBRID_THRESHOLD = 0.52;
 const RAG_RRF_K = 60;
 
@@ -522,6 +529,37 @@ const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = '
     return [];
   }
 
+  if (RAG_RERANK_ENABLED && process.env.COHERE_API_KEY && data?.length > 1) {
+    if (isCohereRateLimited()) {
+      console.warn('[RAG] Cohere in 429 rate limit cooldown; continuing with hybrid ordering.');
+    } else {
+      try {
+        const candidates = data.slice(0, 25);
+        const { results: rerankResults, rateLimited } = await rerankDocuments(
+          query,
+          candidates.map((d) => d.content || ''),
+          process.env.COHERE_API_KEY,
+          { model: RAG_RERANK_MODEL, signal, timeout: RAG_RERANK_TIMEOUT_MS }
+        );
+
+        if (rateLimited) {
+          console.warn('[RAG] Cohere 429 rate limit hit; falling back to hybrid ordering.');
+        } else if (rerankResults && rerankResults.length > 0) {
+          const reranked = rerankResults.map(({ index, relevanceScore }) => ({
+            ...candidates[index],
+            rerankScore: relevanceScore,
+            hybridScore: relevanceScore,
+          }));
+          const relevant = reranked.filter((d) => d.rerankScore >= RAG_RERANK_MIN_RELEVANCE);
+          return (relevant.length > 0 ? relevant : reranked).slice(0, topK);
+        }
+      } catch (rErr) {
+        if (rErr?.name === 'AbortError' || rErr?.name === 'CanceledError') throw rErr;
+        console.warn('[RAG] Cohere rerank unavailable in searchRelevantDocs (falling back to hybrid):', rErr.message);
+      }
+    }
+  }
+
   return rerankDocsHybrid(data || [], query, topK, threshold);
 };
 
@@ -618,6 +656,37 @@ const buildRAGContext = async (query, provider = DEFAULT_PROVIDER, signal = null
       // Non-critical: chunk search is an enhancement, fall back to file-level results
       if (chunkErr.name !== 'AbortError' && chunkErr.name !== 'CanceledError') {
         console.warn('[RAG] Chunk-level search failed, using file-level only:', chunkErr.message);
+      }
+    }
+  }
+
+  // Cross-encoder rerank of context docs if available (with 429 rate limit resilience)
+  if (allDocs.length > 1 && RAG_RERANK_ENABLED && process.env.COHERE_API_KEY) {
+    if (isCohereRateLimited()) {
+      console.warn('[RAG] Cohere in 429 rate limit cooldown; continuing with un-reranked context docs.');
+    } else {
+      try {
+        const { results: rerankResults, rateLimited } = await rerankDocuments(
+          query,
+          allDocs.map((d) => d.content || ''),
+          process.env.COHERE_API_KEY,
+          { model: RAG_RERANK_MODEL, signal, timeout: RAG_RERANK_TIMEOUT_MS }
+        );
+
+        if (rateLimited) {
+          console.warn('[RAG] Cohere 429 rate limit hit during rerank; continuing without rerank input.');
+        } else if (rerankResults && rerankResults.length > 0) {
+          const rerankedDocs = rerankResults.map(({ index, relevanceScore }) => ({
+            ...allDocs[index],
+            rerankScore: relevanceScore,
+          }));
+          const relevant = rerankedDocs.filter((d) => d.rerankScore >= RAG_RERANK_MIN_RELEVANCE);
+          allDocs = (relevant.length > 0 ? relevant : rerankedDocs).slice(0, 5);
+          console.log(`[RAG] Reranked ${rerankResults.length} context docs via ${RAG_RERANK_MODEL} (top score: ${allDocs[0]?.rerankScore?.toFixed(3)})`);
+        }
+      } catch (rErr) {
+        if (rErr?.name === 'AbortError' || rErr?.name === 'CanceledError') throw rErr;
+        console.warn('[RAG] Cohere rerank unavailable in buildRAGContext (continuing with similarity order):', rErr.message);
       }
     }
   }

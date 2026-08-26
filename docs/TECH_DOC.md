@@ -119,7 +119,8 @@ All values are read from env at startup with clamped parsing:
   - Memory context capped at 600 tokens split across results via `trimTextByTokens`
 
 **RAG & Embeddings:**
-- `rag.service.js` — hybrid reranking (cosine+BM25+Jaccard+RRF) for chat-upload context
+- `rag.service.js` — Cohere cross-encoder reranking (`rerank-v3.5`) with 429 rate limit resilience and fallback to hybrid reranking (cosine+BM25+Jaccard+RRF) for chat-upload context
+- `fileUpload.service.js` — interactive file/log search (`searchUserFilesRAG`) with Cohere cross-encoder reranking and non-blocking 429 cooldown fallback
 - `rag2.service.js` — **New**: RAG 2.0 engine for Knowledge Base collections
   - Parent-child chunking, multi-query expansion, HyDE, cross-encoder reranking, RAPTOR summary nodes, GraphRAG fusion
   - `ingestDocumentContent` — indexes a document into a collection

@@ -66,7 +66,8 @@ This document provides essential context about the codebase, deployment environm
 ## 4. Key Services & Code Structure
 
 - `backend/services/blobStorage.service.js`: Wrapper around `@vercel/blob` (`get`, `del`, `head`, `setBlobClient`, `fetchPrivateBlobBuffer`, `deleteBlobFromStorage`).
-- `backend/services/fileUpload.service.js`: RAG ingestion, ZIP safety validation, text extraction, blob URL persistence, hybrid grep/vector search.
+- `backend/services/fileUpload.service.js`: RAG ingestion, ZIP safety validation, text extraction, blob URL persistence, hybrid grep/vector search with Cohere cross-encoder reranking and 429 rate-limit resilience.
+- `backend/services/rag.service.js`: Topic RAG context building, pgvector similarity search with Cohere cross-encoder reranking fallback.
 - `backend/services/documentLoader.service.js`: Unified loader for PDF, Word, Excel, CSV, text, code, and images with OCR/Vision fallback.
 - `backend/services/chatPipeline.service.js`: Unified AI pipeline for streaming, reasoning tokens, tool loops, and temporal grounding.
 - `backend/services/toolProcessor.service.js`: Tool execution dispatcher, SRE diagnostic digest scanner, SAP ST22 parser, web search cross-referencing loop.
@@ -103,6 +104,9 @@ This document provides essential context about the codebase, deployment environm
    - Files $\le 250\text{KB}$ ($\le 1,200$ lines) are delivered 100% full raw with zero filtering.
 4. **Dynamic Web Search + Log Cross-Referencing Loop**:
    - When Web search is enabled, the AI can query `[WEB_SEARCH:query="..."]` on unfamiliar vendor error codes or crash signatures (e.g. `SQL30012`, `ORA-00600`) to understand root causes, then cross-reference and verify related parameters in uploaded logs with `[SEARCH_FILES:query="..."]`.
+5. **Cohere Cross-Encoder Reranking & 429 Rate-Limit Resilience**:
+   - When searching uploaded files/logs (`searchUserFilesRAG`) or building topic RAG context (`buildRAGContext`), candidate log grep lines ($\pm 4$ lines) and pgvector chunks are cross-encoder reranked via Cohere (`rerank-v3.5`) to promote true root-cause crash signatures over superficial keyword matches.
+   - **Free-Tier 429 Protection**: Under Cohere free-tier limits (10 RPM / 1,000 monthly searches), HTTP 429 responses never halt or break a turn; the system activates an in-memory cooldown (default 60s or respecting `Retry-After`), logs a clean warning, skips outbound network calls during cooldown, and immediately returns the un-reranked keyword/vector candidates.
 
 ---
 
