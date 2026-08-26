@@ -6,16 +6,16 @@
 //   collections — which previously diverged: only one passed a vision callback
 //   at all, and the model it named had already been retired.
 //
-//   FREE FIRST. The chain leads with the provider on a free quota and falls
-//   through to paid models only when it is exhausted or failing. Set
-//   VISION_PREFER_FREE=false to lead with the strongest model instead.
+//   FIXED PRIORITY. The chain runs DeepSeek first (strongest transcription at
+//   the lowest paid cost), then the free-tier Mistral key, then the OpenRouter
+//   vision models. The order is deliberate and not quota-driven — see
+//   visionChain() below.
 //
 //   THE BURST PROBLEM. Ingest is bursty: a 40-image document fires 40 calls
-//   back to back. Once a free tier throttles, a naive chain would retry it for
-//   every remaining image — paying a 429 round-trip each time AND the paid
+//   back to back. Once a provider throttles, a naive chain would retry it for
+//   every remaining image — paying a 429 round-trip each time AND the next
 //   model afterwards. So a rate-limited provider is put on a cooldown and
-//   skipped for the rest of the run. That is what makes free-first cheap in
-//   practice rather than just cheap on paper.
+//   skipped for the rest of the run.
 //
 //   Extraction quality matters more here than in most places: whatever this
 //   returns is embedded and can later be cited to the user as a verified
@@ -47,30 +47,27 @@ const COOLDOWN_MS = Number(process.env.VISION_COOLDOWN_MS || 120000);
 // shared across every image in a run.
 const cooldowns = new Map();
 
-const preferFree = () => String(process.env.VISION_PREFER_FREE ?? 'true').toLowerCase() !== 'false';
-
 /**
- * The ordered chain. Free-quota providers first by default.
+ * The ordered chain: DeepSeek, Mistral, then OpenRouter.
  *
- * MISTRAL_SUMMARY_API_KEY is preferred so bulk ingest does not compete with
- * user-facing chat for the same quota, falling back to MISTRAL_API_KEY.
+ * DeepSeek leads as the best quality/cost trade-off for dense text and tables.
+ * MISTRAL_SUMMARY_API_KEY is preferred over MISTRAL_API_KEY so bulk ingest
+ * does not compete with user-facing chat for the same quota. The two
+ * OpenRouter vision models close the chain as further fallbacks.
  */
 const visionChain = () => {
-  const free = [
-    {
-      provider: 'mistral',
-      model: process.env.VISION_FREE_MODEL || 'mistral-small-latest',
-      apiKey: process.env.MISTRAL_SUMMARY_API_KEY || process.env.MISTRAL_API_KEY,
-      tier: 'free',
-    },
-  ];
-
-  const paid = [
+  const ordered = [
     {
       provider: 'deepseek',
       model: process.env.VISION_DEEPSEEK_MODEL || 'deepseek-v4-flash',
       apiKey: process.env.DEEPSEEK_API_KEY,
       tier: 'paid',
+    },
+    {
+      provider: 'mistral',
+      model: process.env.VISION_FREE_MODEL || 'mistral-small-latest',
+      apiKey: process.env.MISTRAL_SUMMARY_API_KEY || process.env.MISTRAL_API_KEY,
+      tier: 'free',
     },
     {
       provider: 'openrouter',
@@ -85,8 +82,6 @@ const visionChain = () => {
       tier: 'paid',
     },
   ];
-
-  const ordered = preferFree() ? [...free, ...paid] : [...paid, ...free];
 
   const seen = new Set();
   return ordered.filter((c) => {

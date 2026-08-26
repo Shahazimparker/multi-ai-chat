@@ -28,6 +28,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   process.env = { ...ENV_SNAPSHOT };
   process.env.MISTRAL_SUMMARY_API_KEY = 'test-mistral';
+  process.env.OPENROUTER_API_KEY = 'test-openrouter';
   delete process.env.PDF_OCR_ENABLED;
   delete process.env.PDF_OCR_MAX_PAGES;
 });
@@ -57,7 +58,43 @@ describe('needsOcr heuristic', () => {
   });
 });
 
-describe('extractTextFromPdf', () => {
+describe('chain ordering', () => {
+  it('leads with the OpenRouter file tier and falls back to Mistral OCR', async () => {
+    const post = vi.spyOn(axios, 'post')
+      .mockRejectedValueOnce(new Error('openrouter file tier down'))
+      .mockResolvedValueOnce(ocrResponse(['# Page one body']));
+
+    const { text, model, pages } = await pdfOcr.extractTextFromPdf(PDF, { fileName: 'a.pdf' });
+
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(post.mock.calls[0][0]).toContain('openrouter.ai');
+    expect(post.mock.calls[1][0]).toBe('https://api.mistral.ai/v1/ocr');
+    expect(text).toContain('## Page 1');
+    expect(text).toContain('Page one body');
+    expect(model).toBe('mistral-ocr-latest');
+    expect(pages).toBe(1);
+  });
+
+  it('serves from OpenRouter alone when it succeeds on the first call', async () => {
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({
+      data: { choices: [{ message: { content: '## Page 1\n\nfrom openrouter' } }] },
+    });
+
+    const { text, model } = await pdfOcr.extractTextFromPdf(PDF, { fileName: 'a.pdf' });
+
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post.mock.calls[0][0]).toContain('openrouter.ai');
+    expect(text).toBe('## Page 1\n\nfrom openrouter');
+    expect(model).toBe('google/gemini-2.5-flash-lite');
+  });
+});
+
+describe('extractTextFromPdf (Mistral OCR path)', () => {
+  // These tests exercise the Mistral OCR tier in isolation: without an
+  // OpenRouter key the chain contains only the Mistral entry, so call indices
+  // are stable regardless of the chain-wide ordering above.
+  beforeEach(() => { delete process.env.OPENROUTER_API_KEY; });
+
   it('joins pages as markdown with page headings', async () => {
     vi.spyOn(axios, 'post').mockResolvedValue(ocrResponse(['# Page one body', 'Second page body']));
 
@@ -94,7 +131,9 @@ describe('extractTextFromPdf', () => {
     expect(text).toContain('page 2 text');
     expect(text).not.toContain('page 3 text');
   });
+});
 
+describe('extractTextFromPdf', () => {
   it('returns null when disabled', async () => {
     process.env.PDF_OCR_ENABLED = 'false';
     const post = vi.spyOn(axios, 'post');
@@ -119,30 +158,15 @@ describe('extractTextFromPdf', () => {
     expect(text).toBeNull();
   });
 
-  it('falls back to the OpenRouter file tier when Mistral OCR fails', async () => {
-    const post = vi.spyOn(axios, 'post')
-      .mockRejectedValueOnce(new Error('mistral ocr down'))
-      .mockResolvedValueOnce({
-        data: { choices: [{ message: { content: '## Page 1 -- recovered by chat model' } }] },
-      });
-
-    const { text, model } = await pdfOcr.extractTextFromPdf(PDF, { fileName: 'a.pdf' });
-
-    expect(post).toHaveBeenCalledTimes(2);
-    expect(post.mock.calls[1][0]).toContain('openrouter.ai');
-    expect(text).toContain('recovered by chat model');
-    expect(model).toContain('gemini');
-  });
-
   it('sends the PDF as OpenRouter file content, not as an image', async () => {
     vi.spyOn(axios, 'post')
-      .mockRejectedValueOnce(new Error('mistral ocr down'))
       .mockResolvedValueOnce({ data: { choices: [{ message: { content: 'text' } }] } });
 
     const post = axios.post;
     await pdfOcr.extractTextFromPdf(PDF, { fileName: 'a.pdf' });
 
-    const parts = post.mock.calls[1][1].messages[0].content;
+    // The OpenRouter file tier is first in the chain now.
+    const parts = post.mock.calls[0][1].messages[0].content;
     const filePart = parts.find((p) => p.type === 'file');
     expect(filePart.file.file_data).toMatch(/^data:application\/pdf;base64,/);
     expect(filePart.file.filename).toBe('a.pdf');
@@ -150,13 +174,13 @@ describe('extractTextFromPdf', () => {
 
   it('keeps trying the chain when a tier returns empty text', async () => {
     const post = vi.spyOn(axios, 'post')
-      .mockResolvedValueOnce({ data: { pages: [] } })
-      .mockResolvedValueOnce({ data: { choices: [{ message: { content: 'from fallback' } }] } });
+      .mockResolvedValueOnce({ data: { choices: [{ message: { content: '' } }] } })
+      .mockResolvedValueOnce(ocrResponse(['from mistral fallback']));
 
     const { text } = await pdfOcr.extractTextFromPdf(PDF);
 
     expect(post).toHaveBeenCalledTimes(2);
-    expect(text).toBe('from fallback');
+    expect(text).toContain('from mistral fallback');
   });
 
   it('prefers the background key over the primary one', () => {

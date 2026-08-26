@@ -126,5 +126,6 @@ This document provides essential context about the codebase, deployment environm
    - Configurable via `DEFAULT_EMBEDDING_PROVIDER=openrouter` (default, `openai/text-embedding-3-small` in 1536 dims) or `DEFAULT_EMBEDDING_PROVIDER=mistral` (`mistral-embed` in 1024 dims).
    - Seamless failover across same-space providers (OpenRouter $\leftrightarrow$ OpenAI).
 2. **PDF OCR & Vision Models**:
-   - `PDF_OCR_MODEL` (default: `mistral-ocr-latest`) with fallback to `PDF_OCR_FALLBACK_MODEL` (`google/gemini-2.5-flash-lite` on OpenRouter).
-   - `VISION_FREE_MODEL` (default: `mistral-small-latest`) with fallback to OpenRouter vision models.
+   - PDF OCR chain order: OpenRouter file-input tier first (`PDF_OCR_FALLBACK_MODEL`, default `google/gemini-2.5-flash-lite`), then Mistral OCR (`PDF_OCR_MODEL`, default `mistral-ocr-latest`) as the per-page-billed fallback.
+   - Vision (image reading) chain order: DeepSeek (`VISION_DEEPSEEK_MODEL`, default `deepseek-v4-flash`) → Mistral (`VISION_FREE_MODEL`, default `mistral-small-latest`) → OpenRouter vision models (`VISION_MODEL`, default `google/gemini-2.5-flash-lite`, then `gemini-3.1-flash-lite`), with local Tesseract.js OCR as the final no-network fallback.
+   - `VISION_PREFER_FREE` is retired; chain order is fixed as above.

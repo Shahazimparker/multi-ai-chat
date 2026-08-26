@@ -52,21 +52,20 @@ const config = () => ({
 /**
  * Ordered extraction chain.
  *
- * Mistral's dedicated OCR model leads: it is purpose-built for documents, runs
- * on the free quota, and returns markdown. The OpenRouter tier is a genuine
- * fallback rather than a duplicate — those models accept a PDF as `file` input
- * and read the rendered page, so a Mistral outage or quota exhaustion does not
- * leave scanned documents unreadable.
+ * The OpenRouter file-input tier leads: those models accept a PDF as `file`
+ * input and read the rendered page. Mistral's dedicated OCR model is the
+ * fallback — it is billed per page, so an outage or quota exhaustion on the
+ * primary tier does not leave scanned documents unreadable.
  */
 const ocrChain = () => {
   const c = config();
   return [
-    { kind: 'mistral-ocr', model: c.model, apiKey: c.apiKey },
     {
       kind: 'openrouter-file',
       model: process.env.PDF_OCR_FALLBACK_MODEL || 'google/gemini-2.5-flash-lite',
       apiKey: process.env.OPENROUTER_API_KEY,
     },
+    { kind: 'mistral-ocr', model: c.model, apiKey: c.apiKey },
   ].filter((t) => t.apiKey);
 };
 

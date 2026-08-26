@@ -1,7 +1,7 @@
 // ============================================================
 // FILE: backend/__tests__/unit/visionExtraction.test.js
-// PURPOSE: Vision extraction chain — free-first ordering, rate-limit cooldown,
-//          and the refusal to invent content.
+// PURPOSE: Vision extraction chain — fixed DeepSeek → Mistral → OpenRouter
+//          priority, rate-limit cooldown, and the refusal to invent content.
 //
 //   Two invariants matter most here:
 //
@@ -10,8 +10,8 @@
 //      source, so "[Image: x] - could not read" must never enter the index.
 //
 //   2. A rate-limited provider is skipped for the rest of the burst. Ingest
-//      fires many images back to back; retrying a throttled free tier per
-//      image costs a 429 round-trip each time AND the paid call afterwards.
+//      fires many images back to back; retrying a throttled provider per image
+//      costs a 429 round-trip each time AND the next provider afterwards.
 // ============================================================
 
 const dispatcher = require('../../services/ai/dispatcher.service');
@@ -40,7 +40,6 @@ beforeEach(() => {
   process.env.DEEPSEEK_API_KEY = 'test-deepseek';
   process.env.OPENROUTER_API_KEY = 'test-openrouter';
   process.env.MISTRAL_SUMMARY_API_KEY = 'test-mistral';
-  delete process.env.VISION_PREFER_FREE;
 });
 
 afterEach(() => {
@@ -49,21 +48,13 @@ afterEach(() => {
 });
 
 describe('chain ordering', () => {
-  it('leads with the free provider by default', () => {
+  it('runs DeepSeek first, then Mistral, then the OpenRouter models', () => {
     const chain = visionChain();
-    expect(chain[0].tier).toBe('free');
-    expect(chain[0].provider).toBe('mistral');
-    expect(chain[1].provider).toBe('deepseek');
-    expect(chain[1].tier).toBe('paid');
-    expect(chain.slice(1).every((c) => c.tier === 'paid')).toBe(true);
-  });
-
-  it('leads with the paid model when VISION_PREFER_FREE=false', () => {
-    process.env.VISION_PREFER_FREE = 'false';
-    const chain = visionChain();
-    expect(chain[0].tier).toBe('paid');
-    expect(chain[0].provider).toBe('deepseek');
+    expect(chain.map((c) => c.provider)).toEqual(['deepseek', 'mistral', 'openrouter', 'openrouter']);
     expect(chain[0].model).toBe('deepseek-v4-flash');
+    expect(chain[1].model).toBe('mistral-small-latest');
+    expect(chain[2].model).toBe('google/gemini-2.5-flash-lite');
+    expect(chain[3].model).toBe('google/gemini-3.1-flash-lite');
   });
 
   it('prefers the background key but still runs on the primary one', () => {
@@ -89,14 +80,14 @@ describe('chain ordering', () => {
 });
 
 describe('extraction', () => {
-  it('returns text from the free provider without touching the paid one', async () => {
+  it('serves from the first provider (DeepSeek) without touching the rest', async () => {
     const dispatch = vi.spyOn(dispatcher, 'dispatchToAI')
       .mockResolvedValue(reply('style=shape=mxgraph.flowchart.decision'));
 
     const { text, provider, tokensUsed } = await extractTextFromImage(IMAGE, 'image/png');
 
     expect(dispatch).toHaveBeenCalledTimes(1);
-    expect(provider).toContain('mistral');
+    expect(provider).toContain('deepseek');
     expect(text).toContain('mxgraph.flowchart.decision');
     expect(tokensUsed).toBe(120);
   });
@@ -112,15 +103,15 @@ describe('extraction', () => {
     expect(parts.find((p) => p.type === 'text')).toBeTruthy();
   });
 
-  it('falls through to the paid model when the free one fails', async () => {
+  it('falls through to Mistral when DeepSeek fails', async () => {
     const dispatch = vi.spyOn(dispatcher, 'dispatchToAI')
-      .mockRejectedValueOnce(new Error('mistral 500'))
+      .mockRejectedValueOnce(new Error('deepseek 500'))
       .mockResolvedValueOnce(reply('recovered text'));
 
     const { text, provider } = await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
 
     expect(dispatch).toHaveBeenCalledTimes(2);
-    expect(provider).toContain('deepseek');
+    expect(provider).toContain('mistral');
     expect(text).toBe('recovered text');
   });
 
@@ -182,49 +173,49 @@ describe('extraction', () => {
 });
 
 describe('rate-limit cooldown', () => {
-  it('stops retrying a throttled free tier across a burst of images', async () => {
+  it('stops retrying a throttled provider across a burst of images', async () => {
     const dispatch = vi.spyOn(dispatcher, 'dispatchToAI').mockImplementation(async (cfg) => {
-      if (cfg.provider === 'mistral') throw rateLimit();
-      return reply('paid extraction');
+      if (cfg.provider === 'deepseek') throw rateLimit();
+      return reply('mistral extraction');
     });
 
     // Five images, as a bulk ingest would send.
     for (let i = 0; i < 5; i++) {
       const { provider } = await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
-      expect(provider).toContain('deepseek');
+      expect(provider).toContain('mistral');
     }
 
-    const mistralCalls = dispatch.mock.calls.filter((c) => c[0].provider === 'mistral');
+    const deepseekCalls = dispatch.mock.calls.filter((c) => c[0].provider === 'deepseek');
 
     // Only the first image should pay the 429 round-trip; the rest skip it.
-    expect(mistralCalls).toHaveLength(1);
-    expect(dispatch.mock.calls).toHaveLength(6); // 1 failed mistral + 5 paid
+    expect(deepseekCalls).toHaveLength(1);
+    expect(dispatch.mock.calls).toHaveLength(6); // 1 failed deepseek + 5 mistral
   });
 
   it('does not cool down a provider for an ordinary error', async () => {
     const dispatch = vi.spyOn(dispatcher, 'dispatchToAI').mockImplementation(async (cfg) => {
-      if (cfg.provider === 'mistral') throw new Error('transient 500');
-      return reply('paid extraction');
+      if (cfg.provider === 'deepseek') throw new Error('transient 500');
+      return reply('mistral extraction');
     });
 
     await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
     await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
 
-    // A one-off failure should not disable the free tier for the whole run.
-    expect(dispatch.mock.calls.filter((c) => c[0].provider === 'mistral')).toHaveLength(2);
+    // A one-off failure should not disable the lead provider for the whole run.
+    expect(dispatch.mock.calls.filter((c) => c[0].provider === 'deepseek')).toHaveLength(2);
   });
 
-  it('clearCooldowns lets the free tier be tried again', async () => {
+  it('clearCooldowns lets the throttled provider be tried again', async () => {
     const dispatch = vi.spyOn(dispatcher, 'dispatchToAI').mockImplementation(async (cfg) => {
-      if (cfg.provider === 'mistral') throw rateLimit();
-      return reply('paid');
+      if (cfg.provider === 'deepseek') throw rateLimit();
+      return reply('mistral extraction');
     });
 
     await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
     clearCooldowns();
     await extractTextFromImage(IMAGE, 'image/png', { allowLocalOcr: false });
 
-    expect(dispatch.mock.calls.filter((c) => c[0].provider === 'mistral')).toHaveLength(2);
+    expect(dispatch.mock.calls.filter((c) => c[0].provider === 'deepseek')).toHaveLength(2);
   });
 });
 
