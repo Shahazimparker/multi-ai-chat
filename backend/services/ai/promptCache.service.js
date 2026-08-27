@@ -82,6 +82,21 @@ const buildPromptCacheKey = (topicId, userId) => {
 // no-op. Opus/Sonnet are 1024; Haiku models are higher, so the conservative
 // figure is used to decide whether a breakpoint is worth writing at all.
 const ANTHROPIC_MIN_CACHEABLE_TOKENS = 1024;
+
+const { ANTHROPIC_CACHE_TTL } = require('../../config/chatRuntime.config');
+
+/**
+ * The `cache_control` object every Anthropic breakpoint uses.
+ *
+ * A single shared TTL also satisfies Anthropic's ordering rule — entries with a
+ * longer TTL must appear before shorter ones — which a mix of 1h and 5m
+ * breakpoints could violate depending on where they land.
+ */
+const anthropicCacheControl = () => (
+  ANTHROPIC_CACHE_TTL === '1h'
+    ? { type: 'ephemeral', ttl: '1h' }
+    : { type: 'ephemeral' }
+);
 const ANTHROPIC_MAX_BREAKPOINTS = 4;
 
 /**
@@ -115,7 +130,7 @@ const applyAnthropicHistoryBreakpoint = (chatMessages, prefixTokens) => {
   if (!target) return chatMessages;
 
   const out = chatMessages.slice();
-  const marker = { type: 'text', cache_control: { type: 'ephemeral' } };
+  const marker = { type: 'text', cache_control: anthropicCacheControl() };
 
   if (Array.isArray(target.content)) {
     const parts = target.content.slice();
@@ -154,6 +169,7 @@ const describeCacheUsage = ({ cacheCreationTokens = 0, cacheReadTokens = 0 }, pr
 };
 
 module.exports = {
+  anthropicCacheControl,
   applyAnthropicHistoryBreakpoint,
   extractCacheUsage,
   withCacheUsage,

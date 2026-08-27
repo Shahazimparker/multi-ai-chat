@@ -4,7 +4,7 @@
 // ============================================================
 
 const { callOpenAICompatible, callOpenAICompatibleStream } = require('./unified.service');
-const { ANTHROPIC_MIN_CACHEABLE_TOKENS } = require('./promptCache.service');
+const { ANTHROPIC_MIN_CACHEABLE_TOKENS, anthropicCacheControl } = require('./promptCache.service');
 const { estimateTokens } = require('../tokenBudget.service');
 
 const OPENROUTER_TOOLS = [
@@ -73,7 +73,7 @@ function buildOpenRouterConfig(modelName, apiKey, messages, signal, { disableToo
       baseConfig.system = systemMessages.map((m, i) => ({
         type: "text",
         text: m.content,
-        ...(i === 0 && orCacheable ? { cache_control: { type: "ephemeral" } } : {}),
+        ...(i === 0 && orCacheable ? { cache_control: anthropicCacheControl() } : {}),
       }));
     } else {
       const systemText = systemMessages.map(m => m.content).join('\n\n');

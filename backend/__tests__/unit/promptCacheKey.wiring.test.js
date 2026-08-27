@@ -52,10 +52,46 @@ describe('Mistral — prompt_cache_key', () => {
   });
 });
 
-// NOTE: Groq's non-streaming path got the same one-line fix (spreading
-// extractCacheUsage over response.usage), but is not covered here. groq.service.js
-// does `const Groq = require('groq-sdk')` and `chat` is an instance field, so the
-// SDK resists both prototype spying and vi.mock under CJS require — the attempts
-// fell through to a real, billed API call. The field parsing itself is locked by
-// the `reads OpenAI prompt_tokens_details.cached_tokens` case in
-// promptCache.test.js, which is the part that could actually regress.
+describe('Groq — non-streaming cache reporting', () => {
+  // groq-sdk cannot be reached with vi.mock (node_modules package, externalised
+  // for CJS; deps.inline does not help either) and `chat` is an instance field
+  // rather than a prototype method, so prototype spying fails too. Both attempts
+  // fell through to a real, billed API call. The service therefore exposes a
+  // setGroqClient seam, mirroring setBlobClient in blobStorage.service.js.
+  const { callGroq, setGroqClient } = require('../../services/ai/groq.service');
+  const create = vi.fn();
+
+  beforeEach(() => {
+    create.mockReset();
+    setGroqClient(class {
+      constructor() { this.chat = { completions: { create: (...a) => create(...a) } }; }
+    });
+  });
+  afterEach(() => setGroqClient(null));
+
+  it('reports cached_tokens from the non-streaming path', async () => {
+    // Groq caches automatically (no key needed); this path simply was not
+    // reading the field, so every hit reported as zero.
+    create.mockResolvedValue({
+      choices: [{ message: { content: 'ok' } }],
+      usage: { total_tokens: 200, prompt_tokens_details: { cached_tokens: 128 } },
+    });
+
+    const r = await callGroq('openai/gpt-oss-20b', 'k', [{ role: 'user', content: 'hi' }], null);
+
+    expect(r.cacheReadTokens).toBe(128);
+    expect(r.tokensUsed).toBe(200);
+  });
+
+  it('reports a clean zero when Groq sends no cache detail', async () => {
+    create.mockResolvedValue({
+      choices: [{ message: { content: 'ok' } }],
+      usage: { total_tokens: 200 },
+    });
+
+    const r = await callGroq('openai/gpt-oss-20b', 'k', [{ role: 'user', content: 'hi' }], null);
+
+    expect(r.cacheReadTokens).toBe(0);
+    expect(r.cacheHit).toBe(false);
+  });
+});

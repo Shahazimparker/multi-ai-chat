@@ -232,7 +232,7 @@ const AdminPage = () => {
                     // Separate concept: the provider reused our prompt prefix while
                     // still generating a fresh answer. Reads bill at a fraction of
                     // the uncached rate, so this is an input-cost metric.
-                    { label: 'Prompt Cache Rate', value: `${analytics.summary.promptCacheHitRate ?? 0}%`, icon: <BarChart2 size={18} />, color: '#8b5cf6' },
+                    { label: 'Requests Cache-Hit', value: `${analytics.summary.promptCacheHitRate ?? 0}%`, icon: <BarChart2 size={18} />, color: '#8b5cf6' },
                     { label: 'Prompt Tokens Cached', value: (analytics.summary.promptCacheReadTokens ?? 0).toLocaleString(), icon: <Zap size={18} />, color: '#06b6d4' },
                   ].map(c => (
                     <div key={c.label} className="stat-card" style={{ '--card-color': c.color }}>

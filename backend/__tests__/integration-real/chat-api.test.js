@@ -1,3 +1,9 @@
+// NOTE ON SKIPPING: these tests use `ctx.skip()`, not an early `return`.
+// A bare `return` leaves vitest reporting the test as PASSED while it asserted
+// nothing — observed 2026-08-28 as 8/8 green in 1.02s with the four tests that
+// actually exercise the chat pipeline each taking 0ms, because the `testadmin`
+// user did not exist. A green run then meant nothing. ctx.skip() reports the
+// truth: skipped.
 // Real chat API integration tests — requires backend running on localhost:5000
 // Run: npx vitest run --config vitest.real.config.js
 // Prerequisite: npm run dev (start backend first)
@@ -67,8 +73,8 @@ describe('Chat API (real)', () => {
   });
 
   // ── Model listing ───────────────────────────────────
-  it('GET /api/chat/models returns model list', async () => {
-    if (!authToken) return;
+  it('GET /api/chat/models returns model list', async (ctx) => {
+    if (!authToken) ctx.skip();
     const res = await fetch(`${BASE}/chat/models`, { headers: authHeaders() });
     const data = await res.json();
     expect(res.status).toBe(200);
@@ -104,8 +110,8 @@ describe('Chat API (real)', () => {
     expect(res.status).toBe(401);
   }, 15000);
 
-  it('POST /api/chat/stream streams for an authenticated caller', async () => {
-    if (!authToken) return;
+  it('POST /api/chat/stream streams for an authenticated caller', async (ctx) => {
+    if (!authToken) ctx.skip();
     const res = await fetch(`${BASE}/chat/stream`, {
       method: 'POST',
       headers: authHeaders({ 'Content-Type': 'application/json' }),
@@ -151,8 +157,8 @@ describe('Chat API (real)', () => {
   }, 30000);
 
   // ── Streaming chat ──────────────────────────────────
-  it('POST /api/chat/stream returns SSE events', async () => {
-    if (!authToken) return;
+  it('POST /api/chat/stream returns SSE events', async (ctx) => {
+    if (!authToken) ctx.skip();
     const res = await fetch(`${BASE}/chat/stream`, {
       method: 'POST',
       headers: authHeaders({ 'Content-Type': 'application/json' }),
@@ -200,8 +206,8 @@ describe('Chat API (real)', () => {
     console.log(`[Stream] Received ${chunks.length} chunks, full text: "${fullText.trim()}"`);
   }, 60000);
 
-  it('POST /api/chat/stream accepts allowArtifactWithCurrentModel override', async () => {
-    if (!authToken) return;
+  it('POST /api/chat/stream accepts allowArtifactWithCurrentModel override', async (ctx) => {
+    if (!authToken) ctx.skip();
     const res = await fetch(`${BASE}/chat/stream`, {
       method: 'POST',
       headers: authHeaders({ 'Content-Type': 'application/json' }),
@@ -250,8 +256,8 @@ describe('Chat API (real)', () => {
   }, 60000);
 
   // ── Provider model catalog ──────────────────────────
-  it('GET /api/chat/provider-models/openrouter works', async () => {
-    if (!authToken) return;
+  it('GET /api/chat/provider-models/openrouter works', async (ctx) => {
+    if (!authToken) ctx.skip();
     const res = await fetch(`${BASE}/chat/provider-models/openrouter`, { headers: authHeaders() });
     const data = await res.json();
 

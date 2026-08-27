@@ -1,7 +1,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 
 const { resolveReasoning } = require('./reasoning.service');
-const { ANTHROPIC_MIN_CACHEABLE_TOKENS, applyAnthropicHistoryBreakpoint } = require('./promptCache.service');
+const { ANTHROPIC_MIN_CACHEABLE_TOKENS, applyAnthropicHistoryBreakpoint, anthropicCacheControl } = require('./promptCache.service');
 const { estimateTokens } = require('../tokenBudget.service');
 
 // Minimum Anthropic accepts for a thinking budget on pre-4.6 models.
@@ -75,7 +75,7 @@ function extractClaudeParams(messages) {
   const system = systemMessages.map((m, i) => ({
     type: "text",
     text: m.content,
-    ...(i === 0 && systemWorthCaching ? { cache_control: { type: "ephemeral" } } : {}),
+    ...(i === 0 && systemWorthCaching ? { cache_control: anthropicCacheControl() } : {}),
   }));
   return { system, chatMessages: cachedMessages };
 }

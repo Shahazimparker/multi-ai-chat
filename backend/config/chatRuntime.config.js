@@ -42,6 +42,55 @@ const CHAT_TIME_BUDGET_MS = parseInteger('CHAT_TIME_BUDGET_MS', 240000, 10000, 3
 // entire turn's budget.
 const AI_CALL_TIMEOUT_MS = parseInteger('AI_CALL_TIMEOUT_MS', 120000, 0, 600000);
 
+// How far the raw-history window advances at a time.
+//
+// The window is anchored to the newest message, so taking "the last N" moves it
+// by one on every turn — which changes the FIRST history message every turn and
+// diverges the prompt prefix right where the history begins. For any thread
+// longer than the window that invalidated the provider cache on every single
+// request, capping prompt caching at short conversations however well
+// everything upstream was ordered.
+//
+// Quantising the window start to a multiple of this value means it only
+// advances every N messages. In between, history grows append-only and the
+// prefix stays byte-identical — the same hysteresis idea as the eviction
+// low-water mark. The cost is up to (step - 1) extra messages in the prompt.
+// Set to 1 to restore the old per-turn sliding behaviour.
+const HISTORY_WINDOW_STEP = parseInteger('HISTORY_WINDOW_STEP', 10, 1, 100);
+
+// ── Prompt cache TTL ───────────────────────────────────────
+// Only two providers expose a TTL knob, and the picture differs sharply:
+//
+//   DeepSeek  disk-backed, persists hours to days. No parameter, nothing to do.
+//   Mistral   1 hour by default. No parameter.
+//   Groq      automatic. No parameter.
+//   Gemini    implicit. No parameter.
+//   Anthropic 5 minutes by default; 1 hour available at a higher write rate.
+//   OpenAI    `in_memory` (5-10 min idle) by default; `24h` available.
+
+// Anthropic cache lifetime: '5m' or '1h'. Defaults to 1h.
+//
+// The write premium looks worse than it is. Writes are charged on the DELTA
+// past the previous breakpoint — one turn's worth — while the read covers the
+// whole history at 0.1x. On a 50K-token thread the choice is roughly:
+//   miss at 5m  -> re-read 50K at full price
+//   hit  at 1h  -> read 50K at 0.1x, plus ~500 delta tokens at the 2x write rate
+// A chat turn commonly lands 5-30 minutes after the last one, which is exactly
+// the window the 5-minute default drops. Set to '5m' to revert.
+const ANTHROPIC_CACHE_TTL = (() => {
+  const raw = String(process.env.ANTHROPIC_CACHE_TTL || '1h').toLowerCase().trim();
+  return raw === '5m' ? '5m' : '1h';
+})();
+
+// OpenAI `prompt_cache_retention`. Left UNSET by default on purpose: the
+// accepted values are model-dependent (GPT-5.6+ takes only '30m', GPT-5.5 only
+// '24h', earlier models either), so a blanket value risks rejecting requests on
+// whichever model the user picks. Set explicitly once you know your model.
+const OPENAI_PROMPT_CACHE_RETENTION = (() => {
+  const raw = String(process.env.OPENAI_PROMPT_CACHE_RETENTION || '').trim();
+  return ['in_memory', '24h', '30m'].includes(raw) ? raw : '';
+})();
+
 // ── Context window enforcement ─────────────────────────────
 // The assembled prompt is measured against the model's real window and only
 // evicted when it genuinely does not fit (see services/contextWindow.service.js).
@@ -150,6 +199,9 @@ module.exports = {
   RAG_QUERY_EXPANSION_ENABLED,
   RAG_QUERY_EXPANSION_COUNT,
   RAG_HYDE_ENABLED,
+  HISTORY_WINDOW_STEP,
+  ANTHROPIC_CACHE_TTL,
+  OPENAI_PROMPT_CACHE_RETENTION,
   CONTEXT_RESERVED_OUTPUT_TOKENS,
   CONTEXT_SAFETY_MARGIN_RATIO,
   CONTEXT_EVICTION_TARGET_RATIO,

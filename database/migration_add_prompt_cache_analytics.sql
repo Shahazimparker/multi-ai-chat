@@ -22,6 +22,10 @@
 --   Worth measuring: a DeepSeek cache read bills at $0.014/M against $0.14/M
 --   uncached, so prompt_cache_read_tokens is directly a cost line.
 --
+--   Also fixes `dailyUsage`, which the RPC returned as a jsonb object while
+--   AdminPage.jsx has always mapped over it as an array — the Analytics tab
+--   crashed outright with "(analytics.dailyUsage || []).map is not a function".
+--
 -- PREREQUISITES: schema.sql, migration_add_admin_analytics.sql.
 -- IDEMPOTENT: safe to re-run (IF NOT EXISTS / CREATE OR REPLACE).
 -- ORDER: apply BEFORE deploying the matching backend, though the backend
@@ -72,10 +76,26 @@ BEGIN
       GROUP BY model
     ) m;
 
-  SELECT COALESCE(jsonb_object_agg(day, cnt), '{}'::jsonb)
+  -- Returned as an ARRAY of {day, queries, tokens}, which is what AdminPage.jsx
+  -- has always consumed:
+  --   (analytics.dailyUsage || []).map(r => ({ day: r.day, queries: r.queries, tokens: r.tokens }))
+  -- The previous jsonb_object_agg produced {"2026-08-27": 5} instead, so .map
+  -- was undefined and the whole Analytics tab crashed with
+  -- "(analytics.dailyUsage || []).map is not a function". It also never supplied
+  -- the token sums the chart plots. Ordered ascending so the chart reads
+  -- left-to-right in time.
+  SELECT COALESCE(
+           jsonb_agg(
+             jsonb_build_object('day', d.day, 'queries', d.cnt, 'tokens', d.toks)
+             ORDER BY d.day
+           ),
+           '[]'::jsonb
+         )
     INTO v_daily_usage
     FROM (
-      SELECT to_char(created_at, 'YYYY-MM-DD') AS day, COUNT(*) AS cnt
+      SELECT to_char(created_at, 'YYYY-MM-DD')  AS day,
+             COUNT(*)                           AS cnt,
+             COALESCE(SUM(tokens_used), 0)      AS toks
       FROM query_analytics
       GROUP BY 1
       ORDER BY 1 DESC
@@ -104,15 +124,22 @@ BEGIN
            -- Provider prompt cache, reported separately from response-cache hits.
            'promptCacheReadTokens',  c.prompt_cache_read,
            'promptCacheWriteTokens', c.prompt_cache_write,
-           -- Share of all prompt tokens served from the provider's cache. The
-           -- headline number: this is the fraction of input cost paid at the
-           -- discounted rate.
-           'promptCacheHitRate', CASE
-             WHEN (c.prompt_cache_read + c.prompt_cache_write) > 0
-             THEN ROUND((c.prompt_cache_read::numeric
-                        / (c.prompt_cache_read + c.prompt_cache_write)) * 100, 1)
-             ELSE 0
-           END
+           -- Share of REQUESTS that got a prompt-cache hit.
+           --
+           -- Deliberately not read/(read+write): only Anthropic reports cache
+           -- writes at all, so for DeepSeek, Mistral, OpenAI, Groq and Gemini
+           -- that denominator collapses to the reads and the tile reads a
+           -- meaningless flat 100%. Observed exactly that on a database with 3
+           -- hits across 112 queries.
+           --
+           -- Cached tokens as a share of PROMPT tokens would be the better
+           -- metric, but query_analytics stores only the combined tokens_used
+           -- (prompt + completion + embeddings), so it is not derivable without
+           -- a further column. Requests-with-a-hit is honest with what is here.
+           'promptCacheHitRate', CASE WHEN c.total_queries > 0
+                                THEN ROUND((c.prompt_cache_hits::numeric / c.total_queries) * 100, 1)
+                                ELSE 0
+                           END
          )
     INTO v_summary
     FROM (
@@ -120,7 +147,8 @@ BEGIN
              COALESCE(SUM(tokens_used), 0)                       AS total_tokens,
              COUNT(*) FILTER (WHERE cache_hit)                   AS cache_hits,
              COALESCE(SUM(prompt_cache_read_tokens), 0)          AS prompt_cache_read,
-             COALESCE(SUM(prompt_cache_write_tokens), 0)         AS prompt_cache_write
+             COALESCE(SUM(prompt_cache_write_tokens), 0)         AS prompt_cache_write,
+             COUNT(*) FILTER (WHERE prompt_cache_read_tokens > 0) AS prompt_cache_hits
       FROM query_analytics
     ) c;
 

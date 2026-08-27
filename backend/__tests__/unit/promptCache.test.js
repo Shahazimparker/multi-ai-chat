@@ -5,6 +5,7 @@
 //          zero forever. These lock each dialect.
 
 const {
+  anthropicCacheControl,
   applyAnthropicHistoryBreakpoint,
   extractCacheUsage,
   withCacheUsage,
@@ -138,7 +139,7 @@ describe('applyAnthropicHistoryBreakpoint', () => {
     ], 5000);
 
     expect(Array.isArray(out[1].content)).toBe(true);
-    expect(out[1].content[0].cache_control).toEqual({ type: 'ephemeral' });
+    expect(out[1].content[0].cache_control).toEqual(anthropicCacheControl());
     // The current turn must never carry it — it changes every request.
     expect(out[2].content).toBe('current question');
   });
@@ -166,7 +167,7 @@ describe('applyAnthropicHistoryBreakpoint', () => {
       { role: 'user', content: 'and now?' },
     ], 5000);
 
-    expect(out[1].content[0].cache_control).toEqual({ type: 'ephemeral' });
+    expect(out[1].content[0].cache_control).toEqual(anthropicCacheControl());
     expect(out[0].content[1]).toEqual({ type: 'image_url', image_url: { url: 'x' } });
   });
 
@@ -179,5 +180,33 @@ describe('applyAnthropicHistoryBreakpoint', () => {
     const snapshot = JSON.stringify(msgs);
     applyAnthropicHistoryBreakpoint(msgs, 5000);
     expect(JSON.stringify(msgs)).toBe(snapshot);
+  });
+});
+
+describe('Anthropic cache TTL', () => {
+  it('defaults to the 1-hour cache', () => {
+    // The 5-minute default drops exactly the 5-30 minute gap a chat turn
+    // commonly lands in. Writes are charged on the delta past the previous
+    // breakpoint, so the higher write rate applies to one turn's worth while
+    // the read covers the whole history at 0.1x.
+    expect(anthropicCacheControl()).toEqual({ type: 'ephemeral', ttl: '1h' });
+  });
+
+  it('uses the same control object for every breakpoint', () => {
+    // Anthropic requires longer-TTL entries to appear before shorter ones. One
+    // shared TTL satisfies that ordering rule by construction; mixing 1h and 5m
+    // breakpoints could violate it depending on where they land.
+    const a = anthropicCacheControl();
+    const b = anthropicCacheControl();
+    expect(a).toEqual(b);
+  });
+
+  it('carries the TTL onto the history breakpoint', () => {
+    const out = applyAnthropicHistoryBreakpoint([
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'q2' },
+    ], 5000);
+    expect(out[1].content[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' });
   });
 });

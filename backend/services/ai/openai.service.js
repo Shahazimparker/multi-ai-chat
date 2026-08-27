@@ -5,6 +5,14 @@
 
 const OpenAI = require('openai');
 const { extractCacheUsage } = require('./promptCache.service');
+const { OPENAI_PROMPT_CACHE_RETENTION } = require('../../config/chatRuntime.config');
+
+// Accepted values are model-dependent (GPT-5.6+ takes only '30m', GPT-5.5 only
+// '24h'), so this is omitted entirely unless explicitly configured rather than
+// guessed — a wrong value is a rejected request, not a silent downgrade.
+const retentionField = () => (
+  OPENAI_PROMPT_CACHE_RETENTION ? { prompt_cache_retention: OPENAI_PROMPT_CACHE_RETENTION } : {}
+);
 
 // OpenAI caches automatically above 1024 tokens; `prompt_cache_key` is a
 // routing hint that lands requests sharing a prefix on the same backend, which
@@ -17,6 +25,7 @@ const callOpenAI = async (modelName, apiKey, messages, signal = null, options = 
     max_tokens: 16000,
     messages,
     ...(options.promptCacheKey ? { prompt_cache_key: options.promptCacheKey } : {}),
+    ...retentionField(),
   }, { signal });
 
   return {
@@ -50,6 +59,7 @@ const callOpenAIStream = async (modelName, apiKey, messages, signal = null, onCh
     // stream — the call would silently bill 0 tokens.
     stream_options: { include_usage: true },
     ...(options.promptCacheKey ? { prompt_cache_key: options.promptCacheKey } : {}),
+    ...retentionField(),
   }, { signal });
 
   let fullText = '';

@@ -3,7 +3,19 @@
 // PURPOSE: Calls Groq API (OpenAI-compatible interface)
 // ============================================================
 
-const Groq = require('groq-sdk');
+let Groq = require('groq-sdk');
+
+/**
+ * For testing / custom client injection — mirrors setBlobClient in
+ * blobStorage.service.js. The SDK cannot be reached with vi.mock: it is a
+ * node_modules package (externalised for CJS, so vi.mock does not intercept it,
+ * and deps.inline does not help), and `chat` is an instance field rather than a
+ * prototype method, so spying on the prototype cannot work either. Without a
+ * seam a unit test here falls through to a real, billed API call.
+ */
+const setGroqClient = (client) => {
+  Groq = client || require('groq-sdk');
+};
 const { resolveReasoning } = require('./reasoning.service');
 const { extractCacheUsage } = require('./promptCache.service');
 
@@ -85,4 +97,4 @@ const callGroqStream = async (modelName, apiKey, messages, signal = null, onChun
   return { text: fullText, reasoning: fullReasoning, tokensUsed, cacheCreationTokens, cacheReadTokens };
 };
 
-module.exports = { callGroq, callGroqStream };
+module.exports = { callGroq, callGroqStream, setGroqClient };

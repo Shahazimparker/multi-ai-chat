@@ -106,7 +106,10 @@ This document provides essential context about the codebase, deployment environm
 Verified live 2026-08-28. Do not "simplify" any of the below without re-measuring — every failure mode here is silent: the API returns a normal answer and only the bill moves.
 
 1. **Prompt order is load-bearing**:
-   - Order is `system (static, the ONLY system block) | ...history... | [temporal grounding + retrieved context + question]`.
+   - Order is `system (static, the ONLY system block) | ...history... | [temporal + per-turn tools + retrieved context + question]`.
+   - **The raw-history window is anchored to its OLDEST message, and that anchor only moves in `HISTORY_WINDOW_STEP` jumps (default 10).** Taking "the newest N" slid the window by one every turn, so the first history message differed on every request and the prefix diverged right where the history began — invalidating the cache on every single turn for any thread longer than the window (20 messages by default). Measured live on a 32-message conversation: **768 cached tokens per turn before, 3,072-3,456 and rising after (6.4x across three turns)**. Between jumps the history grows append-only, which is why the figure climbs.
+   - **The conversation summary sits after the raw turns, not before them.** It is regenerated roughly every 12 messages; at the head of the history each regeneration invalidated every raw turn behind it. `buildContextMessages` returns it as `olderSummary` and the pipeline places it in the volatile block.
+   - **Nothing conditional may enter `staticSystem`.** It is fixed for the life of a conversation on one model, and that is the only reason a provider can serve it plus the history from cache. Anything that varies per message rewrites the prefix and takes the whole history cache with it. Three things were moved out for exactly this reason: the temporal clock, the conditional tool advertisements (`SEARCH_KB` when a knowledge base is attached, `WEB_SEARCH` when the per-message toggle is on), and the identity directive (added only on a turn that asks what model this is). Verified live with the clock changing *and* the web toggle flipping between turns: cache holds at 2,176 tokens per turn.
    - **Temporal grounding is not a system block.** It carries a live clock quantised to `TEMPORAL_PRECISION_MS` (60s), so it is byte-identical only for turns less than a minute apart. Sitting ahead of the history it broke the prefix there on essentially every real conversation. Measured live on DeepSeek with turns spaced minutes apart: **640 cached tokens with it as a system block, 2,176 with it moved in beside the question** — and the 640 was a hard ceiling regardless of how long the thread grew.
    - Placing it later *as a system message* does not work either: Claude hoists every system message into its top-level `system` field regardless of array position. Leaving the system role is the only fix that works across providers.
    - Retrieved context is deliberately **not** a system block. It changes every turn, and a provider cache keys on an exact prefix, so anything volatile placed ahead of the history breaks the prefix there and the whole conversation is re-read at full price. Moving it beside the question took the cacheable prefix from ~1K to ~85K tokens on a long thread.
@@ -126,9 +129,16 @@ Verified live 2026-08-28. Do not "simplify" any of the below without re-measurin
    - DeepSeek `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`
    - Gemini `usageMetadata.cachedContentTokenCount`
 
-4. **Switching model mid-conversation**: caches never transfer between providers. A switch costs exactly one cold turn; turns after it re-warm normally because system + history stay stable. Switching back later may re-hit the earlier cached prefix while it is still within TTL.
+4. **Cache lifetime differs sharply per provider — do not generalise**:
+   - **DeepSeek**: disk-backed, persists **hours to days**. No parameter, and no TTL problem.
+   - **Mistral**: 1 hour. No parameter.
+   - **Groq / Gemini**: automatic. No parameter.
+   - **Anthropic**: 5 minutes by default, 1 hour available at a higher write rate — set via `ANTHROPIC_CACHE_TTL` (defaults to `1h` here). Writes are charged on the delta past the previous breakpoint, so the premium applies to one turn's worth while the read covers the whole history at 0.1x. Anthropic also requires longer-TTL entries to appear before shorter ones, which one shared TTL satisfies by construction.
+   - **OpenAI**: `in_memory` (5-10 min idle) by default, `24h` available. `OPENAI_PROMPT_CACHE_RETENTION` is deliberately unset — accepted values are model-dependent (GPT-5.6+ only `30m`, GPT-5.5 only `24h`), so a blanket value risks rejected requests.
 
-5. **`cacheHit` vs prompt cache — do not merge these again**:
+5. **Switching model mid-conversation**: caches never transfer between providers. A switch costs exactly one cold turn; turns after it re-warm normally because system + history stay stable. Switching back later may re-hit the earlier cached prefix while it is still within TTL.
+
+6. **`cacheHit` vs prompt cache — do not merge these again**:
    - `cacheHit` / `query_analytics.cache_hit` means *the reply came from our own exact/semantic response cache, no model was called*. It drives the UI "(Cached)" badge and the admin reply-cache-rate tile.
    - Prompt-cache volume is `cacheReadTokens` / `cacheCreationTokens` and the `prompt_cache_*_tokens` columns. Feeding `cacheHit` from those would mark nearly every DeepSeek reply "(Cached)" and pin the admin tile near 100%.
 

@@ -15,7 +15,11 @@ export const useChatSession = ({ refreshTokenStats }) => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadMessage, setUploadMessage] = useState('');
   const [memoryMode, setMemoryMode] = useState('accurate');
-  const [historyLimit, setHistoryLimit] = useState(8);
+  // How many recent messages the server is asked to include. This is a request,
+  // not a cap: the backend measures the assembled prompt against the model's
+  // real window and only drops turns if it genuinely overflows. Asking for 8
+  // meant a 128K model saw four exchanges and nothing more.
+  const [historyLimit, setHistoryLimit] = useState(60);
   const [ragEnabled, setRagEnabled] = useState(true);
   const [storeInDb, setStoreInDb] = useState(false);
   const storeInDbRef = useRef(false);

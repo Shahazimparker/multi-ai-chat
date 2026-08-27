@@ -820,7 +820,7 @@ ${page.text}`)
     if (historyTokenBudget !== undefined) {
       historyOpts.tokenBudget = historyTokenBudget;
     }
-    const { context: historyContext, summaryTokens: historySummaryTokens, _debug } = await buildContextMessages(
+    const { context: historyContext, olderSummary, summaryTokens: historySummaryTokens, _debug } = await buildContextMessages(
       finalQuery,
       resolvedTopicId,
       historyOpts,
@@ -939,6 +939,14 @@ ${page.text}`)
     const askClarifyingDirective = `\n\n## IMPORTANT: Ask Clarifying Questions First\nBefore using any GENERATE_* tool (GENERATE_PPT, GENERATE_IMAGE, GENERATE_HTML, GENERATE_PDF, GENERATE_EXCEL, GENERATE_DOCX, GENERATE_CHART, GENERATE_CSV):\n- If the user's request lacks critical details (title, theme, structure, layout, purpose, content), ask clarifying questions FIRST\n- Do NOT immediately jump to generation with vague or insufficient information\n- Ask 2-4 specific, targeted questions to get the details you need\n- Only use the GENERATE_* tool AFTER the user has provided sufficient context\n- This ensures the output matches what the user actually wants\n- Wait for the user's response before proceeding with generation`;
     // Only advertised when a knowledge base is actually attached — offering a
     // tool that cannot return anything just invites wasted rounds.
+    //
+    // These two groups are conditional PER MESSAGE (the web-search toggle is
+    // sent per send, and a knowledge base can be attached or detached at any
+    // point), so they must not live in the static system block: changing them
+    // rewrites the cached prefix and takes the whole history cache with it.
+    // They ride in the volatile block instead, which keeps the exact
+    // advertise-only-when-usable behaviour at the cost of ~40-120 uncached
+    // tokens per turn.
     const kbToolLines = targetCollectionIds.length > 0
       ? [
         '0. Search Knowledge Base: [SEARCH_KB:query="your search query"]',
@@ -950,9 +958,12 @@ ${page.text}`)
       ]
       : [];
 
-    const toolLines = [
+    const conditionalToolLines = [
       ...kbToolLines,
       ...(forceWebSearch ? ['1. Web Search: [WEB_SEARCH:query="your search query"] — Use for real-time web info or researching unknown database/system error codes, panics, and outage bugs from uploaded logs.'] : []),
+    ];
+
+    const toolLines = [
       '2. Generate Image (DALL-E 3): [GENERATE_IMAGE:prompt=detailed image description here]',
       '   - Use when the user asks you to generate, create, or draw an image/picture/photo',
       '   - Write the most descriptive prompt possible for best results',
@@ -970,11 +981,16 @@ ${page.text}`)
     const generalToolsDirective = `${askClarifyingDirective}\n\n## General Tools\nYou have access to the following tools. Output EXACTLY the tags shown — no extra text inside the tags:\n${toolLines.join('\n')}`;
 
     const runtimeIdentity = `MODEL_IDENTITY: ${modelConfig.label} | provider=${effectiveModelConfig.provider} | model=${effectiveModelConfig.model}`;
+    // Appended only on a turn that actually asks what model this is, so it also
+    // belongs outside the cached block — otherwise that one question costs a full
+    // cache miss and writes a second, near-duplicate cache entry.
     const identityDirective = identityCheckEnabled && isIdentityQuestion
-      ? `\n\nIf the user asks what model/company you are, reply EXACTLY with:\n${runtimeIdentity}`
+      ? `If the user asks what model/company you are, reply EXACTLY with:\n${runtimeIdentity}`
       : '';
 
-    const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}${generalToolsDirective}`;
+    // Everything in here is fixed for the life of a conversation on one model,
+    // which is what lets the provider serve it from cache on every later turn.
+    const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${generalToolsDirective}`;
 
     // The system prompt is emitted as ONE stable block, and everything that
     // changes between turns is pushed to the end of the prompt instead.
@@ -1005,6 +1021,19 @@ ${page.text}`)
     // "## " heading of its own, so sectionPriority ranks it last for eviction —
     // it is only ever dropped if the whole block goes.
     volatileSections.push(temporalBlock);
+    // Per-turn tool availability and the identity directive live here for the
+    // same reason as the clock: both are conditional per message, and anything
+    // conditional ahead of the history invalidates the cached prefix for the
+    // whole conversation. Placed after the temporal block so the ordering the
+    // model sees stays stable whether or not they are present.
+    if (conditionalToolLines.length > 0) {
+      volatileSections.push(`## Tools Available This Turn\nOutput EXACTLY the tags shown — no extra text inside the tags:\n${conditionalToolLines.join('\n')}`);
+    }
+    if (identityDirective) volatileSections.push(`## Model Identity\n${identityDirective}`);
+    // The summary of older turns sits AFTER the raw turns rather than before
+    // them. It is regenerated every ~12 messages; at the head of the history
+    // each regeneration invalidated every raw turn behind it.
+    if (olderSummary) volatileSections.push(`## Earlier Conversation Summary\n${olderSummary}`);
     if (ragContext) volatileSections.push(`## Retrieved Context\n${ragContext}`);
     if (forcedWebContext) volatileSections.push(`## Web Search Context\n${forcedWebContext}`);
     if (urlContext) volatileSections.push(`## URL Context\n${urlContext}`);
@@ -1309,11 +1338,27 @@ ${page.text}`)
         // Pass the array directly — JSONB column expects a JS array, not a stringified JSON.
         // Stringifying causes double-encoding, and on read the frontend gets a string, not an array.
         const generatedFilesValue = generatedMediaFiles.length > 0 ? generatedMediaFiles : [];
+        // created_at is set explicitly, one millisecond apart, rather than left to
+        // the column default. Both rows go in as a single INSERT, and Postgres
+        // now() is TRANSACTION-scoped — so the default gave the question and the
+        // answer the identical timestamp. Every ordering query then had a
+        // two-row tie it resolved arbitrarily, which meant the history could
+        // come back with the assistant turn ahead of the user turn that prompted
+        // it, and could come back DIFFERENTLY on each request — changing the
+        // prompt prefix and breaking the provider cache. Observed live: 20
+        // messages sharing 10 distinct timestamps, replaying as `...aa uu aa...`.
+        const turnAt = Date.now();
+        const generatedFilesValue2 = generatedFilesValue;
         const buildRows = (withReasoning) => [
-          { topic_id: resolvedTopicId, user_id: user.id, role: 'user', content: message, model: modelId, tokens_used: estimatedInputTokens },
+          {
+            topic_id: resolvedTopicId, user_id: user.id, role: 'user', content: message,
+            model: modelId, tokens_used: estimatedInputTokens,
+            created_at: new Date(turnAt).toISOString(),
+          },
           {
             topic_id: resolvedTopicId, user_id: user.id, role: 'assistant', content: finalReply,
-            model: modelId, tokens_used: billableTokens, generated_files: generatedFilesValue,
+            model: modelId, tokens_used: billableTokens, generated_files: generatedFilesValue2,
+            created_at: new Date(turnAt + 1).toISOString(),
             ...(withReasoning && reasoningText ? { reasoning: reasoningText } : {}),
           },
         ];

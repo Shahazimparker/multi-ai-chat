@@ -18,7 +18,7 @@ const ChatMemoryControls = ({
       className={`memory-mode-btn ${memoryMode === 'summarized' ? 'active' : ''}`}
       onClick={() => {
         setMemoryMode('summarized');
-        setHistoryLimit(5);
+        setHistoryLimit(20);
         setRagEnabled(false);
       }}
     >
@@ -29,7 +29,7 @@ const ChatMemoryControls = ({
       className={`memory-mode-btn ${memoryMode === 'accurate' ? 'active' : ''}`}
       onClick={() => {
         setMemoryMode('accurate');
-        setHistoryLimit(8);
+        setHistoryLimit(60);
         setRagEnabled(true);
       }}
     >
@@ -46,11 +46,11 @@ const ChatMemoryControls = ({
           <input
             type="number"
             min="2"
-            max="20"
+            max="200"
             value={historyLimit}
             onChange={(event) => {
               const value = parseInt(event.target.value, 10);
-              setHistoryLimit(Number.isNaN(value) ? 2 : Math.max(2, Math.min(20, value)));
+              setHistoryLimit(Number.isNaN(value) ? 2 : Math.max(2, Math.min(200, value)));
             }}
           />
           msgs
