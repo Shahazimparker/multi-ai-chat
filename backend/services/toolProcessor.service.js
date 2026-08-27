@@ -357,41 +357,43 @@ const extractDiagnosticDigest = (rawText, fileName) => {
   const headLines = lines.slice(0, 120).join('\n');
 
   // 3. High-Severity Anomaly & Incident Pattern Scanner across Linux, DBs & Apps
-  const CRITICAL_PATTERNS = [
-    // Process Kill / Termination / Panics / OOM
+  // Highest priority: Fatal crash, kill, OOM, panic, deadlock, segfault events
+  const FATAL_PATTERNS = [
     /\b(out of memory|oom[-_]?killer|killed\s+process|killing\s+process|sigkill|sigterm|sigsegv|sigbus|core dumped|segmentation fault|segfault|kernel panic|panic|stack overflow)\b/i,
-    // Severity keywords, Exceptions & Database Deadlocks
-    /\b(fatal|critical|emergency|severe|exception|unhandled|traceback|deadlock|lock wait timeout|corruption|corrupted|abort|aborted|assertion failed)\b/i,
-    // System Resource & Hardware / I/O Failures
-    /\b(cannot allocate memory|resource temporarily unavailable|disk full|no space left on device|read-only file system|i\/o error|device error|hardware error|bus error)\b/i,
-    // Network, Connection & Service Failures
+    /\b(fatal|critical|emergency|severe|deadlock|lock wait timeout|corruption|corrupted|assertion failed)\b/i,
+    /\b(crashed|crash|crashing|stopped unexpectedly|terminated unexpectedly|shutting down unexpectedly|service down|server terminated)\b/i,
+    /\b(cannot allocate memory|disk full|no space left on device|read-only file system|hardware error|bus error)\b/i,
+    /\b(runtime error|short dump|rabax|rabax_state|message_type_x|tsv_tnew_page_alloc_failed|cx_sy_[a-z0-9_]+)\b/i,
+    /\b(work process (?:killed|terminated|halted)|system_failure|communication_failure)\b/i,
+  ];
+
+  // Standard anomaly patterns (warnings, non-fatal errors, timeouts, connection issues)
+  const GENERAL_PATTERNS = [
+    /\b(exception|unhandled|traceback|abort|aborted)\b/i,
+    /\b(resource temporarily unavailable|i\/o error|device error)\b/i,
     /\b(connection refused|connection reset|timed out|timeout|max connections reached|too many open files|broken pipe|network unreachable)\b/i,
-    // Crash, Termination & Service Down Lifecycles
-    /\b(crashed|crash|crashing|failed to start|stopped unexpectedly|terminated unexpectedly|shutting down unexpectedly|service down|server terminated|down|offline)\b/i,
-    // Explicit Error & Failure Markers
+    /\b(failed to start|down|offline)\b/i,
     /\b(error:?|err:?|failure:?|failed:?)\b/i,
-    // SAP ABAP / ST22 Short Dumps & Runtime Errors
-    /\b(runtime error|short dump|rabax|rabax_state|message_type_x|tsv_tnew_page_alloc_failed|cx_sy_[a-z0-9_]+|cx_root|termination occurred in the abap program|abap program|call stack|error analysis|how to correct the error)\b/i,
-    // SAP SM21 System Log, Work Process, RFC & Gateway Errors
-    /\b(sm21|transaction cancelled|work process (?:killed|terminated|halted)|disp\+work|enqueue error|rfc_error_[a-z0-9_]+|system_failure|communication_failure|gateway error|abap dump)\b/i,
-    // SAP BTP, Cloud Foundry, XSUAA & HANA Cloud Errors
+    /\b(sm21|transaction cancelled|disp\+work|enqueue error|rfc_error_[a-z0-9_]+|gateway error|abap dump)\b/i,
     /\b(xsuaa|cf-appstopped|destination service|cloud connector|hana cloud|hdb_error|hdb sql error|sqlstate|db error|oauth token failed)\b/i,
   ];
 
-  const matchedLineIndices = [];
+  const fatalIndices = [];
+  const generalIndices = [];
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (CRITICAL_PATTERNS.some(pat => pat.test(line))) {
-      matchedLineIndices.push(i);
+    if (FATAL_PATTERNS.some(pat => pat.test(line))) {
+      fatalIndices.push(i);
+    } else if (GENERAL_PATTERNS.some(pat => pat.test(line))) {
+      generalIndices.push(i);
     }
   }
 
-  // Group nearby line matches into incident clusters (with 3 lines before and 3 lines after)
-  const clusters = [];
+  // Build cluster helper
   const visited = new Set();
-
-  for (const idx of matchedLineIndices) {
-    if (visited.has(idx)) continue;
+  const buildCluster = (idx, isFatal = false) => {
+    if (visited.has(idx)) return null;
     const start = Math.max(0, idx - 3);
     const end = Math.min(lines.length - 1, idx + 4);
     for (let j = start; j <= end; j++) visited.add(j);
@@ -401,21 +403,57 @@ const extractDiagnosticDigest = (rawText, fileName) => {
       return `${lineNo}: ${l}`;
     }).join('\n');
 
-    clusters.push({
+    return {
       line: idx + 1,
+      isFatal,
       snippet: clusterSnippet,
-    });
+    };
+  };
 
-    if (clusters.length >= 35) break; // Keep top 35 high-signal incident clusters
+  const chosenClusters = [];
+
+  // Always collect ALL fatal/kill incidents across the entire file (up to 25 clusters)
+  for (const idx of fatalIndices) {
+    const cluster = buildCluster(idx, true);
+    if (cluster) {
+      chosenClusters.push(cluster);
+      if (chosenClusters.length >= 25) break;
+    }
   }
+
+  // Fill remaining budget (up to 35 total clusters) with general errors distributed across the file
+  const remainingBudget = 35 - chosenClusters.length;
+  if (remainingBudget > 0 && generalIndices.length > 0) {
+    const candidateClusters = [];
+    for (const idx of generalIndices) {
+      const cluster = buildCluster(idx, false);
+      if (cluster) candidateClusters.push(cluster);
+    }
+
+    if (candidateClusters.length <= remainingBudget) {
+      chosenClusters.push(...candidateClusters);
+    } else {
+      // Sample evenly across the candidate clusters so beginning, middle, and end are represented
+      const step = candidateClusters.length / remainingBudget;
+      for (let s = 0; s < remainingBudget; s++) {
+        const pickIdx = Math.min(candidateClusters.length - 1, Math.floor(s * step));
+        chosenClusters.push(candidateClusters[pickIdx]);
+      }
+    }
+  }
+
+  // Sort chosen clusters chronologically by line number
+  chosenClusters.sort((a, b) => a.line - b.line);
 
   // 4. Last 150 lines (Shutdown / Crash termination state)
   const tailLines = lines.slice(-150).map((l, offset) => `${totalLines - 150 + offset + 1}: ${l}`).join('\n');
 
   let incidentBlock = '';
-  if (clusters.length > 0) {
-    incidentBlock = `--- CRITICAL ERROR & ANOMALY INCIDENTS DETECTED ACROSS ALL ${totalLines} LINES (${clusters.length} clusters found) ---\n` +
-      clusters.map((c, i) => `[Incident Cluster #${i + 1} around Line ${c.line}]\n${c.snippet}`).join('\n\n') + '\n\n';
+  if (chosenClusters.length > 0) {
+    const fatalCount = chosenClusters.filter(c => c.isFatal).length;
+    const fatalTag = fatalCount > 0 ? ` (${fatalCount} FATAL CRASH/KILL INCIDENTS DETECTED)` : '';
+    incidentBlock = `--- CRITICAL ERROR & ANOMALY INCIDENTS DETECTED ACROSS ALL ${totalLines} LINES (${chosenClusters.length} clusters found)${fatalTag} ---\n` +
+      chosenClusters.map((c, i) => `[Incident Cluster #${i + 1} around Line ${c.line}${c.isFatal ? ' - FATAL' : ''}]\n${c.snippet}`).join('\n\n') + '\n\n';
   } else {
     incidentBlock = `--- NO FATAL ANOMALIES AUTOMATICALLY DETECTED IN MIDDLE SECTION ---\n\n`;
   }
@@ -986,4 +1024,5 @@ module.exports = {
   findGenerateHTMLMatch,
   findGenerateJSONMatch,
   findGenerateMDMatch,
+  extractDiagnosticDigest,
 };

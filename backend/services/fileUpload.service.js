@@ -579,14 +579,22 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
       // Update full sanitizedContent directly in uploaded_files_rag to guarantee 100% full file persistence
       if (ragRecord.id) {
         try {
-          const updatePayload = { original_content: sanitizedContent };
-          if (blobUrl) updatePayload.blob_url = blobUrl;
-          await supabase
-            .from('uploaded_files_rag')
-            .update(updatePayload)
-            .eq('id', ragRecord.id);
+          if (blobUrl) {
+            // Persist blob_url independently so it is never dropped even if content update fails
+            await supabase
+              .from('uploaded_files_rag')
+              .update({ blob_url: blobUrl })
+              .eq('id', ragRecord.id);
+          }
+          // Only update original_content directly if under 2.5MB to avoid Supabase PostgREST 413 Payload Too Large
+          if (sanitizedContent.length <= 2500000) {
+            await supabase
+              .from('uploaded_files_rag')
+              .update({ original_content: sanitizedContent })
+              .eq('id', ragRecord.id);
+          }
         } catch (colErr) {
-          console.warn(`[FileUpload] Full original_content column update failed: ${colErr.message}`);
+          console.warn(`[FileUpload] original_content column update warning: ${colErr.message}`);
         }
       }
 
@@ -1004,6 +1012,84 @@ const cleanupTempFile = (filePath) => {
 };
 
 /**
+ * Helper to fetch complete file text across Vercel Blob, Base64 DB storage,
+ * and paginated rag_chunks reassembly (guaranteeing >1000 chunks for 10MB-50MB files).
+ */
+const resolveFullFileContent = async (fileRecord, userId) => {
+  if (!fileRecord) return '';
+
+  // 1. If stored in private Vercel Blob, fetch directly from Blob
+  if (fileRecord.blob_url) {
+    try {
+      const { fetchPrivateBlobBuffer } = require('./blobStorage.service');
+      const buf = await fetchPrivateBlobBuffer(fileRecord.blob_url);
+      if (buf && buf.length > 0) return buf.toString('utf-8');
+    } catch (bErr) {
+      console.warn('[FileContent] Blob fetch fallback warning:', bErr.message);
+    }
+  }
+
+  // 2. If stored as Base64 in original_file_data, decode it
+  if (fileRecord.original_file_data) {
+    try {
+      const bin = fileRecord.original_file_data;
+      if (typeof bin === 'string' && /^[A-Za-z0-9+/=]+$/.test(bin)) {
+        return Buffer.from(bin, 'base64').toString('utf-8');
+      }
+    } catch (binErr) {
+      console.warn('[FileContent] Base64 decode warning:', binErr.message);
+    }
+  }
+
+  // 3. If original_content is complete (not truncated for RPC storage), return it directly
+  if (fileRecord.original_content && !fileRecord.original_content.includes('Truncated for RPC storage')) {
+    return fileRecord.original_content;
+  }
+
+  // 4. Reconstruct full text from rag_chunks with pagination (supporting >1000 chunks / up to 50MB)
+  if (fileRecord.file_name && userId) {
+    try {
+      const { data: uFile } = await supabase
+        .from('uploaded_files')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('file_name', fileRecord.file_name)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (uFile?.id) {
+        const allChunks = [];
+        let from = 0;
+        const pageSize = 1000;
+        while (true) {
+          const { data: chunks, error: chunkErr } = await supabase
+            .from('rag_chunks')
+            .select('chunk_text, chunk_index')
+            .eq('file_id', uFile.id)
+            .order('chunk_index', { ascending: true })
+            .range(from, from + pageSize - 1);
+
+          if (chunkErr || !chunks || chunks.length === 0) break;
+          allChunks.push(...chunks);
+          if (chunks.length < pageSize) break;
+          from += pageSize;
+        }
+
+        if (allChunks.length > 0) {
+          return allChunks.map((c) => c.chunk_text).join('');
+        }
+      }
+    } catch (chunkErr) {
+      console.warn('[FileContent] rag_chunks reassembly warning:', chunkErr.message);
+    }
+  }
+
+  // Final fallback to whatever text is available
+  return fileRecord.original_content || fileRecord.llm_analysis || '';
+};
+
+/**
  * MODIFIED: Search uploaded files RAG for THIS TOPIC
  * Returns relevant file analyses from past uploads in this topic
  */
@@ -1018,7 +1104,7 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
     try {
       let fileQuery = supabase
         .from('uploaded_files_rag')
-        .select('id, file_name, original_content')
+        .select('id, file_name, original_content, original_file_data, blob_url')
         .eq('user_id', userId);
 
       if (topicId) {
@@ -1029,7 +1115,7 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
       if ((!files || files.length === 0) && topicId) {
         const fallbackRes = await supabase
           .from('uploaded_files_rag')
-          .select('id, file_name, original_content')
+          .select('id, file_name, original_content, original_file_data, blob_url')
           .eq('user_id', userId)
           .order('created_at', { ascending: false })
           .limit(10);
@@ -1041,15 +1127,19 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
         const terms = queryLower.split(/\s+/).filter(t => t.length > 1);
 
         for (const f of files) {
-          if (!f.original_content) continue;
-          const lines = f.original_content.split('\n');
+          let contentToSearch = f.original_content;
+          if (!contentToSearch || contentToSearch.includes('Truncated for RPC storage') || f.blob_url) {
+            contentToSearch = await resolveFullFileContent(f, userId);
+          }
+          if (!contentToSearch) continue;
+          const lines = contentToSearch.split('\n');
           const matchedLineIndices = [];
 
           for (let i = 0; i < lines.length; i++) {
             const lineLower = lines[i].toLowerCase();
             if (lineLower.includes(queryLower) || (terms.length > 1 && terms.every(t => lineLower.includes(t)))) {
               matchedLineIndices.push(i);
-              if (matchedLineIndices.length >= 15) break;
+              if (matchedLineIndices.length >= 300) break;
             }
           }
 
@@ -1059,14 +1149,30 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
               const lineLower = lines[i].toLowerCase();
               if (terms.some(t => t.length >= 3 && lineLower.includes(t))) {
                 matchedLineIndices.push(i);
-                if (matchedLineIndices.length >= 10) break;
+                if (matchedLineIndices.length >= 300) break;
               }
             }
           }
 
+          // Balanced sampling if many matches: keep initial 5, final 10 (crash state), and 5 middle samples
+          let selectedIndices = matchedLineIndices;
+          if (matchedLineIndices.length > 20) {
+            const head = matchedLineIndices.slice(0, 5);
+            const tail = matchedLineIndices.slice(-10);
+            const middleCandidates = matchedLineIndices.slice(5, -10);
+            const mid = [];
+            if (middleCandidates.length > 0) {
+              const step = middleCandidates.length / 5;
+              for (let s = 0; s < 5; s++) {
+                mid.push(middleCandidates[Math.min(middleCandidates.length - 1, Math.floor(s * step))]);
+              }
+            }
+            selectedIndices = Array.from(new Set([...head, ...mid, ...tail])).sort((a, b) => a - b);
+          }
+
           // Extract surrounding context window (4 lines before and 4 lines after)
           const seenRanges = new Set();
-          for (const idx of matchedLineIndices) {
+          for (const idx of selectedIndices) {
             const startLine = Math.max(0, idx - 4);
             const endLine = Math.min(lines.length - 1, idx + 5);
             const rangeKey = `${startLine}-${endLine}`;
@@ -1217,44 +1323,9 @@ const getFileContent = async (fileIdOrName, userId, topicId = null) => {
 
     const data = records[0];
 
-    // If stored in private Vercel Blob and original_content is empty, fetch directly from Blob
-    if (data && !data.original_content && data.blob_url) {
-      try {
-        const { fetchPrivateBlobBuffer } = require('./blobStorage.service');
-        const buf = await fetchPrivateBlobBuffer(data.blob_url);
-        if (buf) data.original_content = buf.toString('utf-8');
-      } catch (bErr) {
-        console.warn('[FileContent] Blob fetch fallback warning:', bErr.message);
-      }
-    }
-
-    // Reconstruct full text from rag_chunks if original_content was truncated
-    if (data && !data.blob_url && !data.original_file_data && data.original_content?.includes('Truncated for RPC storage')) {
-      try {
-        const { data: uFile } = await supabase
-          .from('uploaded_files')
-          .select('id')
-          .eq('user_id', userId)
-          .eq('file_name', data.file_name)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (uFile?.id) {
-          const { data: chunks } = await supabase
-            .from('rag_chunks')
-            .select('chunk_text')
-            .eq('file_id', uFile.id)
-            .order('chunk_index', { ascending: true });
-
-          if (chunks && chunks.length > 0) {
-            data.original_content = chunks.map((c) => c.chunk_text).join('');
-          }
-        }
-      } catch (chunkErr) {
-        console.warn('[FileContent] Reassembly error:', chunkErr.message);
-      }
-    }
+    // Resolve full content across Blob, Base64 DB, or paginated rag_chunks
+    const fullContent = await resolveFullFileContent(data, userId);
+    if (fullContent) data.original_content = fullContent;
 
     return data;
   } catch (err) {
@@ -1373,32 +1444,8 @@ const getFileContentById = async (fileId, userId) => {
       return null;
     }
 
-    if (data && !data.blob_url && !data.original_file_data && data.original_content?.includes('Truncated for RPC storage')) {
-      try {
-        const { data: uFile } = await supabase
-          .from('uploaded_files')
-          .select('id')
-          .eq('user_id', userId)
-          .eq('file_name', data.file_name)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (uFile?.id) {
-          const { data: chunks } = await supabase
-            .from('rag_chunks')
-            .select('chunk_text')
-            .eq('file_id', uFile.id)
-            .order('chunk_index', { ascending: true });
-
-          if (chunks && chunks.length > 0) {
-            data.original_content = chunks.map((c) => c.chunk_text).join('');
-          }
-        }
-      } catch (chunkErr) {
-        console.warn('[FileContentById] Reassembly error:', chunkErr.message);
-      }
-    }
+    const fullContent = await resolveFullFileContent(data, userId);
+    if (fullContent) data.original_content = fullContent;
 
     return data;
   } catch (err) {
@@ -1614,4 +1661,5 @@ module.exports = {
   getFileHash,
   analyzeFileWithLLM,
   processZipFile, // exported for unit tests to exercise the ZIP safety limits directly
+  resolveFullFileContent,
 };

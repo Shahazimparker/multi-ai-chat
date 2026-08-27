@@ -616,9 +616,10 @@ const buildRAGContext = async (query, provider = DEFAULT_PROVIDER, signal = null
     })
   ]);
 
-  if ((error && error.name !== 'AbortError' && error.name !== 'CanceledError') || !docs || docs.length === 0) return '';
-  const topDocs = rerankDocsHybrid(docs, query, 3, 0.4);
-  if (!topDocs.length) return '';
+  if (error && error.name !== 'AbortError' && error.name !== 'CanceledError') {
+    console.warn('[RAG] match_topic_files error:', error.message);
+  }
+  const topDocs = (!error && docs && docs.length > 0) ? rerankDocsHybrid(docs, query, 3, 0.4) : [];
 
   // ── Chunk-level enhancement: also search rag_chunks for granular matches ──
   let allDocs = [...topDocs];
@@ -634,19 +635,49 @@ const buildRAGContext = async (query, provider = DEFAULT_PROVIDER, signal = null
       });
 
       if (chunkResults && chunkResults.length > 0) {
-        const seenTitles = new Set(allDocs.map(d => d.title));
+        // If match_topic_files returned placeholder preview stubs ("File ready for queries", etc.),
+        // don't let the stub block real granular matching chunks for that file.
+        const isStubPreview = (content) => Boolean(
+          content &&
+          typeof content === 'string' &&
+          (content.includes('File ready for queries.') ||
+           content.includes('Preview:') ||
+           content.includes('Truncated for RPC storage'))
+        );
+
+        const previewDocTitles = new Set(
+          allDocs.filter(d => isStubPreview(d.content)).map(d => d.title)
+        );
+
         for (const chunk of chunkResults) {
-          // Avoid duplicating files already returned by match_topic_files
-          if (!seenTitles.has(chunk.file_name)) {
+          const chunkTitle = `${chunk.file_name} (chunk ${chunk.chunk_index + 1})`;
+          const alreadyHasChunk = allDocs.some(d => d.title === chunkTitle);
+          const isFromPreviewDoc = previewDocTitles.has(chunk.file_name);
+          const hasFileLevelDoc = allDocs.some(d => d.title === chunk.file_name);
+
+          if (!alreadyHasChunk && (isFromPreviewDoc || !hasFileLevelDoc)) {
             allDocs.push({
               id: chunk.file_id,
-              title: `${chunk.file_name} (chunk ${chunk.chunk_index + 1})`,
+              title: chunkTitle,
               content: chunk.chunk_text,
               similarity: chunk.similarity,
             });
-            seenTitles.add(chunk.file_name);
           }
         }
+
+        // If granular chunks were added for a preview-only doc, drop the uninformative stub
+        const titlesWithChunks = new Set(
+          allDocs
+            .filter(d => d.title.includes('(chunk '))
+            .map(d => d.title.replace(/\s*\(chunk \d+\)$/, ''))
+        );
+        allDocs = allDocs.filter(d => {
+          if (titlesWithChunks.has(d.title) && isStubPreview(d.content)) {
+            return false;
+          }
+          return true;
+        });
+
         // Re-sort by similarity
         allDocs.sort((a, b) => b.similarity - a.similarity);
         // Keep top 5
@@ -690,6 +721,8 @@ const buildRAGContext = async (query, provider = DEFAULT_PROVIDER, signal = null
       }
     }
   }
+
+  if (!allDocs.length) return '';
 
   const totalTokenBudget = options.tokenBudget || 650;
   const perDocBudget = Math.max(120, Math.floor(totalTokenBudget / allDocs.length));
