@@ -106,10 +106,12 @@ This document provides essential context about the codebase, deployment environm
 Verified live 2026-08-28. Do not "simplify" any of the below without re-measuring — every failure mode here is silent: the API returns a normal answer and only the bill moves.
 
 1. **Prompt order is load-bearing**:
-   - Order is `system (static) | system (temporal) | ...history... | [retrieved context + question]`.
+   - Order is `system (static, the ONLY system block) | ...history... | [temporal grounding + retrieved context + question]`.
+   - **Temporal grounding is not a system block.** It carries a live clock quantised to `TEMPORAL_PRECISION_MS` (60s), so it is byte-identical only for turns less than a minute apart. Sitting ahead of the history it broke the prefix there on essentially every real conversation. Measured live on DeepSeek with turns spaced minutes apart: **640 cached tokens with it as a system block, 2,176 with it moved in beside the question** — and the 640 was a hard ceiling regardless of how long the thread grew.
+   - Placing it later *as a system message* does not work either: Claude hoists every system message into its top-level `system` field regardless of array position. Leaving the system role is the only fix that works across providers.
    - Retrieved context is deliberately **not** a system block. It changes every turn, and a provider cache keys on an exact prefix, so anything volatile placed ahead of the history breaks the prefix there and the whole conversation is re-read at full price. Moving it beside the question took the cacheable prefix from ~1K to ~85K tokens on a long thread.
    - It also reads better: models attend worst to the middle of a long context ("lost in the middle", arXiv 2307.03172), and this puts retrieved passages at the end, next to the question they answer.
-   - The block travels as its own message flagged `__volatileContext` so the window fitter can still drop whole sections by priority, then `mergeVolatileIntoQuery` folds it into the user turn before dispatch — providers see one message and role alternation holds.
+   - The volatile block (temporal + retrieved context) travels as its own message flagged `__volatileContext` so the window fitter can still drop whole sections by priority, then `mergeVolatileIntoQuery` folds it into the user turn before dispatch — providers see one message and role alternation holds.
 
 2. **Per-provider mechanics** (each differs; the dialects are normalised in `promptCache.service.js`):
    - **Mistral** (the default model) — caching is **NOT automatic**. Without `prompt_cache_key` the API simply does not cache and says nothing about it. Measured: 0 cached tokens without the key, 1,152 with. Minimum prefix 64 tokens, 1h TTL, cached tokens bill at ~10%.

@@ -976,29 +976,35 @@ ${page.text}`)
 
     const staticSystem = `You are a helpful AI assistant. Be concise, accurate, and helpful.\n${runtimeIdentity}${identityDirective}${generalToolsDirective}`;
 
-    // The system prompt is emitted as three ordered blocks rather than one
-    // string. The provider adapters mark only the FIRST system block cacheable
-    // (see extractClaudeParams in services/ai/claude.service.js), so anything
-    // that changes between turns has to sit after it or the cached prefix is
-    // rebuilt on every request:
-    //   0. stable instructions  — cached
-    //   1. temporal grounding   — changes once per TEMPORAL_PRECISION_MS
-    //   2. retrieved context    — changes every turn by nature
-    // Every provider folds multiple system messages correctly (Gemini joins
-    // them into systemInstruction, OpenAI-compatible paths concatenate), so
-    // the split costs nothing where caching is not available.
+    // The system prompt is emitted as ONE stable block, and everything that
+    // changes between turns is pushed to the end of the prompt instead.
+    //
+    // Temporal grounding used to sit here as a second system block. It carries a
+    // live clock quantised to TEMPORAL_PRECISION_MS (60s by default), so it is
+    // byte-identical only for turns less than a minute apart — and a provider
+    // prompt cache keys on an exact prefix. Sitting ahead of the history, it
+    // broke the prefix there on essentially every real conversation, capping the
+    // cacheable region at this static block (~959 tokens) no matter how long the
+    // thread grew. Moving it in with the retrieved context leaves system +
+    // history byte-identical across turns, which is the whole point of the
+    // ordering. (It also cannot be fixed by placing it later as a system
+    // message: Claude hoists every system message into its top-level `system`
+    // field regardless of array position, so only leaving the system role works.)
     aiMessages.push({ role: 'system', content: staticSystem });
 
     const { timeZone } = resolveTimeZone({
       requestTimeZone: clientTimeZone,
       userTimeZone: user?.timezone,
     });
-    aiMessages.push({
-      role: 'system',
-      content: renderTemporalSystemBlock(buildTemporalContext({ timeZone })),
-    });
+    const temporalBlock = renderTemporalSystemBlock(buildTemporalContext({ timeZone }));
+
 
     const volatileSections = [];
+    // Temporal grounding leads the volatile block: it is authoritative, small
+    // (~256 tokens), and belongs next to the question it dates. It carries no
+    // "## " heading of its own, so sectionPriority ranks it last for eviction —
+    // it is only ever dropped if the whole block goes.
+    volatileSections.push(temporalBlock);
     if (ragContext) volatileSections.push(`## Retrieved Context\n${ragContext}`);
     if (forcedWebContext) volatileSections.push(`## Web Search Context\n${forcedWebContext}`);
     if (urlContext) volatileSections.push(`## URL Context\n${urlContext}`);
