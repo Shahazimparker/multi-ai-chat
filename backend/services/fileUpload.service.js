@@ -1046,17 +1046,50 @@ const resolveFullFileContent = async (fileRecord, userId) => {
     return fileRecord.original_content;
   }
 
-  // 4. Reconstruct full text from rag_chunks with pagination (supporting >1000 chunks / up to 50MB)
   if (fileRecord.file_name && userId) {
     try {
-      const { data: uFile } = await supabase
-        .from('uploaded_files')
-        .select('id')
-        .eq('user_id', userId)
-        .eq('file_name', fileRecord.file_name)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      let uFile = null;
+      if (fileRecord.topic_id) {
+        const { data: tf } = await supabase
+          .from('uploaded_files')
+          .select('id, blob_url')
+          .eq('user_id', userId)
+          .eq('topic_id', fileRecord.topic_id)
+          .eq('file_name', fileRecord.file_name)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        uFile = tf;
+      }
+      if (!uFile) {
+        const { data: uf } = await supabase
+          .from('uploaded_files')
+          .select('id, blob_url')
+          .eq('user_id', userId)
+          .eq('file_name', fileRecord.file_name)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        uFile = uf;
+      }
+
+      // If uploaded_files has blob_url, try fetching from Blob first
+      const effectiveBlobUrl = fileRecord.blob_url || uFile?.blob_url;
+      if (effectiveBlobUrl && !fileRecord.blob_url) {
+        try {
+          const { fetchPrivateBlobBuffer } = require('./blobStorage.service');
+          const buf = await fetchPrivateBlobBuffer(effectiveBlobUrl);
+          if (buf && buf.length > 0) {
+            // Auto-heal uploaded_files_rag table for future queries
+            if (fileRecord.id) {
+              supabase.from('uploaded_files_rag').update({ blob_url: effectiveBlobUrl }).eq('id', fileRecord.id).then(() => {});
+            }
+            return buf.toString('utf-8');
+          }
+        } catch (bErr) {
+          console.warn('[FileContent] Blob fetch from uFile fallback warning:', bErr.message);
+        }
+      }
 
       if (uFile?.id) {
         const allChunks = [];
@@ -1104,7 +1137,7 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
     try {
       let fileQuery = supabase
         .from('uploaded_files_rag')
-        .select('id, file_name, original_content, original_file_data, blob_url')
+        .select('id, file_name, topic_id, original_content, original_file_data, blob_url')
         .eq('user_id', userId);
 
       if (topicId) {
@@ -1115,7 +1148,7 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
       if ((!files || files.length === 0) && topicId) {
         const fallbackRes = await supabase
           .from('uploaded_files_rag')
-          .select('id, file_name, original_content, original_file_data, blob_url')
+          .select('id, file_name, topic_id, original_content, original_file_data, blob_url')
           .eq('user_id', userId)
           .order('created_at', { ascending: false })
           .limit(10);
@@ -1287,7 +1320,7 @@ const getFileContent = async (fileIdOrName, userId, topicId = null) => {
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(fileIdOrName).trim());
     let query = supabase
       .from('uploaded_files_rag')
-      .select('id, file_name, file_type, original_content, original_file_data, llm_analysis, blob_url, created_at')
+      .select('id, file_name, topic_id, file_type, original_content, original_file_data, llm_analysis, blob_url, created_at')
       .eq('user_id', userId);
 
     if (isUuid) {
@@ -1306,7 +1339,7 @@ const getFileContent = async (fileIdOrName, userId, topicId = null) => {
     if ((!records || records.length === 0) && topicId) {
       let fallbackQuery = supabase
         .from('uploaded_files_rag')
-        .select('id, file_name, file_type, original_content, original_file_data, llm_analysis, blob_url, created_at')
+        .select('id, file_name, topic_id, file_type, original_content, original_file_data, llm_analysis, blob_url, created_at')
         .eq('user_id', userId);
       if (isUuid) {
         fallbackQuery = fallbackQuery.eq('id', fileIdOrName.trim());
@@ -1434,7 +1467,7 @@ const getFileContentById = async (fileId, userId) => {
 
     const { data, error } = await supabase
       .from('uploaded_files_rag')
-      .select('id, file_name, file_type, original_content, original_file_data, llm_analysis, blob_url, created_at')
+      .select('id, file_name, topic_id, file_type, original_content, original_file_data, llm_analysis, blob_url, created_at')
       .eq('id', fileId)
       .eq('user_id', userId)
       .single();

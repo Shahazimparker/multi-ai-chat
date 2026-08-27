@@ -274,6 +274,51 @@ describe('Large File Search & Reassembly', () => {
       expect(digest).toContain('around Line 4200 - FATAL');
       expect(digest).toContain('FATAL CRASH/KILL INCIDENTS DETECTED');
     });
+
+    it('falls back to uploaded_files.blob_url and auto-heals if uploaded_files_rag.blob_url is missing', async () => {
+      const mockBlobBuffer = Buffer.from('Content retrieved from recovered blob url');
+      vi.spyOn(blobStorage, 'fetchPrivateBlobBuffer').mockResolvedValue(mockBlobBuffer);
+
+      // fileRecord has truncated stub and NO blob_url
+      const fileRecord = {
+        id: 'rag-rec-recovered',
+        file_name: 'historical_blob.log',
+        original_content: 'Preview... [Truncated for RPC storage: 18000000 chars total]',
+        blob_url: null,
+      };
+
+      // uploaded_files HAS the blob_url from historical upload
+      vi.spyOn(supabase, 'from').mockImplementation((table) => {
+        if (table === 'uploaded_files') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  order: () => ({
+                    limit: () => ({
+                      maybeSingle: () => Promise.resolve({
+                        data: { id: 'uf-rec-1', blob_url: 'https://blob.vercel-storage.com/recovered.log' },
+                        error: null,
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'uploaded_files_rag') {
+          return {
+            update: () => ({ eq: () => Promise.resolve({ error: null }) }),
+          };
+        }
+        return { select: () => ({ eq: () => ({ order: () => ({ limit: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }) }) }) }) };
+      });
+
+      const content = await resolveFullFileContent(fileRecord, 'user-1');
+      expect(content).toBe('Content retrieved from recovered blob url');
+      expect(blobStorage.fetchPrivateBlobBuffer).toHaveBeenCalledWith('https://blob.vercel-storage.com/recovered.log');
+    });
   });
 });
 
