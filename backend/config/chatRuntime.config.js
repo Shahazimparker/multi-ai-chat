@@ -42,6 +42,36 @@ const CHAT_TIME_BUDGET_MS = parseInteger('CHAT_TIME_BUDGET_MS', 240000, 10000, 3
 // entire turn's budget.
 const AI_CALL_TIMEOUT_MS = parseInteger('AI_CALL_TIMEOUT_MS', 120000, 0, 600000);
 
+// ── Context window enforcement ─────────────────────────────
+// The assembled prompt is measured against the model's real window and only
+// evicted when it genuinely does not fit (see services/contextWindow.service.js).
+// These knobs shape that ceiling; none of them pre-trim a prompt that fits.
+
+// Tokens held back for the reply. 0 = derive from the model: a flat 8192 for
+// models at or above 32K (a 128K and a 200K model write replies of the same
+// order, so scaling with the window would just waste prompt space), and 25% of
+// the window for the small ones.
+const CONTEXT_RESERVED_OUTPUT_TOKENS = parseInteger('CONTEXT_RESERVED_OUTPUT_TOKENS', 0, 0, 64000);
+
+// Headroom below the usable window absorbing token-estimate drift. Estimates
+// undershoot most on dense logs and stack traces — exactly this app's traffic —
+// so this is what stops an undershoot becoming a provider-side rejection.
+const CONTEXT_SAFETY_MARGIN_RATIO = parseFloatNumber('CONTEXT_SAFETY_MARGIN_RATIO', 0.06, 0.01, 0.30);
+
+// Eviction evicts down to this fraction of the ceiling rather than to the
+// ceiling itself. Trimming the bare minimum would overflow again next turn and
+// mutate the prompt prefix on every request, which drives the provider's
+// prompt-cache hit rate to zero. Lower = evicts more per event, but rarer events.
+const CONTEXT_EVICTION_TARGET_RATIO = parseFloatNumber('CONTEXT_EVICTION_TARGET_RATIO', 0.85, 0.50, 0.99);
+
+// History messages eviction will never drop, so the model always has the
+// immediate exchange it is replying to.
+const CONTEXT_MIN_RECENT_MESSAGES = parseInteger('CONTEXT_MIN_RECENT_MESSAGES', 4, 2, 40);
+
+// Floor below which trimming the user's own question is pointless — better to
+// refuse the turn than answer a question cut to a stub.
+const CONTEXT_MIN_QUERY_TOKENS = parseInteger('CONTEXT_MIN_QUERY_TOKENS', 512, 64, 32000);
+
 const CHAT_MAX_DB_QUERIES = parseInteger('CHAT_MAX_DB_QUERIES', 12, 1, 100);
 const CHAT_MAX_CONSECUTIVE_ZERO_RESULTS = parseInteger('CHAT_MAX_CONSECUTIVE_ZERO_RESULTS', 4, 1, 20);
 const CHAT_TOOL_RESERVE_RATIO = parseFloatNumber('CHAT_TOOL_RESERVE_RATIO', 0.15, 0.05, 0.6);
@@ -120,6 +150,11 @@ module.exports = {
   RAG_QUERY_EXPANSION_ENABLED,
   RAG_QUERY_EXPANSION_COUNT,
   RAG_HYDE_ENABLED,
+  CONTEXT_RESERVED_OUTPUT_TOKENS,
+  CONTEXT_SAFETY_MARGIN_RATIO,
+  CONTEXT_EVICTION_TARGET_RATIO,
+  CONTEXT_MIN_RECENT_MESSAGES,
+  CONTEXT_MIN_QUERY_TOKENS,
   RAG_RERANK_ENABLED,
   RAG_RERANK_MODEL,
   RAG_RERANK_TIMEOUT_MS,

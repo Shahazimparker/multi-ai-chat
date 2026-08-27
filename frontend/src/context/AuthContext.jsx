@@ -64,7 +64,12 @@ export const AuthProvider = ({ children }) => {
     window.location.href = '/login';
   }, [logout]);
 
-  useIdleLogout(Boolean(user), handleIdle);
+  // A "Remember me" session is a deliberate 30-day one; arming the 30-minute
+  // idle timer on top of it would sign the user out long before the cookie the
+  // server issued expires, making the checkbox do nothing for anyone who leaves
+  // a tab open. Persistent sessions therefore opt out of the idle timer and
+  // rely on the cookie's own expiry.
+  useIdleLogout(Boolean(user) && !user?.rememberMe, handleIdle);
 
   useEffect(() => {
     if (!user) return undefined;

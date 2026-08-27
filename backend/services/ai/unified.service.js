@@ -4,6 +4,7 @@
 // ============================================================
 
 const OpenAI = require('openai');
+const { extractCacheUsage } = require('./promptCache.service');
 const OpenAIClient = /** @type {any} */ (OpenAI?.default || OpenAI);
 
 /**
@@ -50,8 +51,7 @@ const callOpenAICompatible = async ({ baseURL, apiKey, modelName, messages, syst
   return {
     text: assistantMessage.content || '',
     tokensUsed: (response.usage?.prompt_tokens || 0) + (response.usage?.completion_tokens || 0),
-    cacheCreationTokens: response.usage.cache_creation_input_tokens || 0,
-    cacheReadTokens: response.usage.cache_read_input_tokens || 0,
+    ...extractCacheUsage(response.usage),
     toolCalls: assistantMessage.tool_calls || [],
   };
 };
@@ -156,15 +156,17 @@ const callOpenAICompatibleStream = async ({ baseURL, apiKey, modelName, messages
     if (chunk.usage) {
       promptTokens = chunk.usage.prompt_tokens || 0;
       completionTokens = chunk.usage.completion_tokens || 0;
-      cacheCreationTokens = chunk.usage.cache_creation_input_tokens || 0;
-      cacheReadTokens = chunk.usage.cache_read_input_tokens || 0;
+      const c = extractCacheUsage(chunk.usage);
+      cacheCreationTokens = c.cacheCreationTokens;
+      cacheReadTokens = c.cacheReadTokens;
     }
     // OpenRouter puts usage in x-usage on the final chunk
     if (chunk['x-usage']) {
       promptTokens = chunk['x-usage'].prompt_tokens || 0;
       completionTokens = chunk['x-usage'].completion_tokens || 0;
-      cacheCreationTokens = chunk['x-usage'].cache_creation_input_tokens || 0;
-      cacheReadTokens = chunk['x-usage'].cache_read_input_tokens || 0;
+      const xc = extractCacheUsage(chunk['x-usage']);
+      cacheCreationTokens = xc.cacheCreationTokens;
+      cacheReadTokens = xc.cacheReadTokens;
     }
   }
 

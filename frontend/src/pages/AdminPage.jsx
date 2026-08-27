@@ -226,8 +226,14 @@ const AdminPage = () => {
                   {[
                     { label: 'Total Queries', value: analytics.summary.totalQueries.toLocaleString(), icon: <MessageSquare size={18} />, color: '#7c3aed' },
                     { label: 'Total Tokens', value: analytics.summary.totalTokens.toLocaleString(), icon: <Zap size={18} />, color: '#0ea5e9' },
-                    { label: 'Cache Hits', value: analytics.summary.cacheHits.toLocaleString(), icon: <RefreshCw size={18} />, color: '#10b981' },
-                    { label: 'Cache Hit Rate', value: `${analytics.summary.cacheHitRate}%`, icon: <BarChart2 size={18} />, color: '#f59e0b' },
+                    // Replies served from our own cache — no model call at all.
+                    { label: 'Replies From Cache', value: analytics.summary.cacheHits.toLocaleString(), icon: <RefreshCw size={18} />, color: '#10b981' },
+                    { label: 'Reply Cache Rate', value: `${analytics.summary.cacheHitRate}%`, icon: <BarChart2 size={18} />, color: '#f59e0b' },
+                    // Separate concept: the provider reused our prompt prefix while
+                    // still generating a fresh answer. Reads bill at a fraction of
+                    // the uncached rate, so this is an input-cost metric.
+                    { label: 'Prompt Cache Rate', value: `${analytics.summary.promptCacheHitRate ?? 0}%`, icon: <BarChart2 size={18} />, color: '#8b5cf6' },
+                    { label: 'Prompt Tokens Cached', value: (analytics.summary.promptCacheReadTokens ?? 0).toLocaleString(), icon: <Zap size={18} />, color: '#06b6d4' },
                   ].map(c => (
                     <div key={c.label} className="stat-card" style={{ '--card-color': c.color }}>
                       <div className="stat-icon">{c.icon}</div>

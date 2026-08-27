@@ -5,6 +5,8 @@
 
 const axios = require('axios');
 const { resolveReasoning } = require('./reasoning.service');
+const { extractCacheUsage } = require('./promptCache.service');
+
 
 const DEEPSEEK_URL = 'https://api.deepseek.com/v1/chat/completions';
 
@@ -117,6 +119,10 @@ const calldeepseekAPI = async (model, apiKey, messages, signal = null, modelConf
     // it. Without this the reasoning tokens are billed and then discarded.
     reasoning: message.reasoning_content || message.reasoning || '',
     tokensUsed: response.data.usage?.total_tokens || 0,
+    // DeepSeek caches context automatically and reports the split in
+    // prompt_cache_hit_tokens. Hits bill at a tenth of the uncached rate, so
+    // leaving this unread hid the single largest saving available here.
+    ...extractCacheUsage(response.data.usage),
   };
 };
 
@@ -157,6 +163,8 @@ const calldeepseekAPIStream = async (model, apiKey, messages, signal = null, mod
     let fullText = '';
     let fullReasoning = '';
     let tokensUsed = 0;
+    let cacheCreationTokens = 0;
+    let cacheReadTokens = 0;
     let buffer = '';
 
     response.data.on('data', (chunk) => {
@@ -187,11 +195,20 @@ const calldeepseekAPIStream = async (model, apiKey, messages, signal = null, mod
           if (parsed.usage?.total_tokens) {
             tokensUsed = parsed.usage.total_tokens;
           }
+          if (parsed.usage) {
+            const c = extractCacheUsage(parsed.usage);
+            if (c.cacheReadTokens || c.cacheCreationTokens) {
+              cacheCreationTokens = c.cacheCreationTokens;
+              cacheReadTokens = c.cacheReadTokens;
+            }
+          }
         } catch { /* skip */ }
       }
     });
 
-    response.data.on('end', () => resolve({ text: fullText, reasoning: fullReasoning, tokensUsed }));
+    response.data.on('end', () => resolve({
+      text: fullText, reasoning: fullReasoning, tokensUsed, cacheCreationTokens, cacheReadTokens,
+    }));
     response.data.on('error', (err) => reject(err));
 
     if (signal) {

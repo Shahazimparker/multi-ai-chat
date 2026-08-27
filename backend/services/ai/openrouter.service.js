@@ -4,6 +4,8 @@
 // ============================================================
 
 const { callOpenAICompatible, callOpenAICompatibleStream } = require('./unified.service');
+const { ANTHROPIC_MIN_CACHEABLE_TOKENS } = require('./promptCache.service');
+const { estimateTokens } = require('../tokenBudget.service');
 
 const OPENROUTER_TOOLS = [
   {
@@ -64,10 +66,14 @@ function buildOpenRouterConfig(modelName, apiKey, messages, signal, { disableToo
 
   if (systemMessages.length > 0) {
     if (isClaudeModel || isGPT4Turbo) {
+      // Same minimum as the direct Claude path: a breakpoint on a prefix under
+      // Anthropic's floor is accepted and then silently ignored, so check before
+      // paying the 1.25x cache-write rate for something that can never be read.
+      const orCacheable = estimateTokens(systemMessages[0].content) >= ANTHROPIC_MIN_CACHEABLE_TOKENS;
       baseConfig.system = systemMessages.map((m, i) => ({
         type: "text",
         text: m.content,
-        ...(i === 0 ? { cache_control: { type: "ephemeral" } } : {}),
+        ...(i === 0 && orCacheable ? { cache_control: { type: "ephemeral" } } : {}),
       }));
     } else {
       const systemText = systemMessages.map(m => m.content).join('\n\n');

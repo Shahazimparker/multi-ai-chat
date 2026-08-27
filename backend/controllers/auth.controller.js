@@ -6,7 +6,7 @@
 
 const bcrypt = require('bcryptjs');
 const supabase = require('../config/supabase');
-const { issueAuthCookie, clearAuthCookie } = require('../utils/authCookie');
+const { issueAuthCookie, clearAuthCookie, parseRememberMe } = require('../utils/authCookie');
 
 // ── Login identifier validation ────────────────────────────
 // The identifier is interpolated into a PostgREST filter string, where `,`
@@ -221,6 +221,7 @@ const login = async (req, res) => {
     res.json({
       csrfToken,
       user: {
+        rememberMe: parseRememberMe(rememberMe),
         id: user.id,
         username: user.username,
         email: user.email,
@@ -248,7 +249,10 @@ const getMe = async (req, res) => {
     .eq('id', req.user.id)
     .single();
 
-  res.json({ user });
+  // rememberMe is a property of the session, not the account, so it comes from
+  // the JWT via the auth middleware rather than the users table. The client
+  // uses it to suppress the idle-logout timer for persistent sessions.
+  res.json({ user: user ? { ...user, rememberMe: Boolean(req.rememberMe) } : user });
 };
 
 /**

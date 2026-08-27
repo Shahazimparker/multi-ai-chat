@@ -70,6 +70,8 @@ This document provides essential context about the codebase, deployment environm
 - `backend/services/rag.service.js`: Topic RAG context building, pgvector similarity search with Cohere cross-encoder reranking fallback.
 - `backend/services/documentLoader.service.js`: Unified loader for PDF, Word, Excel, CSV, text, code, and images with OCR/Vision fallback.
 - `backend/services/chatPipeline.service.js`: Unified AI pipeline for streaming, reasoning tokens, tool loops, and temporal grounding.
+- `backend/services/contextWindow.service.js`: Measures the assembled prompt against the model's real window and evicts only when it genuinely does not fit. Owns the eviction ladder, the cache-stable low-water mark, and the merge of retrieved context into the user turn.
+- `backend/services/ai/promptCache.service.js`: Single place that understands each provider's prompt-cache dialect (Anthropic / OpenAI / DeepSeek / Gemini field names), builds the per-conversation `prompt_cache_key`, and places the Anthropic history breakpoint.
 - `backend/services/toolProcessor.service.js`: Tool execution dispatcher, SRE diagnostic digest scanner, SAP ST22 parser, web search cross-referencing loop.
 - `backend/services/rag2.service.js`: Advanced RAG 2.0 (RAPTOR trees, GraphRAG, multi-query expansion, Cohere reranking).
 - `frontend/src/pages/hooks/useChatSession.js`: Chat SSE streaming, Vercel Blob client direct upload.
@@ -82,13 +84,51 @@ This document provides essential context about the codebase, deployment environm
 1. **Raw Prompt Preservation (Secondary LLM Query Compression Disabled)**:
    - Query compression via secondary LLMs (OpenRouter Gemini Flash Lite) is disabled for all models to preserve raw prompt fidelity (e.g. big data, logs, code, stack traces) without unexpected background token consumption.
    - A lightweight local regex pass (`compressPrompt`) removes conversational polite filler phrases (e.g. "please help me") for inputs >50 characters without altering substantive prompt payload.
-2. **Model Context Windows & Hard Caps**:
+2. **Model Context Windows — Measure and Evict (`contextWindow.service.js`)**:
    - Each model accepts raw input up to its declared capacity (e.g., Codestral: 256K, Ministral 14B: 128K, Mistral Small / Medium / Large: 128K, DeepSeek V4: 128K, Claude Sonnet 5: 200K, Gemini/Groq: 5,999).
-   - If a prompt exceeds the model's allowed capacity or the user's `per_query_limit`, the backend returns an explicit `query_too_long` or `context_too_large` error rather than silently truncating the user's data.
+   - The percentage budgets in `tokenBudget.service.js` size **retrieval** (how much RAG/file text to fetch). They are soft targets and must always sum to <= 100%. They are **not** the safety mechanism.
+   - The prompt is assembled raw, measured, and sent **untouched** when it fits — the normal path on a 128K-256K model, where a long conversation is never trimmed just for being long. The same array object is returned so the prefix stays byte-identical and provider prompt caches keep hitting.
+   - When it genuinely does not fit, eviction runs in a fixed order, **never mid-message**: disposable retrieved context (web/URL) -> oldest whole history turns (floor of `CONTEXT_MIN_RECENT_MESSAGES`) -> remaining retrieved context -> the current query as a last resort (floor of `CONTEXT_MIN_QUERY_TOKENS`).
+   - Eviction runs down to a **low-water mark** (`CONTEXT_EVICTION_TARGET_RATIO`, default 0.85), not merely under the ceiling. Trimming the bare minimum would overflow again next turn and mutate the prefix on every request, collapsing the provider cache-hit rate.
+   - `context_too_large` is now returned only when eviction has spent every lever and the turn is genuinely impossible. Previously any overflow landed there.
+   - Tool rounds are budgeted against what the base prompt actually left, not a flat share of the window.
 3. **Embedding Vector Safety (Supabase 500MB Cap)**:
    - Query embeddings and post-turn cross-chat memory embeddings (`embedText` / `embedAndStoreMessage`) are bounded to <= 6,000 / 3,000 tokens to prevent provider crashes, runaway embedding costs, and database storage bloat under Supabase's 500MB free-tier limit.
-4. **Reserved Output Tokens (4,000 Tokens)**:
-   - Reserved output tokens set to 4,000 for models with $\ge 32\text{k}$ context (DeepSeek V4, Mistral/Ministral/Codestral, Claude Sonnet) to prevent premature answer truncation during complex code/reasoning generations.
+4. **Reserved Output Tokens & Safety Margin**:
+   - A flat **8,192** tokens are reserved for the reply on models with $\ge 32\text{k}$ context; models below that reserve 25% of their window (800-4,000). A 128K and a 200K model write replies of the same order, so scaling the reserve with the window would only waste prompt space history could use. Override with `CONTEXT_RESERVED_OUTPUT_TOKENS`.
+   - A further **safety margin** (`CONTEXT_SAFETY_MARGIN_RATIO`, default 6%) sits below the usable window. Token counts here are estimates and they drift worst on dense logs and stack traces — exactly this app’s traffic — so the margin is what stops an underestimate becoming a provider-side rejection.
+   - `estimateTokens` takes `max(char, word)` rather than the average, is density-aware (3 chars/token for structured text vs 4 for prose), and counts multimodal image parts (~1,200 each). `trimTextByTokens` is self-calibrating and verified against the estimator, so a trim to N tokens never returns more than N.
+
+---
+
+## 5b. Prompt Caching (Provider Prefix Reuse)
+
+Verified live 2026-08-28. Do not "simplify" any of the below without re-measuring — every failure mode here is silent: the API returns a normal answer and only the bill moves.
+
+1. **Prompt order is load-bearing**:
+   - Order is `system (static) | system (temporal) | ...history... | [retrieved context + question]`.
+   - Retrieved context is deliberately **not** a system block. It changes every turn, and a provider cache keys on an exact prefix, so anything volatile placed ahead of the history breaks the prefix there and the whole conversation is re-read at full price. Moving it beside the question took the cacheable prefix from ~1K to ~85K tokens on a long thread.
+   - It also reads better: models attend worst to the middle of a long context ("lost in the middle", arXiv 2307.03172), and this puts retrieved passages at the end, next to the question they answer.
+   - The block travels as its own message flagged `__volatileContext` so the window fitter can still drop whole sections by priority, then `mergeVolatileIntoQuery` folds it into the user turn before dispatch — providers see one message and role alternation holds.
+
+2. **Per-provider mechanics** (each differs; the dialects are normalised in `promptCache.service.js`):
+   - **Mistral** (the default model) — caching is **NOT automatic**. Without `prompt_cache_key` the API simply does not cache and says nothing about it. Measured: 0 cached tokens without the key, 1,152 with. Minimum prefix 64 tokens, 1h TTL, cached tokens bill at ~10%.
+   - **DeepSeek** — automatic, no parameter. Reports `prompt_cache_hit_tokens`. Hits bill at $0.014/M against $0.14/M uncached. Measured 2,432 tokens served from cache on turn two.
+   - **OpenAI** — automatic above 1,024 tokens; `prompt_cache_key` is a routing hint OpenAI recommends setting explicitly.
+   - **Groq / Gemini** — automatic; read-only metrics.
+   - **Claude** — explicit `cache_control` breakpoints. The system field alone holds ~959 tokens here, under Anthropic's 1,024 floor, and a sub-minimum breakpoint is **accepted and then silently ignored** — which is why caching never engaged. The breakpoint that pays sits at the end of the conversation history. Writes bill at 1.25x, so both Claude paths check the minimum before paying for a cache that can never be read.
+
+3. **Usage field names differ per provider and reading the wrong one fails silently** — always go through `extractCacheUsage`:
+   - Anthropic `cache_creation_input_tokens` / `cache_read_input_tokens`
+   - OpenAI, Mistral, Groq `prompt_tokens_details.cached_tokens`
+   - DeepSeek `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`
+   - Gemini `usageMetadata.cachedContentTokenCount`
+
+4. **Switching model mid-conversation**: caches never transfer between providers. A switch costs exactly one cold turn; turns after it re-warm normally because system + history stay stable. Switching back later may re-hit the earlier cached prefix while it is still within TTL.
+
+5. **`cacheHit` vs prompt cache — do not merge these again**:
+   - `cacheHit` / `query_analytics.cache_hit` means *the reply came from our own exact/semantic response cache, no model was called*. It drives the UI "(Cached)" badge and the admin reply-cache-rate tile.
+   - Prompt-cache volume is `cacheReadTokens` / `cacheCreationTokens` and the `prompt_cache_*_tokens` columns. Feeding `cacheHit` from those would mark nearly every DeepSeek reply "(Cached)" and pin the admin tile near 100%.
 
 ---
 

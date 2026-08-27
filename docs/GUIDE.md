@@ -19,9 +19,11 @@ This is the main setup and maintenance guide for the current repo state.
 - **Reasoning / Thinking mode** — per-model effort level (low/medium/high/max/xhigh) with a collapsible `ReasoningPanel` in the UI. Model chain-of-thought stored in `messages.reasoning` and shown on history reload.
 - **Message timestamps & actions** — bottom-right timestamp display on sent messages and AI responses with localized 12-hour formatting and full date/time hover tooltips; left-aligned copy actions.
 - **Shared pipeline** (`chatPipeline.service.js`) keeps legacy JSON and streaming chat behavior aligned
+- **Measured context window** (`contextWindow.service.js`) — the assembled prompt is measured against the model's real window and sent untouched when it fits, so a long conversation is never trimmed just for being long. On genuine overflow, whole history turns are evicted oldest-first (never mid-message) down to a low-water mark that keeps the prompt prefix stable across turns.
+- **Provider prompt caching** (`ai/promptCache.service.js`) — retrieved context travels with the question instead of ahead of the history, keeping system + history a byte-identical cacheable prefix. Mistral requires `prompt_cache_key` (it does not cache without it); Claude gets an explicit breakpoint at the end of the history; DeepSeek/OpenAI/Groq/Gemini cache automatically. Per-turn cache reads/writes are logged and aggregated in the admin dashboard.
 - **Temporal grounding** — current date/time/week injected into every system prompt via `temporalContext.service.js`; resolves user-saved timezone preference → browser zone → `APP_DEFAULT_TIMEZONE`
 - **Authenticated chat flows** with `httpOnly` cookie auth and double-submit CSRF
-- **Idle logout** — configurable via `VITE_IDLE_TIMEOUT_MINUTES` (default 30); shared across tabs via localStorage
+- **Idle logout** — configurable via `VITE_IDLE_TIMEOUT_MINUTES` (default 30); shared across tabs via localStorage. Skipped for "Remember me" sessions, which run to their own 30-day cookie expiry.
 
 ### Knowledge Base (RAG 2.0) — New
 Full knowledge management system at `/knowledge`:
@@ -127,6 +129,15 @@ CHAT_MAX_DB_QUERIES=12       ENABLE_ORCHESTRATOR_BRAIN=false
 # Temporal grounding
 APP_DEFAULT_TIMEZONE=UTC     TEMPORAL_PRECISION_MS=60000
 
+# Context window (see contextWindow.service.js). None of these trim a prompt
+# that fits; they shape the ceiling used when one genuinely overflows.
+CONTEXT_RESERVED_OUTPUT_TOKENS=0    # 0 = auto: flat 8192 at/above a 32K window
+CONTEXT_SAFETY_MARGIN_RATIO=0.06    # headroom absorbing token-estimate drift
+CONTEXT_EVICTION_TARGET_RATIO=0.85  # evict to this fraction, keeping the prefix cache-stable
+CONTEXT_MIN_RECENT_MESSAGES=4       # history messages eviction never drops
+CONTEXT_MIN_QUERY_TOKENS=512        # below this the turn is refused, not stubbed
+COHERE_RERANK_RPM=10                # local rerank budget, throttles before a 429
+
 # Knowledge Base / RAG 2.0
 RAG_RERANK_ENABLED=true      COHERE_RERANK_MODEL=rerank-v3.5
 RAG_QUERY_EXPANSION_ENABLED=true   RAG_HYDE_ENABLED=false
@@ -142,9 +153,9 @@ PDF_OCR_ENABLED=true         PDF_OCR_MODEL=mistral-ocr-latest
 
 ### Frontend
 
-- `VITE_API_URL` — backend base URL
+- `VITE_API_URL` — backend base URL. **Also has to appear in the `connect-src` directive of the CSP in `frontend/vercel.json`**, or the browser blocks every API call. Change one, change the other.
 - `VITE_SENTRY_DSN` — optional Sentry project DSN
-- `VITE_IDLE_TIMEOUT_MINUTES` — idle logout timeout (default 30)
+- `VITE_IDLE_TIMEOUT_MINUTES` — idle logout timeout (default 30). Not applied to "Remember me" sessions, which run to their own 30-day cookie expiry.
 
 ---
 

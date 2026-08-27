@@ -44,10 +44,23 @@ const {
   createDynamicPromptBudget,
   calculateComplexityScore,
   getTopicTurnCount,
-  estimateMessagesTokens,
   estimateTokens,
   trimTextByTokens,
 } = require('./tokenBudget.service');
+const {
+  createContextWindow,
+  fitPromptToWindow,
+  describeFitReport,
+  toolLoopHeadroom,
+  mergeVolatileIntoQuery,
+  VOLATILE_CONTEXT_FLAG,
+} = require('./contextWindow.service');
+
+// Blank line between retrieved sections, matching what splitVolatileSections in
+// contextWindow.service.js splits on. Built from a char code so the two can
+// never drift apart through an editing accident.
+const SECTION_GAP = String.fromCharCode(10) + String.fromCharCode(10);
+const { describeCacheUsage, buildPromptCacheKey } = require('./ai/promptCache.service');
 
 /**
  * runChatPipeline — single shared pipeline for streaming chat and legacy JSON compatibility.
@@ -599,10 +612,19 @@ const runChatPipeline = async (opts) => {
     }
 
     // Anonymous callers have no `per_query_limit` row, so ANONYMOUS_TOKEN_LIMIT stands in as their per-request cap.
-    const modelMaxLimit = promptBudget.maxPromptTokens || modelConfig.maxTokens || 16000;
-    const effectivePerQueryLimit = perQueryLimitEnabled && user?.per_query_limit
-      ? Math.min(user.per_query_limit, modelMaxLimit)
-      : (isAnonymous ? Math.min(ANONYMOUS_TOKEN_LIMIT, modelMaxLimit) : modelMaxLimit);
+    // A per-request cap can only ever lower the ceiling, never raise it past
+    // what the model can physically accept.
+    const perRequestCap = perQueryLimitEnabled && user?.per_query_limit
+      ? user.per_query_limit
+      : (isAnonymous ? ANONYMOUS_TOKEN_LIMIT : null);
+
+    // The real ceiling the assembled prompt has to fit under. Everything above
+    // this point sizes retrieval; from here on, measurement decides.
+    const contextWindow = createContextWindow(
+      modelConfig,
+      perRequestCap ? { maxPromptTokens: perRequestCap } : {}
+    );
+    const effectivePerQueryLimit = contextWindow.hardCeiling;
 
     if (estimatedInputTokens > effectivePerQueryLimit) {
       const userMessage = `Query exceeds maximum allowed tokens. The limit for ${modelConfig.label || modelId} is ${effectivePerQueryLimit.toLocaleString()} tokens, but your query is ~${estimatedInputTokens.toLocaleString()} tokens.`;
@@ -629,6 +651,22 @@ const runChatPipeline = async (opts) => {
     if (exactCacheEnabled && !isIdentityQuestion) {
       const cachedReply = await getCachedResponse(compressedQuery, modelId, user?.id, resolvedTopicId);
       if (cachedReply) {
+        // Logged here rather than at the end of the pipeline, which this path
+        // returns before ever reaching. Without it a response-cache hit was
+        // invisible to analytics and the admin cache-hit-rate tile could only
+        // ever read 0%, however well the cache was working.
+        await logAnalytics({
+          userId: user?.id,
+          query: message,
+          modelId,
+          tokensUsed: totalAITokens,
+          isAnonymous,
+          cacheHit: true,
+          promptCacheReadTokens: 0,
+          promptCacheWriteTokens: 0,
+          responseTimeMs: Date.now() - startTime,
+        });
+
         return makePipelineResult({
           finalReply: cachedReply,
           // A cache hit is free, but any brain tokens already spent are not.
@@ -675,6 +713,22 @@ const runChatPipeline = async (opts) => {
       {
         const semanticCachedReply = await getSemanticCachedResponse(queryVector, modelId, CHAT_SEMANTIC_CACHE_THRESHOLD, user?.id, resolvedTopicId, queryVectorSpace);
         if (semanticCachedReply) {
+          // Logged here rather than at the end of the pipeline, which this path
+          // returns before ever reaching. Without it a response-cache hit was
+          // invisible to analytics and the admin cache-hit-rate tile could only
+          // ever read 0%, however well the cache was working.
+          await logAnalytics({
+            userId: user?.id,
+            query: message,
+            modelId,
+            tokensUsed: totalAITokens,
+            isAnonymous,
+            cacheHit: true,
+            promptCacheReadTokens: 0,
+            promptCacheWriteTokens: 0,
+            responseTimeMs: Date.now() - startTime,
+          });
+
           return makePipelineResult({
             finalReply: semanticCachedReply,
             billableTokens: totalAITokens,
@@ -951,9 +1005,16 @@ ${page.text}`)
     if (fileContext) volatileSections.push(`## File Context\n${fileContext}`);
     if (memoryContext) volatileSections.push(memoryContext);
     if (knowledgeBaseContext) volatileSections.push(knowledgeBaseContext);
-    if (volatileSections.length > 0) {
-      aiMessages.push({ role: 'system', content: volatileSections.join('\n\n') });
-    }
+    // Retrieved context is NOT emitted as a system block. It changes on every
+    // turn, and a provider's prompt cache keys on an exact prefix: anything
+    // volatile placed ahead of the history breaks the prefix there, so the
+    // whole conversation is re-read at full price every request. Sitting it
+    // beside the question instead leaves system + history byte-identical turn
+    // to turn, which took the cacheable prefix from ~1k tokens to ~85k on a
+    // long thread. It also reads better: models attend worst to the middle of
+    // a long context, and this moves retrieved passages to the end, next to
+    // the question they answer.
+    const pinnedSystemCount = aiMessages.length;
 
     // History. The `history` fallback is client-supplied (anonymous sessions have
     // no server-side topic), so it is untrusted: cap the number of turns, coerce
@@ -965,13 +1026,34 @@ ${page.text}`)
       aiMessages.push(...sanitizeClientHistory(history, promptBudget.historyTokens));
     }
 
-    // Current user message
+    // Deliberately NOT pre-trimmed. A pasted log or stack trace is usually the
+    // whole point of the turn, and cutting it to a fixed percentage before
+    // knowing what the rest of the prompt weighs threw away context that had
+    // room. If the assembled prompt really does overflow, fitPromptToWindow
+    // trims the query as its last resort, after everything cheaper is gone.
+    // The retrieved context rides in as its own flagged message so the window
+    // fitter can still drop whole sections from it by priority. It is merged
+    // into the user turn immediately after fitting, so the provider sees one
+    // message and role alternation stays intact.
+    if (volatileSections.length > 0) {
+      aiMessages.push({
+        role: 'user',
+        content: volatileSections.join(SECTION_GAP),
+        [VOLATILE_CONTEXT_FLAG]: true,
+      });
+    }
+
+    // Deliberately NOT pre-trimmed. A pasted log or stack trace is usually the
+    // whole point of the turn, and cutting it to a fixed percentage before
+    // knowing what the rest of the prompt weighs threw away context that had
+    // room. If the assembled prompt really does overflow, fitPromptToWindow
+    // trims the query as its last resort, after everything cheaper is gone.
     const userContent = image
       ? [
           { type: 'text', text: finalQuery || 'Analyze this image' },
           { type: 'image_url', image_url: { url: image } },
         ]
-      : trimTextByTokens(finalQuery, promptBudget.queryTokens);
+      : finalQuery;
     aiMessages.push({ role: 'user', content: userContent });
 
     const artifactIntent = !image ? detectArtifactIntent(finalQuery) : null;
@@ -1003,10 +1085,33 @@ ${page.text}`)
       });
     }
 
-    const promptTokens = estimateMessagesTokens(aiMessages);
+    // ── 8b. Fit the assembled prompt to the model's window ────
+    // Everything above assembled raw. Measure it now and evict only if it
+    // genuinely does not fit — which on a 128K-256K model is the exception, not
+    // the rule. When it fits, aiMessages is returned untouched so the prompt
+    // prefix is byte-identical to last turn and the provider's cache still hits.
+    const fit = fitPromptToWindow({
+      messages: aiMessages,
+      window: contextWindow,
+      pinnedSystemCount,
+    });
+    // Fold the retrieved-context block into the user turn now that eviction has
+    // decided what survives, so the provider sees one message and role
+    // alternation holds.
+    const fittedMessages = mergeVolatileIntoQuery(fit.messages);
+    const promptTokens = fit.report.tokensAfter;
 
-    if (promptTokens > effectivePerQueryLimit) {
-      const userMessage = `Query context too large after RAG/history. The limit for ${modelConfig.label || modelId} is ${effectivePerQueryLimit.toLocaleString()} tokens, but current prompt is ~${promptTokens.toLocaleString()} tokens.`;
+    if (fit.report.evicted) {
+      console.warn(`[ChatPipeline] Context eviction: ${describeFitReport(fit.report)}`);
+    } else {
+      console.log(`[ChatPipeline] Context: ${describeFitReport(fit.report)}`);
+    }
+
+    // Only when eviction has spent every lever it has — all droppable history
+    // gone, retrieved context gone, query trimmed to its floor — is the turn
+    // genuinely impossible. Before this change any overflow landed here.
+    if (fit.report.overflow) {
+      const userMessage = `This message is too large for ${modelConfig.label || modelId} even after trimming older context. The limit is ${contextWindow.hardCeiling.toLocaleString()} tokens; this request needs ~${promptTokens.toLocaleString()}. Try a model with a larger context window, or send less text at once.`;
       return makePipelineResult({
         err: new Error(userMessage),
         errorType: 'context_too_large',
@@ -1057,10 +1162,19 @@ ${page.text}`)
 
     const loopResult = await runToolLoop({
       effectiveModelConfig,
-      aiMessages,
+      // The fitted array, not the raw one — the loop appends to whatever it is
+      // given, so handing it the pre-eviction messages would put the evicted
+      // context straight back into the prompt.
+      aiMessages: fittedMessages,
       abortController,
       processToolCallArgs,
       promptBudget,
+      // Tool rounds are budgeted against what the base prompt actually left,
+      // not a flat share of the window.
+      contextWindow,
+      // Keyed per conversation: every turn of one chat shares a prefix and
+      // should land on the same provider backend.
+      promptCacheKey: buildPromptCacheKey(resolvedTopicId, user?.id),
       maxToolRounds: MAX_TOOL_ROUNDS,
       deadlineAt: startTime + CHAT_TIME_BUDGET_MS,
       loggerPrefix: 'ChatPipeline',
@@ -1082,6 +1196,10 @@ ${page.text}`)
     totalEmbeddingTokens += loopResult.totalEmbeddingTokens || 0;
     const cacheCreationTokens = loopResult.cacheCreationTokens || 0;
     const cacheReadTokens = loopResult.cacheReadTokens || 0;
+    // Prompt caching is invisible unless it is reported. Most providers here
+    // cache automatically, so this line is the only way to tell a working cache
+    // from one that silently stopped hitting because the prefix started moving.
+    console.log(`[ChatPipeline] ${modelConfig.label || modelId} ${describeCacheUsage({ cacheCreationTokens, cacheReadTokens }, promptTokens)}`);
     const generatedMediaFiles = loopResult.generatedMedia || [];
     const reasoningText = loopResult.reasoningText || '';
 
@@ -1291,7 +1409,11 @@ ${page.text}`)
       modelId,
       tokensUsed: finalBillableTokens,
       isAnonymous,
-      cacheHit: cacheReadTokens > 0,
+      // Reaching here means the model was actually called, so this is never a
+      // response-cache hit. Those are logged at their own early returns above.
+      cacheHit: false,
+      promptCacheReadTokens: cacheReadTokens,
+      promptCacheWriteTokens: cacheCreationTokens,
       responseTimeMs: Date.now() - startTime,
     });
 
@@ -1305,7 +1427,16 @@ ${page.text}`)
       queryCacheHit: false,
       cacheCreationTokens,
       cacheReadTokens,
-      cacheHit: cacheReadTokens > 0,
+      // `cacheHit` is what the UI labels "(Cached)" and what the admin
+      // cache-hit-rate tile counts, so it has to keep meaning "this reply was
+      // served from our cache without calling the model". It is deliberately
+      // NOT `cacheReadTokens > 0`: that is the provider's prompt cache, which
+      // reuses the prompt prefix while still generating a fresh answer. Once the
+      // adapters started reporting prompt-cache reads correctly, the old
+      // definition would have stamped "(Cached)" on nearly every DeepSeek reply
+      // and pushed the admin tile to ~100%. Prompt-cache volume is reported
+      // separately, in cacheReadTokens/cacheCreationTokens.
+      cacheHit: false,
       generatedMediaFiles,
       resolvedTopicId,
       persistError,

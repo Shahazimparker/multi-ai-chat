@@ -17,6 +17,8 @@ Multi-AI Chat is a full-stack chat platform that unifies 17 configured AI models
 - **Knowledge Base (RAG 2.0)**: upload documents, crawl websites, or add notes into named collections; the AI answers from them with cited passages and relevance scores.
 - URL intelligence reads and summarizes user-provided links in chat, with dedicated handling for code repos and major knowledge/content sites.
 - Semantic caching reduces repeated API spend.
+- **Provider prompt caching** reuses the unchanged part of a conversation on the provider's side, so a long thread is not re-billed at full price every turn. Measured live: ~90% of the prompt served from cache on the second turn (DeepSeek cached input bills at roughly a tenth of the uncached rate). Cache volume is recorded per request and reported in the admin dashboard.
+- **Long conversations stay intact.** The prompt is measured against each model's real context window and sent whole when it fits, so answer quality does not quietly degrade as a thread grows; trimming happens only when a request genuinely cannot fit, and drops whole earlier turns rather than cutting text mid-sentence.
 - Token quotas prevent runaway usage.
 - **Reasoning models**: chain-of-thought visible to users in a collapsible panel, stored in DB for history reloads.
 - **Temporal grounding**: the model always knows today's date/time in the user's timezone.
@@ -38,12 +40,13 @@ Multi-AI Chat is a full-stack chat platform that unifies 17 configured AI models
 
 | Area | Current State |
 |---|---|
-| Auth | Login, JWT cookie sessions, admin checks, brute-force lockout, idle logout |
+| Auth | Login, JWT cookie sessions, admin checks, brute-force lockout, idle logout (skipped for 30-day "Remember me" sessions) |
 | Chat | Streaming + non-streaming; reasoning/thinking mode per model |
 | Models | 17 configured models (DeepSeek, Groq, Gemini, Mistral, Claude, OpenRouter) + live catalogs for `openrouter`, `together`, `anyapi` |
 | Reasoning | Per-model effort levels (low/medium/high/max/xhigh); chain-of-thought panel; stored in DB |
 | Memory | Per-topic history with dynamic summarization + cross-chat semantic memory (accurate mode) |
 | RAG (chat uploads) | File and document retrieval, hybrid cosine+BM25+Jaccard+RRF reranking |
+| Context & cost control | Per-model context window measured per request; prompt caching across DeepSeek, Mistral, OpenAI, Groq, Gemini and Claude; cache hit rates surfaced in the admin dashboard |
 | **Knowledge Base (New)** | Named collections; file/web/text ingest; RAPTOR tree; GraphRAG; dense+sparse+graph retrieval; Cohere cross-encoder reranking |
 | URL Intelligence | Deep-read for GitHub/GitLab/Bitbucket/StackOverflow + major content/doc domains; generic fallback extraction |
 | Web Search | `Exa → Firecrawl → Tavily → SerpAPI` + LangSearch; per-chat toggle (not global) |

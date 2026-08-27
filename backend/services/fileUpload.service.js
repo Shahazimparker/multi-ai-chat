@@ -592,6 +592,11 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
               .from('uploaded_files_rag')
               .update({ original_content: sanitizedContent })
               .eq('id', ragRecord.id);
+          } else {
+            // Not an error, but it decides where later reads get their text: with
+            // no inline copy, resolveFullFileContent must fall back to Blob or
+            // rag_chunks. Silence here made that look like data loss.
+            console.log(`[FileUpload] ${fileName}: ${(sanitizedContent.length / 1048576).toFixed(1)}MB exceeds the 2.5MB inline column limit; full text served from ${blobUrl ? 'Blob' : 'rag_chunks'}.`);
           }
         } catch (colErr) {
           console.warn(`[FileUpload] original_content column update warning: ${colErr.message}`);
@@ -1011,14 +1016,71 @@ const cleanupTempFile = (filePath) => {
   }
 };
 
+// Markers a row carries when original_content holds a placeholder rather than
+// the file itself. Both ends are scanned and nothing in between: the "File
+// ready for queries." stub is a short string, and the truncation notice is
+// appended after the 300k slice — so a head-only scan would miss exactly the
+// case that matters most. Scanning the two ends rather than the whole value
+// keeps this off the hot path; String.includes over an 18MB column ran on every
+// file of every search.
+const CONTENT_STUB_MARKERS = [
+  'Truncated for RPC storage',
+  'File ready for queries.',
+];
+const STUB_SCAN_CHARS = 2000;
+
+/**
+ * True when original_content is a placeholder (or absent) and the real bytes
+ * have to be fetched from Blob, the Base64 column, or rag_chunks.
+ */
+const isContentIncomplete = (text) => {
+  if (!text) return true;
+  const ends = text.length <= STUB_SCAN_CHARS * 2
+    ? text
+    : text.slice(0, STUB_SCAN_CHARS) + text.slice(-STUB_SCAN_CHARS);
+  return CONTENT_STUB_MARKERS.some((marker) => ends.includes(marker));
+};
+
+/**
+ * Looks like a Base64 payload. Length must be a multiple of 4, which rules out
+ * a single-line all-alphanumeric plain-text file that the character-class test
+ * alone would happily decode into garbage.
+ */
+const looksLikeBase64 = (value) =>
+  typeof value === 'string' &&
+  value.length > 0 &&
+  value.length % 4 === 0 &&
+  /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+
 /**
  * Helper to fetch complete file text across Vercel Blob, Base64 DB storage,
  * and paginated rag_chunks reassembly (guaranteeing >1000 chunks for 10MB-50MB files).
+ *
+ * Local columns are checked before any network call: a row whose
+ * original_content is already the whole file must not trigger a Blob download,
+ * which on a search over ten files meant serially pulling tens of megabytes.
  */
 const resolveFullFileContent = async (fileRecord, userId) => {
   if (!fileRecord) return '';
 
-  // 1. If stored in private Vercel Blob, fetch directly from Blob
+  // 1. Local, complete content wins — no network, no decode.
+  if (!isContentIncomplete(fileRecord.original_content)) {
+    return fileRecord.original_content;
+  }
+
+  // 2. Base64 in original_file_data — still local.
+  if (fileRecord.original_file_data) {
+    try {
+      const bin = fileRecord.original_file_data;
+      if (looksLikeBase64(bin)) {
+        return Buffer.from(bin, 'base64').toString('utf-8');
+      }
+    } catch (binErr) {
+      console.warn('[FileContent] Base64 decode warning:', binErr.message);
+    }
+  }
+
+  // 3. Private Vercel Blob — the first path that costs a round trip.
   if (fileRecord.blob_url) {
     try {
       const { fetchPrivateBlobBuffer } = require('./blobStorage.service');
@@ -1027,23 +1089,6 @@ const resolveFullFileContent = async (fileRecord, userId) => {
     } catch (bErr) {
       console.warn('[FileContent] Blob fetch fallback warning:', bErr.message);
     }
-  }
-
-  // 2. If stored as Base64 in original_file_data, decode it
-  if (fileRecord.original_file_data) {
-    try {
-      const bin = fileRecord.original_file_data;
-      if (typeof bin === 'string' && /^[A-Za-z0-9+/=]+$/.test(bin)) {
-        return Buffer.from(bin, 'base64').toString('utf-8');
-      }
-    } catch (binErr) {
-      console.warn('[FileContent] Base64 decode warning:', binErr.message);
-    }
-  }
-
-  // 3. If original_content is complete (not truncated for RPC storage), return it directly
-  if (fileRecord.original_content && !fileRecord.original_content.includes('Truncated for RPC storage')) {
-    return fileRecord.original_content;
   }
 
   if (fileRecord.file_name && userId) {
@@ -1159,9 +1204,18 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
         const queryLower = query.toLowerCase().trim();
         const terms = queryLower.split(/\s+/).filter(t => t.length > 1);
 
+        // Each file can contribute up to 20 sampled snippets, so ten files could
+        // push 200 windows downstream before anything trims them. Cap the grep
+        // stage so the rerank and token budgets see a sane candidate set.
+        const MAX_GREP_SNIPPETS = 60;
+
         for (const f of files) {
+          if (results.length >= MAX_GREP_SNIPPETS) break;
+          // Only reach for Blob/Base64/rag_chunks when the row's own content is
+          // a placeholder. Fetching whenever blob_url merely existed re-downloaded
+          // the whole file on every query even though the text was already here.
           let contentToSearch = f.original_content;
-          if (!contentToSearch || contentToSearch.includes('Truncated for RPC storage') || f.blob_url) {
+          if (isContentIncomplete(contentToSearch)) {
             contentToSearch = await resolveFullFileContent(f, userId);
           }
           if (!contentToSearch) continue;
@@ -1219,6 +1273,7 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
               chunk_text: `[Lines ${startLine + 1} to ${endLine + 1} of ${lines.length}]\n${snippet}`,
               similarity: 1.0,
             });
+            if (results.length >= MAX_GREP_SNIPPETS) break;
           }
         }
       }
@@ -1284,11 +1339,18 @@ const searchUserFilesRAG = async (query, userId, topicId, signal = null, provide
               rerankScore: relevanceScore,
             }));
 
-            // Only filter below RAG_RERANK_MIN_RELEVANCE if at least one candidate clears it
+            // Only filter below RAG_RERANK_MIN_RELEVANCE if at least one candidate clears it.
+            // When the filter does bite, the un-scored tail is dropped along with the
+            // rejected candidates — keeping it would leave a rank-30 passage nobody
+            // scored ranked above a rank-5 passage the cross-encoder just rejected.
             const relevant = rerankedList.filter((item) => item.rerankScore >= RAG_RERANK_MIN_RELEVANCE);
             const remaining = results.slice(25);
             results.length = 0;
-            results.push(...(relevant.length > 0 ? relevant : rerankedList), ...remaining);
+            if (relevant.length > 0) {
+              results.push(...relevant);
+            } else {
+              results.push(...rerankedList, ...remaining);
+            }
             console.log(`[FileSearch] Reranked ${candidatesToRerank.length} file candidates via ${RAG_RERANK_MODEL} (top score: ${results[0]?.rerankScore?.toFixed(3)})`);
           }
         } catch (rerankErr) {

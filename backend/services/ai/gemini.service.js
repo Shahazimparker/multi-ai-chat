@@ -6,6 +6,7 @@
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { resolveReasoning } = require('./reasoning.service');
+const { extractCacheUsage } = require('./promptCache.service');
 
 /**
  * Shared helper to build Gemini model params from messages.
@@ -149,7 +150,8 @@ const callGemini = async (modelName, apiKey, messages, signal = null, modelConfi
   }
 
   const tokensUsed = result.response?.usageMetadata?.totalTokenCount || 0;
-  return { text, tokensUsed };
+  // Gemini caches implicitly and reports reads as cachedContentTokenCount.
+  return { text, tokensUsed, ...extractCacheUsage(result.response?.usageMetadata) };
 };
 
 /**
@@ -182,6 +184,8 @@ const callGeminiStream = async (modelName, apiKey, messages, signal = null, onCh
 
   let fullText = '';
   let tokensUsed = 0;
+  let cacheCreationTokens = 0;
+  let cacheReadTokens = 0;
 
   for await (const item of result.stream) {
     let delta = '';
@@ -205,6 +209,9 @@ const callGeminiStream = async (modelName, apiKey, messages, signal = null, onCh
   try {
     const response = await result.response;
     tokensUsed = response.usageMetadata?.totalTokenCount || 0;
+    const c = extractCacheUsage(response.usageMetadata);
+    cacheCreationTokens = c.cacheCreationTokens;
+    cacheReadTokens = c.cacheReadTokens;
     if (!fullText) {
       const candidate = response.candidates?.[0];
       if (candidate?.content?.parts) {
@@ -218,7 +225,7 @@ const callGeminiStream = async (modelName, apiKey, messages, signal = null, onCh
     console.warn('[GeminiStream] Aggregated response resolution notice:', respErr?.message);
   }
 
-  return { text: fullText, tokensUsed };
+  return { text: fullText, tokensUsed, cacheCreationTokens, cacheReadTokens };
 };
 
 module.exports = { callGemini, callGeminiStream, buildGeminiHistory, buildGeminiRequest };

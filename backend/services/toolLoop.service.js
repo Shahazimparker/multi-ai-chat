@@ -118,6 +118,8 @@ const runToolLoop = async ({
   processToolCallArgs,
   promptBudget,
   maxToolRounds,
+  contextWindow = null,
+  promptCacheKey = null,
   deadlineAt = null,
   loggerPrefix = 'Tool',
   onBeforeDispatch = null,
@@ -156,7 +158,19 @@ const runToolLoop = async ({
   const generatedMedia = [];
 
   const toolRoundStart = aiMessages.length;
-  const maxToolTokens = Math.floor(promptBudget.maxPromptTokens * 0.5);
+
+  // What the tool rounds may add on top of the prompt that is already here.
+  //
+  // The old flat `maxPromptTokens * 0.5` measured only the tool messages and
+  // ignored the base prompt entirely, so a base prompt at 90% of the window
+  // plus a full tool allowance came to 140% of it — the one path in the pipeline
+  // that could still hand a provider more than it accepts. Deriving the
+  // allowance from what the base actually left makes base + tools bounded by
+  // construction.
+  const baseTokens = estimateMessagesTokens(aiMessages);
+  const maxToolTokens = contextWindow
+    ? Math.max(1024, contextWindow.hardCeiling - baseTokens)
+    : Math.floor(promptBudget.maxPromptTokens * 0.5);
 
   const trimOldestToolRounds = () => {
     const estimatedToolTokens = estimateMessagesTokens(aiMessages.slice(toolRoundStart));
@@ -168,6 +182,15 @@ const runToolLoop = async ({
       aiMessages.splice(toolRoundStart, 2);
       console.log(`[${loggerPrefix}] Trimmed oldest tool round (~${oldPairTokens} tokens) - ${aiMessages.length - toolRoundStart} tool messages remain`);
       if (estimateMessagesTokens(aiMessages.slice(toolRoundStart)) <= maxToolTokens) break;
+    }
+
+    // Two tool messages are kept unconditionally above (the loop needs the round
+    // it is answering), so the trim can bottom out still over budget. Say so:
+    // a silent overshoot here reaches the provider as a context-length error
+    // with nothing in the logs explaining where the tokens came from.
+    const remaining = estimateMessagesTokens(aiMessages.slice(toolRoundStart));
+    if (remaining > maxToolTokens) {
+      console.warn(`[${loggerPrefix}] Tool rounds still ~${remaining} tokens against an allowance of ${maxToolTokens} after trimming to the minimum pair`);
     }
   };
 
@@ -225,7 +248,10 @@ const runToolLoop = async ({
         onReasoningChunk
           ? (chunk) => { reasoningText += chunk; onReasoningChunk(chunk); }
           : null,
-        reasoningRequest
+        reasoningRequest,
+        // Mistral does not cache at all without this, and OpenAI uses it to
+        // route requests sharing a prefix to the same backend.
+        { promptCacheKey }
       );
       aiResponse = streamResult;
       reply = streamResult.text;
@@ -234,7 +260,7 @@ const runToolLoop = async ({
       cacheReadTokens += streamResult.cacheReadTokens || 0;
       totalAITokens += tokensUsed || estimateRoundTokens(round, aiMessages, reply);
     } else {
-      const result = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal);
+      const result = await dispatchToAI(effectiveModelConfig, aiMessages, abortController.signal, { promptCacheKey });
       aiResponse = result;
       reply = result.text;
       tokensUsed = result.tokensUsed;

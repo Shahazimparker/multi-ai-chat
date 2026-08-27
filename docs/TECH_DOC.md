@@ -101,6 +101,12 @@ All values are read from env at startup with clamped parsing:
 | `GRAPHRAG_MAX_HOPS` | `1` | 0–3 | Graph traversal depth |
 | `DEFAULT_TIMEZONE` | `UTC` | IANA | Default timezone for temporal context |
 | `TEMPORAL_PRECISION_MS` | `60000` | 1000–3600000 | "Now" rendering granularity |
+| `CONTEXT_RESERVED_OUTPUT_TOKENS` | `0` (auto) | 0–64000 | Tokens held back for the reply. 0 derives it: flat 8,192 at/above a 32K window, 25% below |
+| `CONTEXT_SAFETY_MARGIN_RATIO` | `0.06` | 0.01–0.30 | Headroom below the usable window absorbing token-estimate drift |
+| `CONTEXT_EVICTION_TARGET_RATIO` | `0.85` | 0.50–0.99 | Low-water mark eviction targets, so the prefix stays stable across turns |
+| `CONTEXT_MIN_RECENT_MESSAGES` | `4` | 2–40 | History messages eviction will never drop |
+| `CONTEXT_MIN_QUERY_TOKENS` | `512` | 64–32000 | Floor below which the turn is refused rather than the question cut to a stub |
+| `COHERE_RERANK_RPM` | `10` | >=1 | Local rolling-window rerank budget, so bursts throttle before hitting a 429 |
 
 ### Core Services
 
@@ -147,9 +153,10 @@ All values are read from env at startup with clamped parsing:
 
 **Infrastructure:**
 - `cache.service.js` — semantic cache (pgvector cosine ≥ threshold); exact cache disabled for live chat
-- `tokenBudget.service.js` — `estimateTokens`, `fitMessagesToBudget`, `createDynamicPromptBudget`, `smartTrimContextBlock`
+- `tokenBudget.service.js` — `estimateTokens`, `fitMessagesToBudget`, `createDynamicPromptBudget`, `smartTrimContextBlock`. Budgets here size **retrieval** and always sum to <= 100%; they are not the window guard. `estimateTokens` takes `max(char, word)`, is density-aware (3 chars/token for structured text, 4 for prose) and counts multimodal image parts
+- `contextWindow.service.js` — **New**: the window guard. `createContextWindow` derives the hard ceiling (window − reserved output − safety margin) and a low-water mark; `fitPromptToWindow` measures the assembled prompt and returns it **untouched** when it fits, otherwise evicts in order (disposable context → oldest whole history turns → remaining context → query) down to the low-water mark; `mergeVolatileIntoQuery` folds the retrieved-context block into the user turn; `toolLoopHeadroom` budgets tool rounds against what the base prompt left
 - `tokenAccounting.service.js` — prefers provider-reported token counts over local estimates
-- `analytics.service.js` — `logAnalytics` per request
+- `analytics.service.js` — `logAnalytics` per request. Records `cache_hit` (**response** cache: reply served without calling a model) separately from `prompt_cache_read_tokens` / `prompt_cache_write_tokens` (**provider prefix** cache). Degrades to the legacy insert shape if `migration_add_prompt_cache_analytics.sql` has not been applied, so code-before-schema loses detail rather than dropping rows
 - `fileUpload.service.js` — file ingestion, embedding, ZIP safety limits, hybrid grep/vector search, and private Blob fallback
 - `toolProcessor.service.js` — **New**: tool execution dispatcher, SRE diagnostic log digest scanner (Logdy/OpenObserve sliding-window clustering), SAP ST22 short dump sectional parser, and dynamic web error cross-referencing loop (`[WEB_SEARCH]` ➔ `[SEARCH_FILES]`)
 - `blobStorage.service.js` — **New**: wrapper for `@vercel/blob` (`get`, `del`, `head`, `setBlobClient`, `fetchPrivateBlobBuffer`, `deleteBlobFromStorage`)
@@ -177,14 +184,17 @@ All values are read from env at startup with clamped parsing:
 
 ### AI Provider Layer
 
-- Dispatcher: `backend/services/ai/dispatcher.service.js` — wraps all providers with `AI_CALL_TIMEOUT_MS` deadline
+- Dispatcher: `backend/services/ai/dispatcher.service.js` — wraps all providers with `AI_CALL_TIMEOUT_MS` deadline. Both `dispatchToAI` and `dispatchToAIStream` accept an `options` object carrying `promptCacheKey`
+- Prompt cache: `backend/services/ai/promptCache.service.js` — **New**. `extractCacheUsage` normalises the four provider dialects (Anthropic `cache_creation_input_tokens`/`cache_read_input_tokens`; OpenAI/Mistral/Groq `prompt_tokens_details.cached_tokens`; DeepSeek `prompt_cache_hit_tokens`; Gemini `cachedContentTokenCount`) — reading the wrong one fails **silently**, so every adapter goes through it. `buildPromptCacheKey` keys per conversation. `applyAnthropicHistoryBreakpoint` places Claude's `cache_control` at the end of the history, checking the 1,024-token floor first (a sub-minimum breakpoint is accepted and then ignored, while still billing a 1.25x write)
+  - **Mistral does not cache at all without `prompt_cache_key`** — it is the default model, so this parameter is the difference between caching working and not existing. Verified live: 0 cached tokens without, 1,152 with
+  - Caches are per-provider: switching model mid-conversation costs exactly one cold turn, then re-warms
 - `reasoning.service.js` — **New**: `resolveReasoning()` maps effort level (low/medium/high/max/xhigh) to the correct per-provider parameter; `supportsReasoning()` gates the Thinking UI toggle per model
 - Provider modules: `gemini`, `groq`, `mistral`, `deepseek`, `claude`, `openrouter`, `openai`, `cohere`, `together`, `anyapi`, `unified`
 
 ### Model Configuration
 
 - Source of truth: `backend/config/models.js`
-- **Current registry: 14 static entries + 2 live-catalog providers (`together`, `anyapi`)**
+- **Current registry: 17 entries (16 fixed models + the `openrouter` live-list entry) + 2 additional live-catalog providers (`together`, `anyapi`)**
 
 | Key | Label | Provider | Free |
 |---|---|---|---|
@@ -392,6 +402,7 @@ Knowledge Collection
 | `migration_add_user_timezone.sql` | **New**: `users.timezone` (IANA) for temporal context resolution |
 | `migration_add_embedding_space.sql` | **New**: `embedding_space` column on `uploaded_files_rag`, `message_embeddings`, `query_cache`; all searches now filter by space |
 | `migration_add_admin_analytics.sql` | **New**: `get_admin_analytics()` SQL aggregate function (replaces JS-side 1000-row-capped aggregation) |
+| `migration_add_prompt_cache_analytics.sql` | **New**: `query_analytics.prompt_cache_read_tokens` / `prompt_cache_write_tokens`, `created_at` index, and `get_admin_analytics()` extended with `promptCacheReadTokens` / `promptCacheWriteTokens` / `promptCacheHitRate`. Also redefines `cache_hit` to mean response-cache only |
 | `migration_enable_rls_all_tables.sql` | Row-level security for all tables |
 | `migration_add_generated_files_to_messages.sql` | `messages.generated_files` column |
 
@@ -442,6 +453,10 @@ Knowledge Collection
 | `approval.controller.js` | IDOR: `canAccessApproval()` ownership check added; non-admin users can only respond to their own approvals |
 | `auth.controller.js` | Brute-force lockout: `login_attempt_counters` table (Supabase-backed); serverless-safe |
 | `rateLimitStore.service.js` | Serverless rate-limit: `MemoryStore` replaced with Supabase store — counters survive across lambda instances |
+| `server.js` + `frontend/vercel.json` | CSP relocated: the policy that governs the UI now ships as a header from the frontend deployment (no `unsafe-inline` for scripts). The backend serves JSON, so `script-src`/`style-src` set there reached no page a user loads; it now sends a strict `default-src 'none'` suited to an API origin. **`connect-src` hardcodes the backend origin — a changed `VITE_API_URL` must be added there or every API call is blocked** |
+| `upload.routes.js` | Chunked-upload ownership verified against the shared `upload_chunks_staging` table, not only the per-instance in-memory Map (empty on a serverless cold start, so the check silently passed) |
+| `knowledge.routes.js` + `upload.routes.js` | Blob URL validation (`isValidVercelBlobUrl`) on `process-blob` endpoints |
+| `AuthContext.jsx` | Idle logout no longer tears down a 30-day "Remember me" session; `rememberMe` rides the JWT and is surfaced by `/auth/me` |
 
 ---
 

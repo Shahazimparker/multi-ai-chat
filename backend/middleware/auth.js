@@ -75,6 +75,12 @@ const createAuthMiddleware = ({ optional = false } = {}) => async (req, res, nex
 
     req.user = user;  // attach user to request object
 
+    // Whether this session was minted with "Remember me". It lives in the JWT,
+    // not the users table, so it has to be carried across here for /auth/me to
+    // report it — the client needs it to decide whether the idle-logout timer
+    // applies (a 30-day session must not be torn down after 30 idle minutes).
+    req.rememberMe = parseRememberMe(decoded.rememberMe);
+
     // Sliding session: an active user should not be logged out mid-task just
     // because a fixed clock started at login ran out. Only cookie-authenticated
     // requests are refreshed — a Bearer caller holds its own token and would

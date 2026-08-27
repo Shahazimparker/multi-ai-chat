@@ -16,12 +16,46 @@ const COHERE_RERANK_URL = 'https://api.cohere.com/v2/rerank';
 const RERANK_MAX_DOCUMENTS = 200;
 
 // Cohere Free Tier: 10 RPM / 1,000 monthly searches cap.
-// If a 429 occurs, record cooldown timestamp so subsequent queries skip
-// calling Cohere and immediately continue without rerank input.
+//
+// Two guards, both deliberately in-process:
+//
+//  * a reactive cooldown, armed when Cohere actually answers 429, and
+//  * a proactive rolling-window counter, so a burst of reranks throttles itself
+//    rather than spending the turn's latency budget on a request that will be
+//    rejected anyway.
+//
+// Both are per-instance state. On serverless each lambda keeps its own copy, so
+// neither is a true account-wide limiter — they cut the self-inflicted share of
+// 429s, they cannot enforce the account quota. Every caller already degrades to
+// un-reranked ordering, which is what makes that acceptable.
 let rateLimitCooldownUntil = 0;
 
-const isCohereRateLimited = () => Date.now() < rateLimitCooldownUntil;
-const clearCohereRateLimitCooldown = () => { rateLimitCooldownUntil = 0; };
+const RERANK_RPM_LIMIT = Math.max(
+  1,
+  parseInt(process.env.COHERE_RERANK_RPM, 10) || 10
+);
+const RPM_WINDOW_MS = 60 * 1000;
+let recentCallTimestamps = [];
+
+const pruneCallWindow = (now = Date.now()) => {
+  recentCallTimestamps = recentCallTimestamps.filter((t) => now - t < RPM_WINDOW_MS);
+};
+
+const hasRpmHeadroom = () => {
+  pruneCallWindow();
+  return recentCallTimestamps.length < RERANK_RPM_LIMIT;
+};
+
+const recordRerankCall = () => {
+  pruneCallWindow();
+  recentCallTimestamps.push(Date.now());
+};
+
+const isCohereRateLimited = () => Date.now() < rateLimitCooldownUntil || !hasRpmHeadroom();
+const clearCohereRateLimitCooldown = () => {
+  rateLimitCooldownUntil = 0;
+  recentCallTimestamps = [];
+};
 const setCohereRateLimitCooldown = (seconds = 60) => {
   rateLimitCooldownUntil = Date.now() + Math.max(1, seconds) * 1000;
 };
@@ -159,9 +193,14 @@ const rerankDocuments = async (query, documents, apiKey, options = {}) => {
     timeout = 10000,
   } = options;
 
-  if (isCohereRateLimited()) {
+  if (Date.now() < rateLimitCooldownUntil) {
     const remainingSec = Math.ceil((rateLimitCooldownUntil - Date.now()) / 1000);
     console.warn(`[Cohere] In 429 rate limit cooldown (${remainingSec}s remaining). Continuing without rerank input.`);
+    return { results: [], searchUnits: 0, rateLimited: true };
+  }
+
+  if (!hasRpmHeadroom()) {
+    console.warn(`[Cohere] Local rerank budget of ${RERANK_RPM_LIMIT}/min is spent. Continuing without rerank input.`);
     return { results: [], searchUnits: 0, rateLimited: true };
   }
 
@@ -179,6 +218,8 @@ const rerankDocuments = async (query, documents, apiKey, options = {}) => {
     documents: texts,
   };
   if (topN) payload.top_n = Math.min(topN, texts.length);
+
+  recordRerankCall();
 
   try {
     const response = await axios.post(COHERE_RERANK_URL, payload, {

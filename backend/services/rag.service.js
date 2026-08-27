@@ -545,6 +545,11 @@ const searchRelevantDocs = async (query, topK = 3, threshold = 0.4, provider = '
         if (rateLimited) {
           console.warn('[RAG] Cohere 429 rate limit hit; falling back to hybrid ordering.');
         } else if (rerankResults && rerankResults.length > 0) {
+          // Deliberately returns without consulting the caller's `threshold`.
+          // That argument gates a cosine score; RAG_RERANK_MIN_RELEVANCE below
+          // gates a calibrated cross-encoder score, which is the stricter and
+          // more meaningful of the two. Applying both would double-filter on
+          // scales that are not comparable.
           const reranked = rerankResults.map(({ index, relevanceScore }) => ({
             ...candidates[index],
             rerankScore: relevanceScore,

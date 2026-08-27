@@ -26,7 +26,7 @@ npm run e2e:ui          # Playwright test runner UI
 ### Backend Subfolder
 ```bash
 cd backend
-npm test                # unit and integration tests (46 test files, 597+ passed)
+npm test                # unit and integration tests (54 test files, 700 passed)
 npm run test:watch      # watch mode
 npm run test:coverage   # with coverage report
 npm run test:real       # real integration tests (requires live .env + backend running)
@@ -170,13 +170,17 @@ npm run test:watch      # frontend test watch mode
 backend/
 ├── __tests__/
 │   ├── setup.js                           # Global setup — loads .env but overwrites provider keys with placeholders
-│   ├── unit/                              # 44 unit test files
+│   ├── unit/                              # 52 unit test files
 │   │   ├── admin.controller.test.js       # Role enum, password policy, last-admin guard
 │   │   ├── approval.controller.test.js    # IDOR ownership check on respondFromChat / checkStatus
 │   │   ├── authLockout.test.js            # Brute-force lockout: login_attempt_counters
 │   │   ├── chatCleanup.test.js            # stripToolTags (18+ patterns), classifyError (8 types)
 │   │   ├── chatPipeline.resultShape.test.js # Pipeline return object contract
+│   │   ├── analytics.service.test.js      # Response-cache vs prompt-cache separation; unapplied-migration fallback
 │   │   ├── chatRuntime.config.test.js     # All env var parsing with clamping
+│   │   ├── contextWindow.test.js          # Measure-and-evict: fits-untouched, eviction order, hysteresis, cache-stable prefix
+│   │   ├── promptCache.test.js            # Provider cache dialects, Anthropic history breakpoint, cache key
+│   │   ├── promptCacheKey.wiring.test.js  # Mistral prompt_cache_key is actually sent (silent-failure guard)
 │   │   ├── compress.test.js               # Prompt compression
 │   │   ├── csrf.test.js                   # Double-submit CSRF header/cookie check
 │   │   ├── dispatcherTimeout.test.js      # AI_CALL_TIMEOUT_MS deadline enforcement
@@ -240,6 +244,10 @@ frontend/
 |---|---|
 | `chatCleanup.test.js` | `stripToolTags` all patterns, `classifyError` 8 error types |
 | `tokenBudget.test.js` | `estimateTokens`, `trimTextByTokens`, `fitMessagesToBudget`, `createDynamicPromptBudget`, `smartTrimContextBlock` |
+| `contextWindow.test.js` | `createContextWindow`, `fitPromptToWindow` (fast path returns the same array reference so the cached prefix is untouched; eviction order; low-water hysteresis; whole-message-only history eviction), `mergeVolatileIntoQuery`, `toolLoopHeadroom` |
+| `promptCache.test.js` | `extractCacheUsage` across all four provider dialects, `buildPromptCacheKey`, `applyAnthropicHistoryBreakpoint`, `describeCacheUsage` |
+| `promptCacheKey.wiring.test.js` | Mistral sends `prompt_cache_key` and omits it cleanly when absent; non-streaming cache reporting. Guards a failure that is invisible in logs and responses — only the bill moves |
+| `analytics.service.test.js` | `cache_hit` (response cache) stays separate from `prompt_cache_*_tokens` (provider cache); retries without the new columns when the migration is unapplied; never throws |
 | `toolProcessor-matchers.test.js` | All 13 tool tag matchers + `[EXECUTE_CODE]` regression guard |
 | `toolProcessor-logic.test.js` | `buildFileContext` attachment formatting and validation |
 | `pptGeneration.test.js` | All 15 slide layouts, 20 themes, edge cases |

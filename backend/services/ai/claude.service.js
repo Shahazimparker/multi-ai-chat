@@ -1,6 +1,8 @@
 const Anthropic = require('@anthropic-ai/sdk');
 
 const { resolveReasoning } = require('./reasoning.service');
+const { ANTHROPIC_MIN_CACHEABLE_TOKENS, applyAnthropicHistoryBreakpoint } = require('./promptCache.service');
+const { estimateTokens } = require('../tokenBudget.service');
 
 // Minimum Anthropic accepts for a thinking budget on pre-4.6 models.
 const HAIKU_THINKING_BUDGET_TOKENS = 4000;
@@ -34,17 +36,48 @@ const buildClaudeThinkingParams = (decision) => {
 /**
  * Shared helper: build system param and chat messages from the full messages array.
  */
+// Anthropic silently declines to cache a prefix shorter than the model minimum
+// and returns no error, so an under-sized breakpoint looks identical to a
+// working one. Checking the size here turns that silence into a log line.
+let loggedUncacheablePrefix = false;
+
 function extractClaudeParams(messages) {
   const systemMessages = messages.filter(m => m.role === 'system');
   const chatMessages = messages.filter(m => m.role !== 'system');
-  const system = systemMessages.length > 0
-    ? systemMessages.map((m, i) => ({
-        type: "text",
-        text: m.content,
-        ...(i === 0 ? { cache_control: { type: "ephemeral" } } : {}),
-      }))
-    : undefined;
-  return { system, chatMessages };
+  if (systemMessages.length === 0) return { system: undefined, chatMessages };
+
+  // Two breakpoints, both on regions that are byte-identical turn to turn.
+  //
+  // The system field alone is not enough: it holds ~959 tokens here, under
+  // Anthropic's 1024 floor, and a sub-minimum breakpoint is accepted and then
+  // silently ignored — which is why caching never actually engaged. The history
+  // is the large stable region, so the breakpoint that pays goes at its end,
+  // covering system + every prior turn.
+  const systemTokens = systemMessages.reduce((sum, m) => sum + estimateTokens(m.content), 0);
+  const historyTokens = chatMessages
+    .slice(0, -1)
+    .reduce((sum, m) => sum + estimateTokens(m.content), 0);
+  const prefixTokens = systemTokens + historyTokens;
+
+  const systemWorthCaching = systemTokens >= ANTHROPIC_MIN_CACHEABLE_TOKENS;
+  const cachedMessages = applyAnthropicHistoryBreakpoint(chatMessages, prefixTokens);
+  const historyCached = cachedMessages !== chatMessages;
+
+  if (!systemWorthCaching && !historyCached && !loggedUncacheablePrefix) {
+    loggedUncacheablePrefix = true;
+    console.warn(
+      `[Claude] Cacheable prefix is ~${prefixTokens} tokens, under Anthropic's ` +
+      `${ANTHROPIC_MIN_CACHEABLE_TOKENS}-token minimum — prompt caching cannot engage yet. ` +
+      'It starts paying once the conversation grows past that.'
+    );
+  }
+
+  const system = systemMessages.map((m, i) => ({
+    type: "text",
+    text: m.content,
+    ...(i === 0 && systemWorthCaching ? { cache_control: { type: "ephemeral" } } : {}),
+  }));
+  return { system, chatMessages: cachedMessages };
 }
 
 const callClaude = async (modelName, apiKey, messages, signal = null) => {

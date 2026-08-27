@@ -98,20 +98,23 @@ app.use(sentryRequestHandler());
 app.use(sentryTracingHandler());
 
 // ── Security & logging middleware ──────────────────────────
+// This process serves JSON, never the app's HTML — the frontend is a separate
+// Vercel deployment, and script-src/style-src set here would never reach a page
+// a user loads. The directives that govern the UI therefore live in
+// frontend/vercel.json; what belongs on an API origin is the opposite of a
+// permissive policy: deny everything, so a response that ever gets rendered as
+// a document (a downloaded .html echoed back, say) can load nothing at all.
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
-  contentSecurityPolicy: process.env.NODE_ENV === 'production' ? {
+  contentSecurityPolicy: {
+    useDefaults: false,
     directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
-      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
-      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
-      imgSrc: ["'self'", 'data:', 'blob:', 'https://*.blob.vercel-storage.com', 'https://blob.vercel-storage.com'],
-      connectSrc: ["'self'", 'https://*.supabase.co', 'https://*.blob.vercel-storage.com', 'https://blob.vercel-storage.com'],
-      objectSrc: ["'none'"],
-      upgradeInsecureRequests: [],
+      defaultSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'none'"],
+      formAction: ["'none'"],
     },
-  } : false,
+  },
 }));                            // sets secure HTTP headers
 // 'combined' (Apache-style) in production for parseable access logs; 'dev' is
 // colourised and concise but strips the fields log aggregators expect.

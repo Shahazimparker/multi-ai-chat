@@ -426,6 +426,40 @@ const sweepExpiredChunkStaging = () => {
 setInterval(sweepExpiredChunkStaging, 15 * 60 * 1000).unref();
 
 /**
+ * Confirms the caller owns a chunked-upload session.
+ *
+ * The in-memory Map only exists on the instance that happened to serve the
+ * earlier chunks, so on serverless it is usually empty and an ownership check
+ * against it alone silently passes. upload_chunks_staging is the shared record,
+ * so it is what actually has to be consulted before a session is written to,
+ * finalized, or aborted.
+ *
+ * @returns {Promise<boolean>} false when the session belongs to another user
+ */
+const callerOwnsUploadSession = async (uploadId, req) => {
+  if (req.user?.role === 'admin') return true;
+
+  const memSession = inMemoryChunkStaging.get(uploadId);
+  if (memSession && memSession.userId !== req.user.id) return false;
+
+  try {
+    const { data: existing } = await supabase
+      .from('upload_chunks_staging')
+      .select('user_id')
+      .eq('upload_id', uploadId)
+      .limit(1)
+      .maybeSingle();
+    if (existing && existing.user_id !== req.user.id) return false;
+  } catch (ownErr) {
+    // Table missing (local dev before the migration) — the in-memory check above
+    // is then the only record there is, and it has already passed.
+    console.warn('[Upload:Chunk] Ownership lookup warning:', ownErr.message);
+  }
+
+  return true;
+};
+
+/**
  * POST /api/upload/chunk/init
  * Initialize a chunked upload session for direct DB upload (upgDB)
  */
@@ -483,13 +517,13 @@ router.post('/chunk/:uploadId', requireAuth, uploadHeavyLimiter, async (req, res
     const parsedIndex = parseInt(chunkIndex, 10);
     const parsedTotal = parseInt(totalChunks, 10) || 1;
 
-    // Cache in memory for quick retrieval and verify user ownership
+    if (!(await callerOwnsUploadSession(uploadId, req))) {
+      return res.status(403).json({ error: 'Unauthorized: upload session belongs to another user' });
+    }
+
+    // Cache in memory for quick retrieval
     let memSession = inMemoryChunkStaging.get(uploadId);
-    if (memSession) {
-      if (memSession.userId !== req.user.id && req.user.role !== 'admin') {
-        return res.status(403).json({ error: 'Unauthorized: upload session belongs to another user' });
-      }
-    } else {
+    if (!memSession) {
       memSession = {
         userId: req.user.id,
         fileName: fileName || 'file',
@@ -541,10 +575,10 @@ router.post('/chunk/:uploadId/finalize', requireAuth, uploadHeavyLimiter, upload
     const { uploadId } = req.params;
     const { topicId, modelId, ragEnabled } = req.body;
 
-    const memSession = inMemoryChunkStaging.get(uploadId);
-    if (memSession && memSession.userId !== req.user.id && req.user.role !== 'admin') {
+    if (!(await callerOwnsUploadSession(uploadId, req))) {
       return res.status(403).json({ error: 'Unauthorized: upload session belongs to another user' });
     }
+    const memSession = inMemoryChunkStaging.get(uploadId);
 
     abortController = new AbortController();
     sessionId = crypto.randomUUID();
@@ -717,13 +751,10 @@ router.post('/chunk/:uploadId/finalize', requireAuth, uploadHeavyLimiter, upload
  */
 router.post('/chunk/:uploadId/abort', requireAuth, uploadHeavyLimiter, async (req, res) => {
   const { uploadId } = req.params;
-  const memSession = inMemoryChunkStaging.get(uploadId);
-  if (memSession) {
-    if (memSession.userId !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Unauthorized: upload session belongs to another user' });
-    }
-    inMemoryChunkStaging.delete(uploadId);
+  if (!(await callerOwnsUploadSession(uploadId, req))) {
+    return res.status(403).json({ error: 'Unauthorized: upload session belongs to another user' });
   }
+  inMemoryChunkStaging.delete(uploadId);
   try {
     await supabase.from('upload_chunks_staging').delete().eq('upload_id', uploadId).eq('user_id', req.user.id);
   } catch {

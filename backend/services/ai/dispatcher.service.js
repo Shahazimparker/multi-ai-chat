@@ -118,9 +118,9 @@ const dispatchToAI = async (modelConfig, messages, signal = null, options = {}) 
     switch (provider) {
       case 'gemini': return callGemini(model, apiKey, messages, s);
       case 'groq': return callGroq(model, apiKey, messages, s);
-      case 'mistral': return callMistral(model, apiKey, messages, s);
+      case 'mistral': return callMistral(model, apiKey, messages, s, options);
       case 'cohere': return callCohere(model, apiKey, messages, s);
-      case 'openai': return callOpenAI(model, apiKey, messages, s);
+      case 'openai': return callOpenAI(model, apiKey, messages, s, options);
       case 'claude': return callClaude(model, apiKey, messages, s);
       case 'openrouter': return callOpenRouter(model, apiKey, messages, s, options);
       case 'together': return callTogether(model, apiKey, messages, s);
@@ -148,7 +148,7 @@ const dispatchToAI = async (modelConfig, messages, signal = null, options = {}) 
  *   the answer, so callers render it separately.
  * @returns {Promise<{text: string, reasoning?: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number}>}
  */
-const dispatchToAIStream = async (modelConfig, messages, signal = null, onChunk, onReasoning, reasoningRequest = {}) => {
+const dispatchToAIStream = async (modelConfig, messages, signal = null, onChunk, onReasoning, reasoningRequest = {}, options = {}) => {
   const { provider, model, apiKey } = modelConfig;
 
   if (!apiKey) {
@@ -171,9 +171,9 @@ const dispatchToAIStream = async (modelConfig, messages, signal = null, onChunk,
     switch (provider) {
       case 'gemini': return callGeminiStream(model, apiKey, messages, s, tick, modelConfig, reasoningRequest);
       case 'groq': return callGroqStream(model, apiKey, messages, s, tick, reasoningTick, modelConfig, reasoningRequest);
-      case 'mistral': return callMistralStream(model, apiKey, messages, s, tick);
+      case 'mistral': return callMistralStream(model, apiKey, messages, s, tick, options);
       case 'cohere': return callCohereStream(model, apiKey, messages, s, tick);
-      case 'openai': return callOpenAIStream(model, apiKey, messages, s, tick, reasoningTick);
+      case 'openai': return callOpenAIStream(model, apiKey, messages, s, tick, reasoningTick, options);
       case 'claude': return callClaudeStream(model, apiKey, messages, s, tick, reasoningTick, modelConfig, reasoningRequest);
       case 'openrouter': return callOpenRouterStream(model, apiKey, messages, s, tick, reasoningTick);
       case 'together': return callTogetherStream(model, apiKey, messages, s, tick);

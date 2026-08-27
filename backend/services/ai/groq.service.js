@@ -5,6 +5,7 @@
 
 const Groq = require('groq-sdk');
 const { resolveReasoning } = require('./reasoning.service');
+const { extractCacheUsage } = require('./promptCache.service');
 
 const callGroq = async (modelName, apiKey, messages, signal = null) => {
   const client   = new Groq({ apiKey });
@@ -17,7 +18,9 @@ const callGroq = async (modelName, apiKey, messages, signal = null) => {
 
   const text       = response.choices[0]?.message?.content || '';
   const tokensUsed = response.usage?.total_tokens || 0;
-  return { text, tokensUsed };
+  // Groq caches automatically and reports it at prompt_tokens_details.cached_tokens.
+  // The streaming path already read this; the non-streaming one did not.
+  return { text, tokensUsed, ...extractCacheUsage(response.usage) };
 };
 
 /**
@@ -49,6 +52,8 @@ const callGroqStream = async (modelName, apiKey, messages, signal = null, onChun
   let fullText = '';
   let fullReasoning = '';
   let tokensUsed = 0;
+  let cacheCreationTokens = 0;
+  let cacheReadTokens = 0;
 
   for await (const chunk of stream) {
     const reasoningDelta = chunk.choices?.[0]?.delta?.reasoning
@@ -68,9 +73,16 @@ const callGroqStream = async (modelName, apiKey, messages, signal = null, onChun
     if (usage?.total_tokens) {
       tokensUsed = usage.total_tokens;
     }
+    if (usage) {
+      const c = extractCacheUsage(usage);
+      if (c.cacheReadTokens || c.cacheCreationTokens) {
+        cacheCreationTokens = c.cacheCreationTokens;
+        cacheReadTokens = c.cacheReadTokens;
+      }
+    }
   }
 
-  return { text: fullText, reasoning: fullReasoning, tokensUsed };
+  return { text: fullText, reasoning: fullReasoning, tokensUsed, cacheCreationTokens, cacheReadTokens };
 };
 
 module.exports = { callGroq, callGroqStream };

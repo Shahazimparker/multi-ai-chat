@@ -4,21 +4,28 @@
 // ============================================================
 
 const OpenAI = require('openai');
+const { extractCacheUsage } = require('./promptCache.service');
 
-const callOpenAI = async (modelName, apiKey, messages, signal = null) => {
+// OpenAI caches automatically above 1024 tokens; `prompt_cache_key` is a
+// routing hint that lands requests sharing a prefix on the same backend, which
+// OpenAI recommends setting explicitly from GPT-5.6 on.
+const callOpenAI = async (modelName, apiKey, messages, signal = null, options = {}) => {
   const client = new OpenAI({ apiKey });
 
   const response = await client.chat.completions.create({
     model: modelName,
     max_tokens: 16000,
     messages,
+    ...(options.promptCacheKey ? { prompt_cache_key: options.promptCacheKey } : {}),
   }, { signal });
 
   return {
     text: response.choices[0].message.content,
     tokensUsed: response.usage.prompt_tokens + response.usage.completion_tokens,
-    cacheCreationTokens: response.usage.cache_creation_input_tokens || 0,
-    cacheReadTokens: response.usage.cache_read_input_tokens || 0,
+    // OpenAI reports cache reads under usage.prompt_tokens_details.cached_tokens.
+    // This used to read Anthropic's field names, which OpenAI never returns, so
+    // it reported a flat zero however well caching was actually working.
+    ...extractCacheUsage(response.usage),
   };
 };
 
@@ -31,7 +38,7 @@ const callOpenAI = async (modelName, apiKey, messages, signal = null) => {
  * @param {(text: string) => void} onChunk
  * @returns {Promise<{text: string, tokensUsed: number, cacheCreationTokens: number, cacheReadTokens: number}>}
  */
-const callOpenAIStream = async (modelName, apiKey, messages, signal = null, onChunk, onReasoning) => {
+const callOpenAIStream = async (modelName, apiKey, messages, signal = null, onChunk, onReasoning, options = {}) => {
   const client = new OpenAI({ apiKey });
 
   const stream = await client.chat.completions.create({
@@ -42,6 +49,7 @@ const callOpenAIStream = async (modelName, apiKey, messages, signal = null, onCh
     // Without this, OpenAI never emits a usage-bearing chunk during a
     // stream — the call would silently bill 0 tokens.
     stream_options: { include_usage: true },
+    ...(options.promptCacheKey ? { prompt_cache_key: options.promptCacheKey } : {}),
   }, { signal });
 
   let fullText = '';
@@ -66,8 +74,9 @@ const callOpenAIStream = async (modelName, apiKey, messages, signal = null, onCh
     if (chunk.usage) {
       promptTokens = chunk.usage.prompt_tokens || 0;
       completionTokens = chunk.usage.completion_tokens || 0;
-      cacheCreationTokens = chunk.usage.cache_creation_input_tokens || 0;
-      cacheReadTokens = chunk.usage.cache_read_input_tokens || 0;
+      const c = extractCacheUsage(chunk.usage);
+      cacheCreationTokens = c.cacheCreationTokens;
+      cacheReadTokens = c.cacheReadTokens;
     }
   }
 

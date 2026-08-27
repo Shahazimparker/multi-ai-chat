@@ -58,13 +58,66 @@ describe('Large File Search & Reassembly', () => {
       expect(result).toContain('process killed by SIGKILL');
     });
 
+    it('prefers complete local content over a Blob round trip', async () => {
+      // Regression: resolveFullFileContent used to try Blob first, so a row whose
+      // original_content was already the whole file still triggered a download —
+      // on a ten-file search that meant serially pulling tens of megabytes.
+      const blobSpy = vi.spyOn(blobStorage, 'fetchPrivateBlobBuffer');
+      const record = {
+        id: 'local-1',
+        file_name: 'app.log',
+        blob_url: 'https://store.blob.vercel-storage.com/uploads/app.log',
+        original_content: 'complete log body with no placeholder marker',
+      };
+
+      const result = await resolveFullFileContent(record, 'user-123');
+      expect(result).toBe('complete log body with no placeholder marker');
+      expect(blobSpy).not.toHaveBeenCalled();
+    });
+
+    it('detects the truncation marker even though it is appended at the end', async () => {
+      // saveFileToRAG writes the notice after a 300k slice, so a head-only scan
+      // would read a truncated row as complete and never reach the Blob copy.
+      const blobSpy = vi
+        .spyOn(blobStorage, 'fetchPrivateBlobBuffer')
+        .mockResolvedValue(Buffer.from('full recovered body'));
+      const record = {
+        id: 'tail-1',
+        file_name: 'huge.log',
+        blob_url: 'https://store.blob.vercel-storage.com/uploads/huge.log',
+        original_content: 'x'.repeat(300000) + ' ... [Truncated for RPC storage: 900000 chars total] ...',
+      };
+
+      const result = await resolveFullFileContent(record, 'user-123');
+      expect(blobSpy).toHaveBeenCalledWith(record.blob_url);
+      expect(result).toBe('full recovered body');
+    });
+
+    it('does not mistake a plain-text body for base64', async () => {
+      // The old character-class test alone accepted any all-alphanumeric string
+      // and decoded it into garbage; a length check rules that out.
+      const record = {
+        id: 'text-1',
+        file_name: 'note.txt',
+        original_file_data: 'JustPlainAlphanumericTextNotBase64x',
+        original_content: null,
+        llm_analysis: 'fallback summary',
+      };
+
+      const result = await resolveFullFileContent(record, null);
+      expect(result).toBe('fallback summary');
+    });
+
     it('decodes base64 from original_file_data if available', async () => {
       const b64Data = Buffer.from('Database server crashed with OOM killer').toString('base64');
       const record = {
         id: 'db-file-1',
         file_name: 'crash.log',
         original_file_data: b64Data,
-        original_content: 'Truncated...',
+        // The real marker, appended the way saveFileToRAG writes it. An
+        // abbreviation here would read as complete content and short-circuit
+        // the base64 path this test exists to cover.
+        original_content: 'partial text ... [Truncated for RPC storage: 900000 chars total] ...',
       };
 
       const result = await resolveFullFileContent(record, 'user-123');

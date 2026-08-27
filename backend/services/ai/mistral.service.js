@@ -4,10 +4,17 @@
 // ============================================================
 
 const axios = require('axios');
+const { extractCacheUsage } = require('./promptCache.service');
 
 const MISTRAL_CHAT_URL = 'https://api.mistral.ai/v1/chat/completions';
 
-const callMistral = async (modelName, apiKey, messages, signal = null) => {
+// Mistral prompt caching is NOT automatic: without `prompt_cache_key` the API
+// simply does not cache, so this parameter is the difference between caching
+// working and not existing at all. Cached tokens bill at ~10% of the normal
+// input rate, the prefix minimum is only 64 tokens, and the cache lives an
+// hour — which makes it the highest-value provider knob here, because
+// mistral-medium is the app's default model.
+const callMistral = async (modelName, apiKey, messages, signal = null, options = {}) => {
   const response = await axios.post(
     MISTRAL_CHAT_URL,
     {
@@ -15,6 +22,7 @@ const callMistral = async (modelName, apiKey, messages, signal = null) => {
       messages:    messages.map(m => ({ role: m.role, content: m.content })),
       max_tokens:  16000,
       temperature: 0.7,
+      ...(options.promptCacheKey ? { prompt_cache_key: options.promptCacheKey } : {}),
     },
     {
       headers: {
@@ -27,7 +35,10 @@ const callMistral = async (modelName, apiKey, messages, signal = null) => {
 
   const text       = response.data.choices[0]?.message?.content || '';
   const tokensUsed = response.data.usage?.total_tokens || 0;
-  return { text, tokensUsed };
+  // Mistral reports cache reads under prompt_tokens_details.cached_tokens, the
+  // OpenAI-compatible location. Omitting this left the non-streaming path
+  // reporting `undefined` while the streaming path reported correctly.
+  return { text, tokensUsed, ...extractCacheUsage(response.data.usage) };
 };
 
 /**
@@ -39,7 +50,7 @@ const callMistral = async (modelName, apiKey, messages, signal = null) => {
  * @param {(text: string) => void} onChunk
  * @returns {Promise<{text: string, tokensUsed: number}>}
  */
-const callMistralStream = async (modelName, apiKey, messages, signal = null, onChunk) => {
+const callMistralStream = async (modelName, apiKey, messages, signal = null, onChunk, options = {}) => {
   const response = await axios.post(
     MISTRAL_CHAT_URL,
     {
@@ -48,6 +59,7 @@ const callMistralStream = async (modelName, apiKey, messages, signal = null, onC
       max_tokens:  16000,
       temperature: 0.7,
       stream:      true,
+      ...(options.promptCacheKey ? { prompt_cache_key: options.promptCacheKey } : {}),
       // Deliberately NO `stream_options: { include_usage: true }` here, unlike
       // the other OpenAI-compatible providers. Mistral validates its request
       // body strictly and rejects the field outright:
@@ -71,6 +83,8 @@ const callMistralStream = async (modelName, apiKey, messages, signal = null, onC
   return new Promise((resolve, reject) => {
     let fullText = '';
     let tokensUsed = 0;
+    let cacheCreationTokens = 0;
+    let cacheReadTokens = 0;
     let buffer = '';
 
     response.data.on('data', (chunk) => {
@@ -93,12 +107,19 @@ const callMistralStream = async (modelName, apiKey, messages, signal = null, onC
           if (parsed.usage?.total_tokens) {
             tokensUsed = parsed.usage.total_tokens;
           }
+          if (parsed.usage) {
+            const c = extractCacheUsage(parsed.usage);
+            if (c.cacheReadTokens || c.cacheCreationTokens) {
+              cacheCreationTokens = c.cacheCreationTokens;
+              cacheReadTokens = c.cacheReadTokens;
+            }
+          }
         } catch { /* skip malformed lines */ }
       }
     });
 
     response.data.on('end', () => {
-      resolve({ text: fullText, tokensUsed });
+      resolve({ text: fullText, tokensUsed, cacheCreationTokens, cacheReadTokens });
     });
 
     response.data.on('error', (err) => {
