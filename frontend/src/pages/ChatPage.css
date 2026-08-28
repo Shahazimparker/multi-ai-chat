@@ -355,39 +355,39 @@
   border-color: rgba(239, 68, 68, 0.6);
 }
 
-.memory-controls {
+/* The advanced fields row, shown below .input-footer when the Advanced
+   toggle (now living next to Thinking) is on. */
+.memory-advanced-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 12px;
+  margin-top: 8px;
   flex-wrap: wrap;
 }
 
-.memory-mode-btn,
+/* Height is pinned to .thinking-group's 34px so the two sit on one baseline
+   in the footer instead of stepping. */
 .memory-advanced-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
   border: 1px solid var(--border-primary);
   background: var(--bg-input);
   color: var(--text-secondary);
   border-radius: 999px;
-  padding: 8px 14px;
-  font-size: 0.8rem;
+  padding: 0 12px;
+  font-size: 0.78rem;
   font-family: 'Inter', sans-serif;
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
   transition: all 0.2s ease;
 }
 
-.memory-mode-btn:hover,
 .memory-advanced-btn:hover {
   background: var(--bg-hover);
   transform: translateY(-1px);
   color: var(--text-primary);
-}
-
-.memory-mode-btn.active {
-  background: var(--gradient-secondary);
-  border-color: var(--border-hover);
-  color: var(--text-primary);
-  font-weight: 600;
 }
 
 .memory-toggle-control {
@@ -429,12 +429,47 @@
   outline: none;
 }
 
-/* ── Pending files list (multi-file) ─────────────────────── */
-.pending-files-list {
+/* ── Attachments (pending files + pasted image), above .input-box ───── */
+.composer-attachments {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 4px;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.pending-image-preview {
+  position: relative;
+  display: inline-block;
+}
+
+.pending-image-preview img {
+  display: block;
+  max-height: 120px;
+  border-radius: 8px;
+}
+
+.remove-image-btn {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: #ef4444;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.remove-image-btn:hover {
+  background: #dc2626;
 }
 
 .pending-file-tag {
@@ -482,11 +517,13 @@
 
 .input-box {
   display: flex;
-  align-items: center;
-  min-height: 52px !important;
-  padding: 10px 14px !important;
-  border-radius: 999px;
-  gap: 10px;
+  /* Grows upward with the textarea; the + and send buttons stay pinned to
+     the bottom line instead of centering with the whole block. */
+  align-items: flex-end;
+  min-height: 46px;
+  padding: 6px 6px 6px 8px;
+  border-radius: 22px;
+  gap: 8px;
   background: var(--bg-input);
   border: 1px solid var(--border-primary);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -508,16 +545,17 @@
   width: 100%;
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 44px !important;
-  max-height: 140px;
-  padding: 10px 12px !important;
+  min-height: 24px;
+  max-height: 200px;
+  padding: 7px 6px;
   background: transparent;
   border: none;
   color: var(--text-primary);
-  font-size: 0.95rem;
+  font-size: 0.94rem;
   line-height: 1.5;
   outline: none;
   resize: none;
+  overflow-y: auto;
 }
 
 .input-box textarea::placeholder {
@@ -549,50 +587,6 @@
   transition: transform 0.2s, box-shadow 0.3s, opacity 0.2s;
   position: relative;
   overflow: hidden;
-}
-
-/* Icon-only and square, matching .thinking-btn so the two controls pair up. */
-.web-toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 34px;
-  width: 34px;
-  flex-shrink: 0;
-  border: 1px solid var(--border-primary);
-  border-radius: 12px;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  padding: 0;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.web-toggle-btn:hover:not(:disabled) {
-  border-color: var(--border-hover);
-  color: var(--text-primary);
-  background: var(--bg-hover);
-}
-
-/* On state is a blue glow — the only signal now that the text is gone, so it
-   carries the outer shadow rather than just a tint. */
-.web-toggle-btn.active {
-  border-color: rgba(56, 189, 248, 0.85);
-  background: rgba(14, 165, 233, 0.22);
-  color: #bae6fd;
-  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35), 0 0 12px rgba(14, 165, 233, 0.45);
-}
-
-:root[data-theme="light"] .web-toggle-btn.active {
-  border-color: rgba(2, 132, 199, 0.6);
-  background: rgba(14, 165, 233, 0.14);
-  color: #0369a1;
-  box-shadow: 0 0 0 1px rgba(2, 132, 199, 0.2), 0 0 10px rgba(14, 165, 233, 0.3);
-}
-
-.web-toggle-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 @keyframes gradientShift {
@@ -631,8 +625,9 @@
   }
 }
 
-/* Under the composer: the model on the left, the send hint on the right. The
-   model picker opens upward from here, so nothing above it may clip. */
+/* Under the composer: model + thinking + advanced disclosure on the left, the
+   send hint on the right. The model picker and thinking submenu both open
+   upward from here, so nothing above them may clip. */
 .input-footer {
   display: flex;
   align-items: center;
@@ -642,11 +637,19 @@
   min-width: 0;
 }
 
+.input-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .input-hint {
   font-size: 0.72rem;
   color: var(--text-tertiary);
   margin: 0;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 @media (max-width: 560px) {
@@ -666,28 +669,26 @@
   }
 
   .input-box {
-    min-height: 44px !important;
-    gap: 8px;
-    padding: 8px 10px !important;
+    min-height: 42px;
+    gap: 6px;
+    padding: 5px 5px 5px 6px;
   }
 
-  .web-toggle-btn {
-    height: 32px;
-    width: 32px;
-  }
-
-  .memory-controls {
+  .memory-advanced-row {
     gap: 6px;
   }
 
-  .memory-mode-btn,
   .memory-advanced-btn {
-    padding: 6px 10px;
+    height: 32px;
+    padding: 0 10px;
     font-size: 0.75rem;
+  }
+
+  .input-footer-left {
+    gap: 6px;
   }
 }
 
-.upload-trigger.icon-pin,
 .send-btn {
   display: flex;
   align-items: center;

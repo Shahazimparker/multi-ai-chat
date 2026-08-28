@@ -1,26 +1,44 @@
 // ============================================================
 // FILE: frontend/src/components/chat/ComposerPlusMenu.jsx
 // PURPOSE: The "+" button at the head of the composer. It collects the things
-//          you can add to a message besides its text — today the knowledge
-//          bases to search — so the composer row stays a row of icons.
+//          you can add to a message besides its text — knowledge bases to
+//          search, web search, file attachments, and the memory mode — so the
+//          composer row itself stays a row of icons.
 // ============================================================
 
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Database, Check, ChevronRight, ChevronLeft, Settings2 } from 'lucide-react';
+import { Plus, Database, Check, ChevronRight, ChevronLeft, Settings2, Globe, Paperclip, Zap, Target } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useKnowledgeCollections, toggleCollectionId } from './useKnowledgeCollections';
+import { useFileAttach } from './FileUpload';
 import './ComposerPlusMenu.css';
 
 const PANEL_WIDTH = 288;
 
-const ComposerPlusMenu = ({ selectedCollectionIds = [], onSelectionChange, disabled }) => {
+const ComposerPlusMenu = ({
+  selectedCollectionIds = [],
+  onSelectionChange,
+  disabled,
+  webEnabled,
+  setWebEnabled,
+  onFileSelect,
+  memoryMode,
+  setMemoryMode,
+  setHistoryLimit,
+  setRagEnabled,
+}) => {
   const { collections, loading } = useKnowledgeCollections();
   const [open, setOpen] = useState(false);
   const [pane, setPane] = useState('root');
   const [panelStyle, setPanelStyle] = useState({});
   const wrapperRef = useRef(null);
   const navigate = useNavigate();
+
+  // The hidden input lives in the always-mounted wrapper below, not inside
+  // the portaled panel, so the OS picker still opens after the panel that
+  // triggered it has closed.
+  const { inputRef: fileInputRef, openPicker, inputProps: fileInputProps } = useFileAttach({ onFileSelect });
 
   const selectedCount = collections.filter((c) => selectedCollectionIds.includes(c.id)).length;
 
@@ -30,13 +48,14 @@ const ComposerPlusMenu = ({ selectedCollectionIds = [], onSelectionChange, disab
     if (!wrapperRef.current) return;
 
     const rect = wrapperRef.current.getBoundingClientRect();
-    const left = Math.max(12, Math.min(rect.left, window.innerWidth - PANEL_WIDTH - 12));
+    const panelWidth = Math.min(PANEL_WIDTH, window.innerWidth - 24);
+    const left = Math.max(12, Math.min(rect.left, window.innerWidth - panelWidth - 12));
 
     setPanelStyle({
       position: 'fixed',
       bottom: `${Math.max(12, window.innerHeight - rect.top + 8)}px`,
       left: `${left}px`,
-      width: `${PANEL_WIDTH}px`,
+      width: `${panelWidth}px`,
       maxHeight: `${Math.max(200, rect.top - 24)}px`,
     });
   };
@@ -83,10 +102,48 @@ const ComposerPlusMenu = ({ selectedCollectionIds = [], onSelectionChange, disab
     navigate('/knowledge');
   };
 
+  const handleAttachClick = () => {
+    // Open before closing the menu — the click must land while the trigger
+    // that called it is still the active element for some browsers to honor
+    // a synchronous file-picker open.
+    openPicker();
+    setOpen(false);
+  };
+
+  const applyMemoryMode = (mode) => {
+    setMemoryMode(mode);
+    if (mode === 'summarized') {
+      setHistoryLimit(20);
+      setRagEnabled(false);
+    } else {
+      setHistoryLimit(60);
+      setRagEnabled(true);
+    }
+    setOpen(false);
+  };
+
   const rootPane = (
     <div className="plus-pane">
       <button
         type="button"
+        role="menuitem"
+        className={`plus-menu-item ${webEnabled ? 'is-on' : ''}`}
+        onClick={() => setWebEnabled((prev) => !prev)}
+        aria-pressed={webEnabled}
+      >
+        <Globe size={16} className="plus-item-icon" />
+        <span className="plus-item-label">Web search</span>
+        {webEnabled && <Check size={14} className="plus-item-check" />}
+      </button>
+
+      <button type="button" role="menuitem" className="plus-menu-item" onClick={handleAttachClick}>
+        <Paperclip size={16} className="plus-item-icon" />
+        <span className="plus-item-label">Attach files</span>
+      </button>
+
+      <button
+        type="button"
+        role="menuitem"
         className={`plus-menu-item ${selectedCount > 0 ? 'active' : ''}`}
         onClick={() => setPane('knowledge')}
       >
@@ -96,9 +153,36 @@ const ComposerPlusMenu = ({ selectedCollectionIds = [], onSelectionChange, disab
         <ChevronRight size={14} className="plus-item-chevron" />
       </button>
 
-      <button type="button" className="plus-menu-item" onClick={goManage}>
+      <button type="button" role="menuitem" className="plus-menu-item" onClick={goManage}>
         <Settings2 size={16} className="plus-item-icon" />
         <span className="plus-item-label">Manage knowledge bases</span>
+      </button>
+
+      <div className="plus-menu-separator" />
+      <div className="plus-menu-section-label">Memory</div>
+
+      <button
+        type="button"
+        role="menuitemradio"
+        aria-checked={memoryMode === 'summarized'}
+        className={`plus-menu-item ${memoryMode === 'summarized' ? 'active' : ''}`}
+        onClick={() => applyMemoryMode('summarized')}
+      >
+        <Zap size={16} className="plus-item-icon" />
+        <span className="plus-item-label">Summarized+</span>
+        {memoryMode === 'summarized' && <Check size={14} className="plus-item-check" />}
+      </button>
+
+      <button
+        type="button"
+        role="menuitemradio"
+        aria-checked={memoryMode === 'accurate'}
+        className={`plus-menu-item ${memoryMode === 'accurate' ? 'active' : ''}`}
+        onClick={() => applyMemoryMode('accurate')}
+      >
+        <Target size={16} className="plus-item-icon" />
+        <span className="plus-item-label">Accurate+</span>
+        {memoryMode === 'accurate' && <Check size={14} className="plus-item-check" />}
       </button>
     </div>
   );
@@ -177,6 +261,8 @@ const ComposerPlusMenu = ({ selectedCollectionIds = [], onSelectionChange, disab
         <Plus size={18} />
         {selectedCount > 0 && <span className="composer-plus-dot" />}
       </button>
+
+      <input ref={fileInputRef} {...fileInputProps} />
 
       {open && createPortal(
         <>

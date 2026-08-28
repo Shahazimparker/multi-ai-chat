@@ -10,7 +10,6 @@
   flex-shrink: 0;
 }
 
-/* Sized to match .upload-trigger.icon-pin next to it so the two read as a pair. */
 .composer-plus-btn {
   position: relative;
   width: 32px;
@@ -85,8 +84,23 @@
 .plus-pane {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
   padding: 6px;
+  overflow-y: auto;
+}
+
+.plus-pane::-webkit-scrollbar {
+  width: 4px;
+}
+
+.plus-pane::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+
+:root[data-theme="light"] .plus-pane::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.15);
 }
 
 /* ── Root menu ───────────────────────────────────────────── */
@@ -144,6 +158,63 @@
 .plus-item-chevron {
   flex-shrink: 0;
   color: var(--text-tertiary);
+}
+
+.plus-item-check {
+  flex-shrink: 0;
+  color: #4d6bfe;
+}
+
+/* A selected state that has no icon of its own (the memory-mode items) still
+   needs to read as chosen, so the row itself gets a faint tint. */
+.plus-menu-item.active {
+  background: rgba(77, 107, 254, 0.08);
+}
+
+/* Web search's on-state borrows the sky-blue glow used everywhere else in the
+   composer for an active toggle (thinking, the old web button), rather than
+   the KB blue, since it is a live per-query switch, not a saved selection. */
+.plus-menu-item.is-on {
+  background: rgba(14, 165, 233, 0.14);
+}
+
+.plus-menu-item.is-on .plus-item-icon,
+.plus-menu-item.is-on .plus-item-check {
+  color: #38bdf8;
+}
+
+.plus-menu-item.is-on .plus-item-label {
+  color: #bae6fd;
+}
+
+:root[data-theme="light"] .plus-menu-item.is-on {
+  background: rgba(14, 165, 233, 0.12);
+}
+
+:root[data-theme="light"] .plus-menu-item.is-on .plus-item-icon,
+:root[data-theme="light"] .plus-menu-item.is-on .plus-item-check {
+  color: #0284c7;
+}
+
+:root[data-theme="light"] .plus-menu-item.is-on .plus-item-label {
+  color: #0369a1;
+}
+
+.plus-menu-separator {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border-primary);
+  flex-shrink: 0;
+}
+
+.plus-menu-section-label {
+  padding: 4px 10px 2px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
 }
 
 /* ── Knowledge pane ──────────────────────────────────────── */
@@ -316,4 +387,13 @@
 
 .plus-clear-btn:hover {
   text-decoration: underline;
+}
+
+/* Bigger hit targets once the menu is likely being tapped rather than
+   clicked; the panel width already clamps to the viewport in JS. */
+@media (max-width: 768px) {
+  .plus-menu-item,
+  .plus-kb-item {
+    min-height: 40px;
+  }
 }

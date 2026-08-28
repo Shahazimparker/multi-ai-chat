@@ -1,23 +1,29 @@
 // FILE: frontend/src/components/chat/FileUpload.jsx
-// PURPOSE: Upload button + file management
+// PURPOSE: File-attach validation, shared as a headless hook so the composer's
+// "+" menu can drive a single-click OS file picker without duplicating the
+// size/extension rules anywhere else.
 
-import React, { useState } from 'react';
-import { Paperclip } from 'lucide-react';
-import './FileUpload.css';
+import { useRef } from 'react';
 
 // Supports large uploads up to 50MB directly to private Vercel Blob
-const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
-const MAX_FILE_SIZE_LABEL = '50MB';
+export const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+export const MAX_FILE_SIZE_LABEL = '50MB';
 
-const BLOCKED_RISKY_EXTENSIONS = new Set([
+export const BLOCKED_RISKY_EXTENSIONS = new Set([
   'exe', 'dll', 'so', 'dylib', 'bin', 'com', 'scr', 'sys', 'drv',
   'msi', 'msp', 'cpl', 'msc', 'hta', 'vbs', 'vbe', 'wsf', 'wsh',
   'jar', 'apk', 'dmg', 'iso', 'img', 'deb', 'rpm', 'app', 'gadget',
   'pif', 'vb', 'reg', 'chm'
 ]);
 
-const FileUpload = ({ onFileSelect, disabled }) => {
-  const [showUploader, setShowUploader] = useState(false);
+export const FILE_ACCEPT = '.pdf,.txt,.log,.rtf,.tex,.doc,.docx,.xlsx,.xls,.csv,.tsv,.jpg,.jpeg,.png,.gif,.webp,.svg,.zip,.tar,.gz,.7z,.js,.mjs,.cjs,.jsx,.ts,.tsx,.py,.java,.c,.cpp,.h,.hpp,.cs,.go,.rs,.rb,.php,.swift,.kt,.scala,.r,.lua,.sh,.bash,.zsh,.ps1,.bat,.cmd,.html,.css,.scss,.json,.jsonl,.xml,.yml,.yaml,.toml,.ini,.conf,.sql,.graphql,.proto,.*';
+
+// Headless: validates the same way FileUpload always has, but leaves the
+// hidden <input> and the trigger to the caller. The composer needs the input
+// mounted outside the portaled plus-menu panel so the OS picker still opens
+// after the panel that triggered it has closed.
+export const useFileAttach = ({ onFileSelect }) => {
+  const inputRef = useRef(null);
 
   const handleFileSelect = (e) => {
     const files = Array.from(e.target.files || []);
@@ -52,38 +58,18 @@ const FileUpload = ({ onFileSelect, disabled }) => {
     if (valid.length > 0) {
       onFileSelect?.(valid);
     }
-    setShowUploader(false);
     e.target.value = '';
   };
 
-  return (
-    <div className="file-upload">
-      <button
-        className="upload-trigger icon-pin"
-        onClick={() => setShowUploader(!showUploader)}
-        disabled={disabled}
-        title="Attach files"
-      >
-        <Paperclip size={20} />
-      </button>
-
-      {showUploader && (
-        <div className="upload-input-wrapper">
-          <input
-            type="file"
-            multiple
-            accept=".pdf,.txt,.log,.rtf,.tex,.doc,.docx,.xlsx,.xls,.csv,.tsv,.jpg,.jpeg,.png,.gif,.webp,.svg,.zip,.tar,.gz,.7z,.js,.mjs,.cjs,.jsx,.ts,.tsx,.py,.java,.c,.cpp,.h,.hpp,.cs,.go,.rs,.rb,.php,.swift,.kt,.scala,.r,.lua,.sh,.bash,.zsh,.ps1,.bat,.cmd,.html,.css,.scss,.json,.jsonl,.xml,.yml,.yaml,.toml,.ini,.conf,.sql,.graphql,.proto,.*"
-            onChange={handleFileSelect}
-            id="file-input"
-            style={{ display: 'none' }}
-          />
-          <label htmlFor="file-input" className="file-label">
-            📁 Click to select files (multi-select supported, max {MAX_FILE_SIZE_LABEL} each)
-          </label>
-        </div>
-      )}
-    </div>
-  );
+  return {
+    inputRef,
+    openPicker: () => inputRef.current?.click(),
+    inputProps: {
+      type: 'file',
+      multiple: true,
+      accept: FILE_ACCEPT,
+      onChange: handleFileSelect,
+      style: { display: 'none' },
+    },
+  };
 };
-
-export default FileUpload;

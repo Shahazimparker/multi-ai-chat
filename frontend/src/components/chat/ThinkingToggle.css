@@ -2,9 +2,8 @@
    FILE: frontend/src/components/chat/ThinkingToggle.css
    PURPOSE: Thinking toggle + effort submenu.
    ============================================================
-   Matches .web-toggle-btn in ChatPage.css (34px tall, 12px radius, same
-   tokens) so the two controls read as a pair — both icon-only, both glowing
-   the same blue when on. They are told apart by their icon, not their colour. */
+   Lives in the composer footer beside the model picker and the Advanced
+   disclosure; its 34px height is the one those two are matched to. */
 
 .thinking-toggle {
   position: relative;

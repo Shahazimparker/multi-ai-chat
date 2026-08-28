@@ -36,7 +36,9 @@ export const useChatComposer = () => {
   const [input, setInput] = useState('');
   const [pendingFiles, setPendingFiles] = useState([]);
   const [pendingImage, setPendingImage] = useState(null);
-  const [webEnabled, setWebEnabled] = useState(false);
+  // On by default: the toggle now lives one level down in the composer's "+"
+  // menu, so the state most people want has to be the one they get for free.
+  const [webEnabled, setWebEnabled] = useState(true);
   const textareaRef = useRef(null);
 
   const handlePaste = useCallback((event, model) => {
