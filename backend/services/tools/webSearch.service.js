@@ -6,7 +6,7 @@ const axios = require('axios');
  * 2) Exa
  * 3) Tavily
  * 4) SerpAPI
- * LangSearch and Parallel Search are always queried in parallel for aggregation enhancement.
+ * LangSearch is always queried in parallel for aggregation enhancement.
  * Falls back on error, timeout, rate-limit, or empty results.
  * @param {string} query
  * @returns {Promise<Array>} Array of { title, snippet, url }
@@ -221,33 +221,7 @@ const searchWeb = async (query) => {
     }));
   };
 
-  const parallelSearch = async () => {
-    const apiKey = process.env.PARALLEL_API_KEY;
-    if (!apiKey) return [];
 
-    const response = await axios.post(
-      'https://api.parallel.ai/v1/search',
-      {
-        objective: query,
-        search_queries: [query],
-      },
-      {
-        timeout,
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': userAgent,
-          'x-api-key': apiKey,
-        },
-      }
-    );
-
-    const items = Array.isArray(response?.data?.results) ? response.data.results : [];
-    return items.map((item) => ({
-      title: item?.title || item?.url || query,
-      snippet: Array.isArray(item?.excerpts) ? item.excerpts.join(' ') : (item?.excerpts || ''),
-      url: item?.url || '',
-    }));
-  };
 
   const providers = [
     { name: 'Firecrawl', fn: firecrawlSearch },
@@ -269,18 +243,16 @@ const searchWeb = async (query) => {
     return { results: null, provider: null };
   })();
 
-  debugLog('[WebSearch] Always-on providers: querying LangSearch + Parallel in parallel');
-  const [primary, langResults, parallelResults] = await Promise.all([
+  debugLog('[WebSearch] Always-on providers: querying LangSearch in parallel');
+  const [primary, langResults] = await Promise.all([
     primaryPromise,
     safeProviderCall('LangSearch', langSearch),
-    safeProviderCall('Parallel', parallelSearch),
   ]);
 
   const base = primary.results || [];
   const langExtra = langResults || [];
-  const parallelExtra = parallelResults || [];
-  const finalResults = aggregateResults(base, langExtra, parallelExtra);
-  debugLog(`[WebSearch] Final aggregated: ${finalResults.length} results (primary: ${primary.provider || 'none'}, base: ${base.length}, lang: ${langExtra.length}, parallel: ${parallelExtra.length})`);
+  const finalResults = aggregateResults(base, langExtra);
+  debugLog(`[WebSearch] Final aggregated: ${finalResults.length} results (primary: ${primary.provider || 'none'}, base: ${base.length}, lang: ${langExtra.length})`);
 
   if (finalResults.length > 0) {
     return finalResults;

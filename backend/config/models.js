@@ -192,6 +192,18 @@ const MODELS = {
     paid: false,
     maxTokens: 256000,
   },
+  // Devstral 2: 123B dense agentic coding model. Deprecated by Mistral on
+  // 2026-05-22 — they recommend Mistral Medium 3.5 as the replacement. Kept
+  // here because the endpoint still serves it and existing topics may reference
+  // it. Text-only (no vision), function-calling and structured output capable.
+  'devstral-2512': {
+    label: 'Devstral 2512 (Code, Deprecated)',
+    provider: 'mistral',
+    apiKey: process.env.MISTRAL_API_KEY,
+    model: 'devstral-2512',
+    paid: false,
+    maxTokens: 256000,
+  },
   'mistral-small': {
     label: 'Mistral Small 4 (Vision, Free)',
     provider: 'mistral',

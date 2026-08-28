@@ -517,7 +517,6 @@ Knowledge Collection
 | `FIRECRAWL_API_KEY` | — | Web search + URL extraction |
 | `SERPAPI_API_KEY` | — | Web search |
 | `LANGSEARCH_API_KEY` | — | Web search aggregation |
-| `PARALLEL_API_KEY` | — | Parallel AI (web search) |
 | `GITHUB_TOKEN` | — | Raises GitHub API rate limits for repo deep-read |
 | `APP_DEFAULT_TIMEZONE` | `UTC` | IANA timezone when request carries none |
 | `TEMPORAL_PRECISION_MS` | `60000` | "Now" rendering granularity |
