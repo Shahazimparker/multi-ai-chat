@@ -26,7 +26,7 @@ npm run e2e:ui          # Playwright test runner UI
 ### Backend Subfolder
 ```bash
 cd backend
-npm test                # unit and integration tests (54 test files, 700 passed)
+npm test                # unit and integration tests (59 test files, 846 passed, 1 skipped)
 npm run test:watch      # watch mode
 npm run test:coverage   # with coverage report
 npm run test:real       # real integration tests (requires live .env + backend running)
@@ -170,7 +170,7 @@ npm run test:watch      # frontend test watch mode
 backend/
 ├── __tests__/
 │   ├── setup.js                           # Global setup — loads .env but overwrites provider keys with placeholders
-│   ├── unit/                              # 52 unit test files
+│   ├── unit/                              # 57 unit test files
 │   │   ├── admin.controller.test.js       # Role enum, password policy, last-admin guard
 │   │   ├── approval.controller.test.js    # IDOR ownership check on respondFromChat / checkStatus
 │   │   ├── authLockout.test.js            # Brute-force lockout: login_attempt_counters
@@ -203,6 +203,11 @@ backend/
 │   │   ├── raptor.test.js                 # RAPTOR tree: deterministic clustering, summary penalty
 │   │   ├── rateLimitStore.test.js         # SupabaseRateLimitStore fresh instance per call
 │   │   ├── rerank.test.js                 # Cohere cross-encoder reranking, fallback on outage
+│   │   ├── fileTools.test.js              # ANALYZE_TABLE / READ_ROWS / COMPARE_FILES wiring + cross-tool coordinate composition
+│   │   ├── logTemplateMiner.test.js       # Drain templating, rare events, burst detection, explicit-level severity
+│   │   ├── storageParity.test.js          # Blob vs DB-base64 routes must yield identical text and identical tool output
+│   │   ├── tabularProfiler.test.js        # Census, percentiles, pt-fingerprint parity, guessed-column downgrade
+│   │   ├── tableCensus.test.js            # describeTable/analyzeTable on files matching no header vocabulary
 │   │   ├── rerankFiles.test.js            # Cohere rerank for uploaded files/logs with 429 resilience
 │   │   ├── retrieverHybrid.test.js        # HybridRetriever RRF fusion
 │   │   ├── sanitize.test.js               # XSS sanitization, whitespace preservation
@@ -271,6 +276,11 @@ frontend/
 | `temporalContext.test.js` | Zone resolution priority, ISO block rendering |
 | `rag2.test.js` | `ingestDocumentContent`, `searchKnowledgeCollections`, crawler helpers |
 | `rerank.test.js` | Cohere API wrapper, fallback to RRF on outage |
+| `tabularProfiler.test.js` | Column census, duration/unit inference, percentiles, `pt-fingerprint` parity, `GUESSED` column downgraded to `UNVERIFIED` |
+| `tableCensus.test.js` | `describeTable` / `analyzeTable` on Japanese and cryptic headers — the path that does not use the header vocabulary |
+| `logTemplateMiner.test.js` | Drain masking/similarity/merging, rare-event isolation, median+4×MAD bursts, explicit level beats content keywords |
+| `fileTools.test.js` | Tool matchers, argument parsing, filters, and the composition test: a line number from `ANALYZE_TABLE` must resolve in `READ_ROWS` |
+| `storageParity.test.js` | Vercel Blob and Base64-DB routes resolve to byte-identical text and produce identical census/analysis/row output |
 | `rerankFiles.test.js` | Cohere rerank on uploaded files/logs, 429 rate-limit cooldown & non-blocking fallback |
 | `raptor.test.js` | Deterministic k-means, summary penalty, primary-text wins tie |
 | `knowledgeGraph.test.js` | Entity/relation extraction, no hallucinated edges |

@@ -45,6 +45,12 @@ This document provides essential context about the codebase, deployment environm
 5. **Direct DB Upload Toggle (`upgDB`)**:
    - In `ChatMemoryControls.jsx` under Advanced settings, users can check `upgDB` (`storeInDb: true`) to store files directly in PostgreSQL Base64.
    - For files > 2.5MB in `upgDB` mode, client slices files into 2MB chunks via `/api/upload/chunk/*` to bypass Vercel's 4.5MB edge limit before assembling in Postgres. Default remains Vercel Blob (up to 50MB).
+6. **Storage-Route Parity — stored bytes are the ORIGINAL file, not extracted text**:
+   - Both Vercel Blob and the Base64 `original_file_data` column hold the file **as uploaded**. For `.xlsx`, `.docx` and `.pdf` that is a ZIP/PDF container, so `buffer.toString('utf-8')` yields `PK\x03\x04...` rather than the sheet.
+   - **This was a real bug**: the same spreadsheet analysed correctly when small (extracted text in `original_content`) and produced **no analysis at all** when large enough to route through Blob.
+   - Every branch of `resolveFullFileContent` therefore goes through `textFromStoredBuffer`, which re-runs `loadDocument` for binary formats and decodes directly only for text/code. On extraction failure it returns `null` so the caller falls through to `rag_chunks` rather than storing and citing mojibake.
+   - `resolveFullFileContent` is the **single funnel** for every file tool (`searchUserFilesRAG` for `SEARCH_FILES`; `getFileContent` for `GET_FILE`, `ANALYZE_TABLE`, `READ_ROWS`, `COMPARE_FILES`). Keep it that way — any new tool that reads a file must go through it, or it will silently work on one storage route and not the other.
+   - Pinned by `backend/__tests__/unit/storageParity.test.js`, which asserts byte-identical text and identical tool output across both routes.
 
 ---
 
@@ -72,7 +78,10 @@ This document provides essential context about the codebase, deployment environm
 - `backend/services/chatPipeline.service.js`: Unified AI pipeline for streaming, reasoning tokens, tool loops, and temporal grounding.
 - `backend/services/contextWindow.service.js`: Measures the assembled prompt against the model's real window and evicts only when it genuinely does not fit. Owns the eviction ladder, the cache-stable low-water mark, and the merge of retrieved context into the user turn.
 - `backend/services/ai/promptCache.service.js`: Single place that understands each provider's prompt-cache dialect (Anthropic / OpenAI / DeepSeek / Gemini field names), builds the per-conversation `prompt_cache_key`, and places the Anthropic history breakpoint.
-- `backend/services/toolProcessor.service.js`: Tool execution dispatcher, SRE diagnostic digest scanner, SAP ST22 parser, web search cross-referencing loop.
+- `backend/services/toolProcessor.service.js`: Tool execution dispatcher, SRE diagnostic digest scanner, SAP ST22 parser, web search cross-referencing loop. Holds `fileUpload.service` as a **namespace import**, not destructured — destructuring captures the binding at load time so no test stub can replace what it actually calls (`vi.mock` does not intercept this CommonJS module). Same reason as `rag2Service`.
+- `backend/services/tabularProfiler.service.js`: Column census (`describeTable`), numeric diagnostic profile (`profileTabularContent`), on-demand computation (`analyzeTable`), and `pt-fingerprint`-parity SQL normalisation.
+- `backend/services/logTemplateMiner.service.js`: Drain log-template mining (`mineLogTemplates`), row/time slicing (`readRows`), and baseline-vs-current diffing (`compareLogs`).
+- `backend/scripts/inspect-log-file.js` (`npm --prefix backend run inspect -- <path>`): runs a real export through the whole chain **from disk** — no upload, no DB, no Blob, no API key, no cost, and not subject to the 4MB cap. The heuristics are only validated against synthetic data plus `.xlsx`/`.docx` round-trips, so this is how a real ST05/AWR/`pg_stat_statements` export gets checked. Read the "HOW THIS FILE WAS READ" block first.
 - `backend/services/rag2.service.js`: Advanced RAG 2.0 (RAPTOR trees, GraphRAG, multi-query expansion, Cohere reranking).
 - `frontend/src/pages/hooks/useChatSession.js`: Chat SSE streaming, Vercel Blob client direct upload.
 - `frontend/src/pages/KnowledgePage.jsx`: Knowledge collection management, document indexing, web crawl, chunk inspection.
@@ -154,9 +163,31 @@ Verified live 2026-08-28. Do not "simplify" any of the below without re-measurin
    - Extracts Boot/Init sequence (first 120 lines), up to 35 high-signal incident clusters with 8-line context windows across all lines, and Crash/Shutdown state (last 150 lines).
 3. **Small/Medium Log Raw Passthrough**:
    - Files $\le 250\text{KB}$ ($\le 1,200$ lines) are delivered 100% full raw with zero filtering.
-4. **Dynamic Web Search + Log Cross-Referencing Loop**:
+   - The computed sections in 4-6 below are prepended at **every** size, including here — a slow query is a number, not a keyword, so the classifiers above cannot find one.
+4. **Column Census (`describeTable` in `tabularProfiler.service.js`)**:
+   - Emitted first for any delimited/spreadsheet upload, and **claims no meaning for any column** — it lists verbatim header, inferred type, cardinality, min/median/max/sum, and sample values.
+   - Deliberate design: header-vocabulary matching is a dictionary and misses any language or naming it was not taught. The model reads the census, decides which columns answer the question, and calls `ANALYZE_TABLE` for the arithmetic. **Semantics from the model, numbers from code.**
+   - The multilingual header vocabulary (EN/DE/ES/PT/FR/IT/NL) remains only as a fast path that saves a round trip when it happens to match.
+5. **Numeric Diagnostic Profile (`profileTabularContent`)**:
+   - For a recognised trace: p50/p95/p99/max on the duration column (unit-aware), slowest outlier rows, and statements grouped by fingerprint and ranked by total time — which is what catches an N+1 (`SELECT SINGLE` × 39,000 @ 3 ms) that no single-row view shows.
+   - SQL fingerprinting follows Percona `pt-fingerprint`: comments stripped; string/hex/`NULL` literals → `?`; `IN (…)` and multi-row `INSERT` cardinality collapsed; partitioned tables merged (`orders_2025_01` ≡ `orders_2025_02`); `USE <db>` abstracted. **Narrower than Percona in one place on purpose** — only runs of 2+ digits collapse, so `t1` and `t2` stay distinct.
+   - Always prints a **"HOW THIS FILE WAS READ"** block naming which column supplied timings and why, whether the unit was stated or assumed, and whether the pick was `GUESSED`. A guessed column downgrades the section to `UNVERIFIED TIMING` and switches statement ranking to call count.
+6. **Log Structure Analysis (`mineLogTemplates` in `logTemplateMiner.service.js`)**:
+   - **Drain** algorithm (He et al., ICWS 2017 — the parser behind logpai/Drain3, IBM AIOps and Salesforce LogAI): volatile values are masked, messages bucketed by token count, matched down a fixed-depth parse tree, and differing positions merged to `<*>`.
+   - Yields most-frequent events, **rare events** (seen once or twice — in a log dominated by repetition, the one-off line is usually the incident, and no keyword is needed to find it), distinct error/fatal event types, and a severity mix.
+   - **Burst detection** follows LogAI's counter-vector idea: events are bucketed over time and compared against **median + 4×MAD**, chosen over a standard deviation because a spike does not inflate a median absolute deviation the way it inflates a variance.
+   - Measured: a 13.3 MB / 200,001-line log resolves to **6 templates in ~755 ms**, output under 2 KB, isolating a single `FATAL` line.
+   - Severity is read from an **explicit level** (bracketed, `level=`, JSON `"level":`) before any content keyword, so `INFO retrying after failed attempt` is not counted as an error.
+7. **File Investigation Tools (advertised in `buildFileContext`)**:
+   - `[SEARCH_FILES:query=...]` — grep matching lines with context. Results carry an explicit warning that they are a **sample**, not every match, so nothing is counted from them.
+   - `[GET_FILE:id=...]` — the full digest (census + profile + structure + excerpts).
+   - `[ANALYZE_TABLE:file=<id> value=<col#> group=<col#> where=<col#>:<value> min=<n> max=<n>]` — exact totals, percentiles, top-N rows and grouped totals over **every** matching row. SQL groups by fingerprint, so bind values do not split one statement into many groups.
+   - `[READ_ROWS:file=<id> from=<line> to=<line>]` or `around=<timestamp> window=<seconds>` — reads the actual lines at a located position (capped at 150 lines).
+   - `[COMPARE_FILES:baseline=<id> current=<id>]` — what changed between a working run and a failing one: new event types, vanished ones (a heartbeat that **stopped** is often the failure itself), and rate shifts. Both files pass through **one** Drain parser so templates are shared objects; comparing two separately-built template sets would compare two different generalisations of the same event.
+   - **Coordinates are file line numbers throughout.** `ANALYZE_TABLE` reports `[line N]`, resolved via `splitIntoBlocks` → `parseBlock` → row, so a sheet banner or blank line cannot offset it and a filtered result still cites its true line. This is what lets one tool's output feed the next.
+8. **Dynamic Web Search + Log Cross-Referencing Loop**:
    - When Web search is enabled, the AI can query `[WEB_SEARCH:query="..."]` on unfamiliar vendor error codes or crash signatures (e.g. `SQL30012`, `ORA-00600`) to understand root causes, then cross-reference and verify related parameters in uploaded logs with `[SEARCH_FILES:query="..."]`.
-5. **Cohere Cross-Encoder Reranking & 429 Rate-Limit Resilience**:
+9. **Cohere Cross-Encoder Reranking & 429 Rate-Limit Resilience**:
    - When searching uploaded files/logs (`searchUserFilesRAG`) or building topic RAG context (`buildRAGContext`), candidate log grep lines ($\pm 4$ lines) and pgvector chunks are cross-encoder reranked via Cohere (`rerank-v3.5`) to promote true root-cause crash signatures over superficial keyword matches.
    - **Free-Tier 429 Protection**: Under Cohere free-tier limits (10 RPM / 1,000 monthly searches), HTTP 429 responses never halt or break a turn; the system activates an in-memory cooldown (default 60s or respecting `Retry-After`), logs a clean warning, skips outbound network calls during cooldown, and immediately returns the un-reranked keyword/vector candidates.
 

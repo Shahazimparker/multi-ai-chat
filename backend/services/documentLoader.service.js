@@ -66,6 +66,20 @@ const SUPPORTED_FORMATS = {
   vtt: 'text',
   sub: 'text',
 
+  // Trace and diagnostic exports. All of these are plain text; without an
+  // entry here they fell to the 'unknown' branch, which guesses at binary
+  // and can store '[Binary file: ...]' in place of the content.
+  trc: 'text',
+  trace: 'text',
+  err: 'text',
+  out: 'text',
+  audit: 'text',
+  slowlog: 'text',
+  diag: 'text',
+  syslog: 'text',
+  messages: 'text',
+  nohup: 'text',
+
   // Markdowns
   md: 'text',
   markdown: 'text',
@@ -233,11 +247,46 @@ const getLoaderType = (fileName) => {
 };
 
 /**
+ * Decoded bytes that are mostly unprintable, or that carry NUL bytes / U+FFFD
+ * replacement characters, did not come from a text file. Sampled from both ends
+ * so a large file costs the same as a small one.
+ */
+const looksBinary = (text) => {
+  if (!text) return false;
+  const SAMPLE = 8192;
+  const sample = text.length <= SAMPLE * 2
+    ? text
+    : text.slice(0, SAMPLE) + text.slice(-SAMPLE);
+
+  let unprintable = 0;
+  for (let i = 0; i < sample.length; i++) {
+    const code = sample.charCodeAt(i);
+    // Allow tab, newline, carriage return; count other control chars, NUL and
+    // the replacement character that a failed UTF-8 decode leaves behind.
+    if (code === 0 || code === 0xfffd || (code < 32 && code !== 9 && code !== 10 && code !== 13)) {
+      unprintable++;
+    }
+  }
+
+  return unprintable / sample.length > 0.1;
+};
+
+/**
  * TextLoader — plain text extraction
  */
 const TextLoader = {
   async load(buffer, fileName) {
     const content = buffer.toString('utf-8');
+
+    // An extension is a claim, not a fact: binary trace and dump files are
+    // routinely named .log or .trc. Decoding one as UTF-8 yields mojibake that
+    // would otherwise be chunked, embedded and later cited as file content.
+    // The unknown-type branch in loadDocument already refuses these; text
+    // extensions were simply trusted, so they bypassed that check.
+    if (looksBinary(content)) {
+      throw new Error(`"${fileName}" looks like binary data rather than text, so it cannot be read as a log.`);
+    }
+
     return {
       content,
       metadata: {
@@ -382,11 +431,85 @@ const PDFLoader = {
   },
 };
 
+const decodeHtmlEntities = (s) =>
+  s
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+
+/**
+ * Flatten mammoth's HTML to text, rendering each <tr> as one comma-delimited
+ * line so table rows survive as rows. Cells are quoted the same way
+ * SpreadsheetLoader quotes them, so a single parser handles both sources.
+ */
+const htmlToTextPreservingTables = (html) => {
+  if (!html) return '';
+
+  const quoteCell = (text) =>
+    /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+
+  const withRows = html.replace(/<tr[^>]*>([\s\S]*?)<\/tr>/gi, (_match, rowHtml) => {
+    const cells = [];
+    const cellPattern = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
+    let cell;
+    while ((cell = cellPattern.exec(rowHtml)) !== null) {
+      const text = decodeHtmlEntities(cell[1].replace(/<[^>]+>/g, ' '))
+        .replace(/\s+/g, ' ')
+        .trim();
+      cells.push(quoteCell(text));
+    }
+    // Leading newline only — a trailing one too would put a blank line between
+    // every pair of rows, breaking up the contiguous block a table should be.
+    return cells.length > 0 ? `\n${cells.join(',')}` : '\n';
+  });
+
+  return decodeHtmlEntities(
+    withRows
+      .replace(/<\/(p|div|h[1-6]|li|table)>/gi, '\n')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+  )
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+};
+
 /**
  * DocumentLoader — extract text from Word docs (.doc, .docx)
  */
 const DocumentLoader = {
+  /**
+   * mammoth.extractRawText emits every table CELL as its own paragraph, so a
+   * Word document holding a log or SQL-trace table arrives as a vertical list
+   * of values with no row alignment left — the duration for a statement ends up
+   * three lines away from it, and no downstream reader can pair them again.
+   *
+   * Converting to HTML first keeps the row boundaries, which are then rendered
+   * as delimited lines so tables land in the same shape SpreadsheetLoader
+   * produces. Prose paragraphs are unaffected.
+   */
   async load(buffer, fileName) {
+    try {
+      const html = await mammoth.convertToHtml({ buffer });
+      const content = htmlToTextPreservingTables(html.value || '');
+      if (content.trim()) {
+        return {
+          content,
+          metadata: {
+            type: 'document',
+            fileName,
+            size: buffer.length,
+            extraction: 'html-tables-preserved',
+          },
+        };
+      }
+    } catch (err) {
+      console.warn(`[DocumentLoader] Table-preserving conversion failed for "${fileName}", falling back to raw text:`, err.message);
+    }
+
     const result = await mammoth.extractRawText({ buffer });
     return {
       content: result.value,
@@ -394,6 +517,7 @@ const DocumentLoader = {
         type: 'document',
         fileName,
         size: buffer.length,
+        extraction: 'raw-text',
       },
     };
   },

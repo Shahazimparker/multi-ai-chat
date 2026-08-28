@@ -37,6 +37,11 @@ const { stripToolTags, classifyError } = require('./chatCleanup.service');
 const { searchWeb } = require('./tools/webSearch.service');
 const { extractUrls, readUrls } = require('./tools/urlReader.service');
 const { extractCollectionMentions, searchKnowledgeCollections } = require('./rag2.service');
+
+// Floor for the GET_FILE digest budget. A large log analysis is worth more of
+// the prompt than the flat 15% file share allows on mid-size models; the call
+// site clamps this against the model that is actually answering.
+const FILE_DIGEST_TOKEN_FLOOR = 10000;
 const { DEFAULT_PROVIDER, spaceForProvider } = require('../config/embedding');
 const { listCollections } = require('./knowledgeCollection.service');
 const {
@@ -1179,6 +1184,21 @@ ${page.text}`)
       collectionIds: targetCollectionIds,
       embedProvider,
       ragTokenBudget: promptBudget.ragTokens,
+      // GET_FILE injects a whole diagnostic digest as one message. Unbounded,
+      // a large log crowds out history and RAG context and can overflow a
+      // smaller model entirely.
+      //
+      // A large log earns more room than the standard 15% file share, so 10k is
+      // a floor rather than a ceiling — but only where the model can absorb it.
+      // The flat share gives just 4,200 tokens on a 32k model and 798 on an 8k
+      // one, while a 128k model already allows 18,600; raising everything to a
+      // flat 10k would starve the big models and blow the small ones straight
+      // past their entire prompt budget. Hence: lift to 10k, then clamp to 40%
+      // of the prompt so system, history and the question still fit.
+      fileTokenBudget: Math.min(
+        Math.max(promptBudget.fileTokens, FILE_DIGEST_TOKEN_FLOOR),
+        Math.floor(promptBudget.maxPromptTokens * 0.4)
+      ),
       // Citations discovered by a tool call have to reach the same array the
       // pre-search populates, or the UI shows sources for only the first pass.
       onCitations: (toolCitations) => {

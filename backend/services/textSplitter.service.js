@@ -341,21 +341,45 @@ class LineBasedSplitter {
 /**
  * Auto-select splitter based on content type
  */
+// Two vocabularies reach this function and they do not match: documentLoader
+// classifies with 'text' | 'spreadsheet' | 'document', while the upload path
+// (getSupportedFileType in fileUpload.service.js) passes the storage type
+// 'txt' | 'csv' | 'xlsx' | 'doc' | 'log'. Anything unrecognised silently fell
+// through to SemanticSplitter, which cuts on sentence boundaries — so logs and
+// CSV rows, which contain no sentences, were chunked at arbitrary offsets
+// mid-record. Normalising here keeps both callers honest.
+const SPLITTER_ALIASES = {
+  code: 'code',
+  spreadsheet: 'spreadsheet',
+  csv: 'spreadsheet',
+  tsv: 'spreadsheet',
+  xlsx: 'spreadsheet',
+  xls: 'spreadsheet',
+  ods: 'spreadsheet',
+  pdf: 'prose',
+  document: 'prose',
+  doc: 'prose',
+  docx: 'prose',
+  // Line-oriented: a record is a line, and a chunk must not end mid-line.
+  txt: 'lines',
+  text: 'lines',
+  log: 'lines',
+};
+
+const normalizeSplitterType = (fileType) =>
+  SPLITTER_ALIASES[String(fileType || '').toLowerCase()] || 'prose';
+
 const getOptimalSplitter = (fileType, maxTokens = 500) => {
-  if (fileType === 'code') {
-    return new LineBasedSplitter(maxTokens, 50);
+  switch (normalizeSplitterType(fileType)) {
+    case 'code':
+      return new LineBasedSplitter(maxTokens, 50);
+    case 'spreadsheet':
+      return new LineBasedSplitter(maxTokens, 30);
+    case 'lines':
+      return new LineBasedSplitter(maxTokens, 80);
+    default:
+      return new RecursiveSplitter(maxTokens, 50);
   }
-
-  if (fileType === 'spreadsheet') {
-    return new LineBasedSplitter(maxTokens, 30);
-  }
-
-  if (fileType === 'pdf' || fileType === 'document') {
-    return new RecursiveSplitter(maxTokens, 50);
-  }
-
-  // Default: semantic for most content
-  return new SemanticSplitter(maxTokens);
 };
 
 /**
@@ -390,6 +414,7 @@ const splitText = (text, fileType, options = {}) => {
 module.exports = {
   splitText,
   getOptimalSplitter,
+  normalizeSplitterType,
   RecursiveSplitter,
   SemanticSplitter,
   SlidingWindowSplitter,

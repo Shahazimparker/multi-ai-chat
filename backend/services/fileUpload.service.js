@@ -163,6 +163,18 @@ const SUPPORTED_FILE_TYPES = {
   vtt: 'txt',
   sub: 'txt',
 
+  // Trace and diagnostic exports (plain text; see documentLoader for why).
+  trc: 'txt',
+  trace: 'txt',
+  err: 'txt',
+  out: 'txt',
+  audit: 'txt',
+  slowlog: 'txt',
+  diag: 'txt',
+  syslog: 'txt',
+  messages: 'txt',
+  nohup: 'txt',
+
   // Markdowns
   md: 'code',
   markdown: 'code',
@@ -508,7 +520,19 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
       const EMBED_CONCURRENCY = 6;
       let completedEmbeddings = 0;
 
-      const embedIndices = Array.from({ length: chunksToEmbedCount }, (_, i) => i);
+      // Spread the budget across the whole file rather than spending it all on
+      // the first 40 chunks. Every un-embedded chunk is backfilled below with a
+      // copy of another chunk's vector, so taking the first 40 of a 2,000-chunk
+      // log meant 98% of it scored against a vector describing the file header —
+      // vector search could not reach the body at all. An even stride keeps
+      // chunk 0 (which carries the header row and any diagnostic profile) while
+      // sampling the rest, so retrieval sees the whole file.
+      const embedIndices = chunks.length <= MAX_DENSE_EMBED_CHUNKS
+        ? Array.from({ length: chunksToEmbedCount }, (_, i) => i)
+        : Array.from(
+          { length: chunksToEmbedCount },
+          (_, i) => Math.min(chunks.length - 1, Math.round((i * chunks.length) / chunksToEmbedCount))
+        );
       const embedResults = await mapConcurrent(embedIndices, EMBED_CONCURRENCY, async (i) => {
         if (signal?.aborted) throw new Error('Upload cancelled by user');
         const res = await embedChunkWithRetry(chunks[i], i, chunks.length);
@@ -520,22 +544,29 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
         return res;
       });
 
-      for (let i = 0; i < chunksToEmbedCount; i++) {
+      // Place each vector at the chunk it was computed from. embedResults is
+      // ordered by embedIndices, which is no longer 0..n-1 once the sampling
+      // above strides across the file, so positional pushes would attach chunk
+      // 250's vector to chunk 5.
+      chunkVectors.length = chunks.length;
+      chunkVectors.fill(null);
+
+      for (let i = 0; i < embedIndices.length; i++) {
         const result = embedResults[i];
-        if (result) {
-          chunkVectors.push(result.vector);
-          if (!chunkSpace) chunkSpace = result.space;
-          totalEmbedTokens += result.tokensUsed;
-        } else {
-          chunkVectors.push(null);
-        }
+        if (!result) continue;
+        chunkVectors[embedIndices[i]] = result.vector;
+        if (!chunkSpace) chunkSpace = result.space;
+        totalEmbedTokens += result.tokensUsed;
       }
 
+      // Backfill gaps from the nearest embedded chunk rather than from the first
+      // one: a chunk 900 rows into a log is far better represented by its own
+      // neighbourhood than by the file header.
       const fileVector = chunkVectors.find(v => v !== null) || null;
-
-      // Fill remaining chunks with fallback fileVector to ensure full text searchability
-      while (chunkVectors.length < chunks.length) {
-        chunkVectors.push(fileVector);
+      let lastSeen = fileVector;
+      for (let i = 0; i < chunkVectors.length; i++) {
+        if (chunkVectors[i]) lastSeen = chunkVectors[i];
+        else chunkVectors[i] = lastSeen;
       }
 
       // Every chunk here goes through the same embedText call, so one space
@@ -1053,6 +1084,43 @@ const looksLikeBase64 = (value) =>
   /^[A-Za-z0-9+/]+={0,2}$/.test(value);
 
 /**
+ * Turn raw stored bytes into the SAME text the upload path produced.
+ *
+ * Vercel Blob holds the ORIGINAL file, not the extracted text — so for xlsx,
+ * docx and pdf the stored bytes are a ZIP/PDF container. Decoding those with
+ * toString('utf-8') yields the literal bytes ("PK\x03\x04...") rather than the
+ * sheet, and every downstream reader — the profiler, the log miner, the keyword
+ * scanner, the grep — then sees binary noise and reports nothing.
+ *
+ * That made the two storage routes behave differently for the same file: a
+ * small upload kept its extracted text in `original_content` and analysed fine,
+ * while the same file over the Blob threshold analysed as garbage. Re-running
+ * the loader here is what makes the routes equivalent.
+ *
+ * Returns null (not garbage) when extraction fails, so the caller falls through
+ * to the next strategy instead of storing and citing mojibake.
+ */
+const textFromStoredBuffer = async (buffer, fileName) => {
+  if (!buffer || buffer.length === 0) return null;
+
+  try {
+    const { getLoaderType, loadDocument } = require('./documentLoader.service');
+    const loaderType = getLoaderType(fileName || '');
+
+    // Already text on disk — decode directly and skip the loader entirely.
+    if (loaderType === 'text' || loaderType === 'code') {
+      return buffer.toString('utf-8');
+    }
+
+    const loaded = await loadDocument(buffer, fileName);
+    return loaded?.content || null;
+  } catch (err) {
+    console.warn(`[FileContent] Could not re-extract "${fileName}" from stored bytes:`, err.message);
+    return null;
+  }
+};
+
+/**
  * Helper to fetch complete file text across Vercel Blob, Base64 DB storage,
  * and paginated rag_chunks reassembly (guaranteeing >1000 chunks for 10MB-50MB files).
  *
@@ -1069,11 +1137,15 @@ const resolveFullFileContent = async (fileRecord, userId) => {
   }
 
   // 2. Base64 in original_file_data — still local.
+  //    This column holds the ORIGINAL file bytes too, so it needs the same
+  //    extraction as the Blob branch below. Decoding an xlsx straight to UTF-8
+  //    here was the DB-upload half of the same parity bug.
   if (fileRecord.original_file_data) {
     try {
       const bin = fileRecord.original_file_data;
       if (looksLikeBase64(bin)) {
-        return Buffer.from(bin, 'base64').toString('utf-8');
+        const text = await textFromStoredBuffer(Buffer.from(bin, 'base64'), fileRecord.file_name);
+        if (text) return text;
       }
     } catch (binErr) {
       console.warn('[FileContent] Base64 decode warning:', binErr.message);
@@ -1085,7 +1157,12 @@ const resolveFullFileContent = async (fileRecord, userId) => {
     try {
       const { fetchPrivateBlobBuffer } = require('./blobStorage.service');
       const buf = await fetchPrivateBlobBuffer(fileRecord.blob_url);
-      if (buf && buf.length > 0) return buf.toString('utf-8');
+      // Extract rather than decode: the blob is the original file, so an xlsx
+      // or docx has to go back through the loader to become text again.
+      // On failure this falls through to rag_chunks below, which holds the
+      // text that was extracted at upload time.
+      const text = await textFromStoredBuffer(buf, fileRecord.file_name);
+      if (text) return text;
     } catch (bErr) {
       console.warn('[FileContent] Blob fetch fallback warning:', bErr.message);
     }
@@ -1124,12 +1201,13 @@ const resolveFullFileContent = async (fileRecord, userId) => {
         try {
           const { fetchPrivateBlobBuffer } = require('./blobStorage.service');
           const buf = await fetchPrivateBlobBuffer(effectiveBlobUrl);
-          if (buf && buf.length > 0) {
+          const text = await textFromStoredBuffer(buf, fileRecord.file_name);
+          if (text) {
             // Auto-heal uploaded_files_rag table for future queries
             if (fileRecord.id) {
               supabase.from('uploaded_files_rag').update({ blob_url: effectiveBlobUrl }).eq('id', fileRecord.id).then(() => {});
             }
-            return buf.toString('utf-8');
+            return text;
           }
         } catch (bErr) {
           console.warn('[FileContent] Blob fetch from uFile fallback warning:', bErr.message);
@@ -1756,5 +1834,6 @@ module.exports = {
   getFileHash,
   analyzeFileWithLLM,
   processZipFile, // exported for unit tests to exercise the ZIP safety limits directly
+  textFromStoredBuffer, // exported so the Blob/DB storage-parity tests can call it directly
   resolveFullFileContent,
 };

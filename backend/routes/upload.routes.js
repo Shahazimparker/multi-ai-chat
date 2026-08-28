@@ -182,8 +182,17 @@ const uploadSingle = (req, res, next) => {
   upload.single('file')(req, res, (err) => {
     if (!err) return next();
     if (err.code === 'LIMIT_FILE_SIZE') {
+      // Real trace and log exports routinely exceed 4MB, and the 4MB ceiling is
+      // not a product decision — it is the Vercel request-body limit, which the
+      // Blob upload path bypasses entirely. Saying which of the two limits was
+      // hit turns "too large" into something the user can act on.
+      const blobActive = isBlobConfigured();
       return res.status(400).json({
-        error: `File is too large. Maximum upload size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`,
+        error: blobActive
+          ? `File is too large. Maximum upload size is 50MB.`
+          : `File is too large. The direct-upload limit is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB because that is the serverless request-body cap. Large-file storage (up to 50MB) is not configured on this deployment — set BLOB_READ_WRITE_TOKEN to enable it.`,
+        limitBytes: blobActive ? 50 * 1024 * 1024 : MAX_UPLOAD_BYTES,
+        blobEnabled: blobActive,
       });
     }
     return res.status(400).json({ error: err.message || 'File upload failed' });

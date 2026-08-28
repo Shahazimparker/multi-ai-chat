@@ -1,4 +1,10 @@
-const { searchUserFilesRAG, getFileContent } = require('./fileUpload.service');
+// Namespace import rather than destructuring, for the same reason as
+// rag2Service below: destructuring captures the function binding at load
+// time, so no later stub can replace what this module actually calls.
+const fileUploadService = require('./fileUpload.service');
+const { profileTabularContent, describeTable, analyzeTable } = require('./tabularProfiler.service');
+const { mineLogTemplates, readRows, compareLogs } = require('./logTemplateMiner.service');
+const { trimTextByTokens, estimateTokens } = require('./tokenBudget.service');
 const { searchWeb } = require('./tools/webSearch.service');
 const { generateImage } = require('./imageGeneration.service');
 const { generatePPT } = require('./pptGeneration.service');
@@ -203,7 +209,7 @@ const buildFileContext = (fileResults, totalFileCount, forceWebSearch = false) =
     : '';
 
   const webInstruction = forceWebSearch
-    ? `\n3. WEB_SEARCH FOR LOG DIAGNOSTICS & ERROR CODES: If you find unfamiliar error codes, database signatures (e.g. SQL30012, ORA-00600, Sybase/ASE/Postgres/MySQL errors), or system anomalies in an uploaded log file, use [WEB_SEARCH:query="..."] to look up the official vendor root-cause and known bugs on the web. Then use [SEARCH_FILES:query="..."] to cross-reference and verify those parameters in the log for an accurate, up-to-date diagnostic report.`
+    ? `\n6. WEB_SEARCH FOR LOG DIAGNOSTICS & ERROR CODES: If you find unfamiliar error codes, database signatures (e.g. SQL30012, ORA-00600, Sybase/ASE/Postgres/MySQL errors), or system anomalies in an uploaded log file, use [WEB_SEARCH:query="..."] to look up the official vendor root-cause and known bugs on the web. Then use [SEARCH_FILES:query="..."] to cross-reference and verify those parameters in the log for an accurate, up-to-date diagnostic report.`
     : '';
 
   return fileResults.length > 0
@@ -214,11 +220,32 @@ const buildFileContext = (fileResults, totalFileCount, forceWebSearch = false) =
     `1. SEARCH_FILES — use to grep or search for specific errors, timestamps, processes, or keywords across the entire file. ` +
     `Respond with: [SEARCH_FILES:query=<search text>] and I will return the matching lines with surrounding context.\n` +
     `2. GET_FILE — use when you need the diagnostic digest or full content of a specific file. ` +
-    `Respond with: [GET_FILE:id=<file_id>] or [GET_FILE:<file_name>] and I will inject the content.${webInstruction}`
+    `Respond with: [GET_FILE:id=<file_id>] or [GET_FILE:<file_name>] and I will inject the content. ` +
+    `For a spreadsheet or delimited file this also returns a TABLE SCHEMA listing every column with its ` +
+    `type, range and sample values — no meaning is assumed for any column, so read it and judge for yourself ` +
+    `which columns answer the question, whatever language or domain they are in.\n` +
+    `3. ANALYZE_TABLE — compute exact figures over EVERY row of a table, once you know which columns matter. ` +
+    `Respond with: [ANALYZE_TABLE:file=<file_id> value=<column number> group=<column number>]. ` +
+    `\`value\` is a numeric column to total, rank and take percentiles of; \`group\` is a column to group rows by ` +
+    `(SQL statements are grouped by shape, so bind values do not split a statement into many groups). ` +
+    `Narrow it with \`where=<column number>:<value>\`, \`min=<number>\` or \`max=<number>\` — e.g. ` +
+    `[ANALYZE_TABLE:file=<id> value=3 group=2 where=5:TIMEOUT] to see what only the failures have in common. ` +
+    `Every argument is optional. Use this rather than adding up sample rows yourself — the samples are not the data.\n` +
+    `4. READ_ROWS — read the actual lines at a location you have found. ` +
+    `Respond with: [READ_ROWS:file=<file_id> from=<line> to=<line>] or [READ_ROWS:file=<file_id> around=<timestamp> window=<seconds>]. ` +
+    `Use it whenever another tool gives you a line number or a timestamp and you need the surrounding context: ` +
+    `do not describe what a line probably says when you can read it.\n` +
+    `5. COMPARE_FILES — when two files are available (a working baseline and a failing run), report what changed. ` +
+    `Respond with: [COMPARE_FILES:baseline=<file_id> current=<file_id>]. ` +
+    `It returns event types that are new, ones that stopped appearing, and ones whose rate shifted — ` +
+    `an event that DISAPPEARED is often the failure itself.${webInstruction}`
     : '';
 };
 
 const findSearchFileMatch = (reply) => reply.match(/\[SEARCH_FILES:query=([^\]]+)\]/i);
+const findAnalyzeTableMatch = (reply) => reply.match(/\[ANALYZE_TABLE:([^\]]+)\]/i);
+const findReadRowsMatch = (reply) => reply.match(/\[READ_ROWS:([^\]]+)\]/i);
+const findCompareFilesMatch = (reply) => reply.match(/\[COMPARE_FILES:([^\]]+)\]/i);
 const findSearchKBMatch = (reply) => reply.match(/\[SEARCH_KB:query=(?:"|')([^"']+)(?:"|')\]/i) || reply.match(/\[SEARCH_KB:query=([^\]]+)\]/i);
 const findGetFileMatch = (reply) =>
   reply.match(/\[GET_FILE:id=([^\]]+)\]/i) ||
@@ -343,14 +370,39 @@ const extractDiagnosticDigest = (rawText, fileName) => {
   if (!rawText) return '[No content available]';
   const lines = rawText.split('\n');
   const totalLines = lines.length;
+
+  // Numeric profile first, at every file size. The keyword scanning below finds
+  // error-shaped lines, but a slow query is a number, not a word — a row
+  // reading `SELECT ... | 4821 ms` matches none of the patterns further down.
+  // Prepending rather than replacing: the profile says which statement is
+  // expensive, the excerpts still show what went wrong around it.
+  const profile = profileTabularContent(rawText, fileName);
+
+  // Structural analysis second. The scanner below only reports lines whose text
+  // matches a severity vocabulary, which cannot answer "what is normal in this
+  // file, and what happened only once" — and in a log where one event repeats
+  // 40,000 times, the one-off line is usually the incident. Drain-style
+  // templating groups events so both questions become counting problems.
+  const structure = mineLogTemplates(rawText, fileName);
+
+  // Column census always, and FIRST. The profile above only speaks when it
+  // recognises the columns; the census speaks for any table in any language,
+  // claims no meaning, and is what lets the model handle a file whose shape
+  // nobody anticipated — by reading the columns itself and calling
+  // ANALYZE_TABLE for the arithmetic.
+  const census = describeTable(rawText, fileName);
+
+  const sections = [census, profile, structure].filter(Boolean);
+  const withProfile = (digest) => (sections.length > 0 ? `${sections.join('\n\n')}\n\n${digest}` : digest);
+
   if (rawText.length <= 250000 && totalLines <= 1200) {
-    return rawText;
+    return withProfile(rawText);
   }
 
   // 1. Check for dedicated SAP ST22 Short Dump format
   const sapDigest = parseSAPShortDump(rawText, fileName);
   if (sapDigest) {
-    return sapDigest;
+    return withProfile(sapDigest);
   }
 
   // 2. First 120 lines (Boot / Startup / Initialization context)
@@ -458,12 +510,12 @@ const extractDiagnosticDigest = (rawText, fileName) => {
     incidentBlock = `--- NO FATAL ANOMALIES AUTOMATICALLY DETECTED IN MIDDLE SECTION ---\n\n`;
   }
 
-  return `[DIAGNOSTIC LOG SUMMARY: ${fileName} (${totalLines} total lines, ${(rawText.length / (1024 * 1024)).toFixed(1)}MB)]
+  return withProfile(`[DIAGNOSTIC LOG SUMMARY: ${fileName} (${totalLines} total lines, ${(rawText.length / (1024 * 1024)).toFixed(1)}MB)]
 --- FILE START (Lines 1 to 120) ---
 ${headLines}
 
 ${incidentBlock}--- FILE END (Lines ${Math.max(1, totalLines - 150)} to ${totalLines}) ---
-${tailLines}`;
+${tailLines}`);
 };
 
 const processToolCall = async ({
@@ -478,19 +530,35 @@ const processToolCall = async ({
   collectionIds = [],
   embedProvider = 'openrouter',
   ragTokenBudget = 2500,
+  fileTokenBudget = 10000,
   onCitations = null,
 }) => {
   const searchMatch = findSearchFileMatch(reply);
   if (searchMatch) {
     const query = searchMatch[1].trim();
-    const searchResult = await searchUserFilesRAG(query, user?.id, topicId, abortController.signal);
+    const searchResult = await fileUploadService.searchUserFilesRAG(query, user?.id, topicId, abortController.signal);
     const searchResults = searchResult.results || [];
     const embedTokens = searchResult.embedTokens || 0;
+
+    // These snippets are sampled — searchUserFilesRAG caps matched lines per
+    // file and then keeps only a head/middle/tail selection of them. Counting
+    // anything from what comes back (how often an error occurs, which query is
+    // slowest) would be counting the sample, not the file. Say so, and point at
+    // the tool that does return whole-file measurements.
+    const matchedFiles = [...new Map(
+      searchResults.map(r => [r.file_id, { id: r.file_id, name: r.file_name }])
+    ).values()];
+
+    const samplingNote = matchedFiles.length > 0
+      ? `\n\nNOTE: the snippets above are a SAMPLE of matching lines, not every match. Do not count or total anything from them.\n` +
+        `For exact counts, timings and slowest-query rankings computed over the whole file, call:\n` +
+        matchedFiles.map(f => `  [GET_FILE:id=${f.id}]   (${f.name})`).join('\n')
+      : '';
 
     const resultBlock = searchResults.length > 0
       ? `[SEARCH RESULTS for "${query}"]\n${searchResults
         .map(r => `- ${r.file_name} (id: ${r.file_id}):\n${r.chunk_text.slice(0, 1200)}`)
-        .join('\n\n')}\n[END SEARCH RESULTS]`
+        .join('\n\n')}${samplingNote}\n[END SEARCH RESULTS]`
       : `[SEARCH RESULTS for "${query}"]\nNo matching files found.\n[END SEARCH RESULTS]`;
 
     return {
@@ -503,10 +571,179 @@ const processToolCall = async ({
     };
   }
 
+  // ── ANALYZE_TABLE ─────────────────────────────────────────
+  // The model has read the column census, decided which columns matter, and is
+  // asking for exact arithmetic over the whole file. Nothing here assumes what
+  // the columns mean — that judgement was the model's, and it works for a
+  // Japanese sales export as readily as for an English SQL trace.
+  const analyzeMatch = findAnalyzeTableMatch(reply);
+  if (analyzeMatch) {
+    const argText = analyzeMatch[1];
+    const arg = (name) => {
+      const m = argText.match(new RegExp(`\\b${name}\\s*=\\s*["']?([^\\s"',\\]]+)`, 'i'));
+      return m ? m[1] : null;
+    };
+
+    const fileTarget = (arg('file') || arg('id') || '').trim();
+    const valueCol = arg('value');
+    const groupCol = arg('group');
+    const minVal = arg('min');
+    const maxVal = arg('max');
+    // where=<col>:<value> — the value may contain spaces, so it is read to the
+    // end of the argument text rather than to the next whitespace.
+    const whereMatch = argText.match(/\bwhere\s*=\s*["']?(\d+\s*[:=][^"']*?)["']?\s*(?:\bvalue=|\bgroup=|\bmin=|\bmax=|\bfile=|$)/i);
+    const whereArg = whereMatch ? whereMatch[1].trim() : null;
+
+    const fileData = fileTarget ? await fileUploadService.getFileContent(fileTarget, user?.id, topicId) : null;
+    if (!fileData) {
+      return {
+        handled: true,
+        newMessages: [
+          { role: 'assistant', content: reply.replace(analyzeMatch[0], '').trim() || '[Analysing table]' },
+          { role: 'user', content: `[ANALYZE_TABLE RESULT]\nFile "${fileTarget}" not found. Use the file id shown in the uploaded-files list.\n[END ANALYZE_TABLE RESULT]` },
+        ],
+        embedTokens: 0,
+      };
+    }
+
+    const content = fileData.original_content || '';
+    const result = analyzeTable(content, {
+      valueCol,
+      groupCol,
+      where: whereArg,
+      min: minVal,
+      max: maxVal,
+    });
+
+    const shown = [
+      valueCol ? `value=col${valueCol}` : null,
+      groupCol ? `group=col${groupCol}` : null,
+      whereArg ? `where=${whereArg}` : null,
+      minVal ? `min=${minVal}` : null,
+      maxVal ? `max=${maxVal}` : null,
+    ].filter(Boolean).join(' ');
+
+    return {
+      handled: true,
+      newMessages: [
+        { role: 'assistant', content: reply.replace(analyzeMatch[0], '').trim() || `[Analysing ${fileData.file_name}]` },
+        {
+          role: 'user',
+          content:
+            `[ANALYZE_TABLE RESULT: ${fileData.file_name}${shown ? ` ${shown}` : ''}]\n` +
+            'Computed over every matching row. These are exact figures, not samples.\n' +
+            'Line numbers are real file lines — pass one to READ_ROWS to see it in context.\n\n' +
+            `${result}\n[END ANALYZE_TABLE RESULT]`,
+        },
+      ],
+      embedTokens: 0,
+    };
+  }
+
+  // ── READ_ROWS ─────────────────────────────────────────────
+  // Closes the loop between locating something and reading it. Every other
+  // tool emits a coordinate — a line number, a timestamp — and without this
+  // each of those was a dead end that the model had to paper over by inferring
+  // from summaries.
+  const readRowsMatch = findReadRowsMatch(reply);
+  if (readRowsMatch) {
+    const argText = readRowsMatch[1];
+    const arg = (name) => {
+      const m = argText.match(new RegExp(`\\b${name}\\s*=\\s*["']?([^\\s"',\\]]+)`, 'i'));
+      return m ? m[1] : null;
+    };
+
+    const fileTarget = (arg('file') || arg('id') || '').trim();
+    const fileData = fileTarget ? await fileUploadService.getFileContent(fileTarget, user?.id, topicId) : null;
+
+    if (!fileData) {
+      return {
+        handled: true,
+        newMessages: [
+          { role: 'assistant', content: reply.replace(readRowsMatch[0], '').trim() || '[Reading rows]' },
+          { role: 'user', content: `[READ_ROWS RESULT]\nFile "${fileTarget}" not found. Use the file id from the uploaded-files list.\n[END READ_ROWS RESULT]` },
+        ],
+        embedTokens: 0,
+      };
+    }
+
+    const slice = readRows(fileData.original_content || '', {
+      from: arg('from'),
+      to: arg('to'),
+      around: arg('around'),
+      window: arg('window') || 30,
+    });
+
+    return {
+      handled: true,
+      newMessages: [
+        { role: 'assistant', content: reply.replace(readRowsMatch[0], '').trim() || `[Reading ${fileData.file_name}]` },
+        {
+          role: 'user',
+          content:
+            `[READ_ROWS RESULT: ${fileData.file_name}]\n` +
+            'Exact file content, quoted verbatim.\n\n' +
+            `${slice}\n[END READ_ROWS RESULT]`,
+        },
+      ],
+      embedTokens: 0,
+    };
+  }
+
+  // ── COMPARE_FILES ─────────────────────────────────────────
+  // "What is different since it was working" is a question neither file can
+  // answer alone.
+  const compareMatch = findCompareFilesMatch(reply);
+  if (compareMatch) {
+    const argText = compareMatch[1];
+    const arg = (name) => {
+      const m = argText.match(new RegExp(`\\b${name}\\s*=\\s*["']?([^\\s"',\\]]+)`, 'i'));
+      return m ? m[1] : null;
+    };
+
+    const baselineTarget = (arg('baseline') || arg('before') || arg('a') || '').trim();
+    const currentTarget = (arg('current') || arg('after') || arg('b') || '').trim();
+
+    const [baselineFile, currentFile] = await Promise.all([
+      baselineTarget ? fileUploadService.getFileContent(baselineTarget, user?.id, topicId) : null,
+      currentTarget ? fileUploadService.getFileContent(currentTarget, user?.id, topicId) : null,
+    ]);
+
+    if (!baselineFile || !currentFile) {
+      const missing = [
+        !baselineFile ? `baseline "${baselineTarget || '(not given)'}"` : null,
+        !currentFile ? `current "${currentTarget || '(not given)'}"` : null,
+      ].filter(Boolean).join(' and ');
+      return {
+        handled: true,
+        newMessages: [
+          { role: 'assistant', content: reply.replace(compareMatch[0], '').trim() || '[Comparing files]' },
+          { role: 'user', content: `[COMPARE_FILES RESULT]\nCould not load ${missing}. Use [COMPARE_FILES:baseline=<file_id> current=<file_id>] with ids from the uploaded-files list.\n[END COMPARE_FILES RESULT]` },
+        ],
+        embedTokens: 0,
+      };
+    }
+
+    const report = compareLogs(
+      baselineFile.original_content || '',
+      currentFile.original_content || '',
+      { baselineName: baselineFile.file_name, currentName: currentFile.file_name }
+    );
+
+    return {
+      handled: true,
+      newMessages: [
+        { role: 'assistant', content: reply.replace(compareMatch[0], '').trim() || '[Comparing files]' },
+        { role: 'user', content: `[COMPARE_FILES RESULT]\n${report}\n[END COMPARE_FILES RESULT]` },
+      ],
+      embedTokens: 0,
+    };
+  }
+
   const getFileMatch = findGetFileMatch(reply);
   if (getFileMatch) {
     const fileTarget = getFileMatch[1].trim().replace(/^['"]|['"]$/g, '');
-    const fileData = await getFileContent(fileTarget, user?.id, topicId);
+    const fileData = await fileUploadService.getFileContent(fileTarget, user?.id, topicId);
 
     if (!fileData) {
       return {
@@ -520,7 +757,17 @@ const processToolCall = async ({
     }
 
     const rawContent = fileData.original_content || fileData.llm_analysis || '[No content available]';
-    const fileContentToSend = extractDiagnosticDigest(rawContent, fileData.file_name);
+    const digest = extractDiagnosticDigest(rawContent, fileData.file_name);
+
+    // The digest for a large log runs to tens of thousands of characters and
+    // was previously injected whole. Trimming from the END is what makes this
+    // safe: extractDiagnosticDigest puts the computed sections (numeric profile,
+    // log structure) first and the raw excerpts last, so what gets dropped under
+    // pressure is the sampled text — never the measurements.
+    const budget = Math.max(1200, Number(fileTokenBudget) || 10000);
+    const fileContentToSend = estimateTokens(digest) > budget
+      ? `${trimTextByTokens(digest, budget)}\n\n[TRUNCATED: this file's digest exceeded the ${budget}-token budget for file content. The computed analysis above is complete; the raw excerpts were cut. Use [SEARCH_FILES:query=...] to pull specific lines.]`
+      : digest;
 
     const contentBlock = `[FILE CONTENT: ${fileData.file_name}]\n\`\`\`\n${fileContentToSend}\n\`\`\`\n[END FILE CONTENT]\n\nNow answer the user's question based on this file content and diagnostic summary. Be concise, precise, and accurate.`;
 
@@ -1013,6 +1260,9 @@ module.exports = {
   findSearchFileMatch,
   findSearchKBMatch,
   findGetFileMatch,
+  findAnalyzeTableMatch,
+  findReadRowsMatch,
+  findCompareFilesMatch,
   findWebSearchMatch,
   findGenerateImageMatch,
   findGeneratePPTMatch,

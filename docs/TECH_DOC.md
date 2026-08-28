@@ -145,7 +145,19 @@ All values are read from env at startup with clamped parsing:
 
 **Document Processing:**
 - `documentLoader.service.js` — loads 40+ file formats with text extraction
+  - `DocumentLoader` converts `.docx` via `convertToHtml` and renders `<tr>` as delimited rows; `extractRawText` emits every table **cell** as its own paragraph, which destroys row alignment in any Word document holding a log or trace table
+  - `TextLoader` refuses content that is >10% control bytes / NULs / U+FFFD — binary trace files are routinely named `.log`, and decoding one produced mojibake that was then chunked, embedded and cited
 - `textSplitter.service.js` — 4 intelligent chunking strategies
+  - `normalizeSplitterType` reconciles **two vocabularies**: `documentLoader` emits `text|spreadsheet|document`, while the upload path (`getSupportedFileType`) emits `txt|csv|xlsx|doc|log`. Unrecognised types silently fell through to `SemanticSplitter`, which cuts on sentence boundaries — so logs and CSV rows, containing no sentences, were split mid-record
+- `tabularProfiler.service.js` — **New**: table understanding and exact computation
+  - `describeTable` — column census stating raw facts and **no meaning**; the model reads it and decides which columns matter (works for any language/domain, unlike a header dictionary)
+  - `profileTabularContent` — percentiles, slowest outliers, statements grouped by fingerprint; always declares its assumptions and marks a `GUESSED` column `UNVERIFIED`
+  - `analyzeTable` — exact totals/percentiles/top-N/grouping over caller-chosen columns, with `where`/`min`/`max` filters
+  - `fingerprintSql` — Percona `pt-fingerprint` parity (literals, `IN`/`VALUES` cardinality, partitioned tables, `USE`), deliberately narrower on embedded digits so `t1` ≠ `t2`
+- `logTemplateMiner.service.js` — **New**: log structure and change detection
+  - `mineLogTemplates` — Drain (ICWS 2017) template mining, rare-event isolation, severity mix, and median+4×MAD burst detection; 200k lines → 6 templates in ~755 ms
+  - `readRows` — line-range or time-window slicing, so a located incident can actually be read
+  - `compareLogs` — baseline-vs-current diffing through one shared parser
 - `visionExtraction.service.js` — **New**: LLM-based image→text extraction at ingest (free-first ordering: Mistral Small → Gemini Flash-Lite; rate-limit cooldown per provider)
 - `pdfOcr.service.js` — **New**: PDF OCR fallback (Mistral OCR → OpenRouter chat model) when `pdf-parse` text layer is too thin
 
@@ -162,7 +174,11 @@ All values are read from env at startup with clamped parsing:
 - `tokenAccounting.service.js` — prefers provider-reported token counts over local estimates
 - `analytics.service.js` — `logAnalytics` per request. Records `cache_hit` (**response** cache: reply served without calling a model) separately from `prompt_cache_read_tokens` / `prompt_cache_write_tokens` (**provider prefix** cache). Degrades to the legacy insert shape if `migration_add_prompt_cache_analytics.sql` has not been applied, so code-before-schema loses detail rather than dropping rows
 - `fileUpload.service.js` — file ingestion, embedding, ZIP safety limits, hybrid grep/vector search, and private Blob fallback
+  - `resolveFullFileContent` is the **single funnel** every file tool reads through. Blob and the Base64 column both store the ORIGINAL file, so binary formats go back through `loadDocument` via `textFromStoredBuffer`; decoding a `.xlsx` container to UTF-8 previously gave the analyser `PK...` and produced no analysis at all on the Blob route while the DB route worked
+  - The dense-embed cap samples chunks **across** the file rather than taking the first 40; un-embedded chunks inherit the nearest neighbour's vector, not the file header's
 - `toolProcessor.service.js` — **New**: tool execution dispatcher, SRE diagnostic log digest scanner (Logdy/OpenObserve sliding-window clustering), SAP ST22 short dump sectional parser, and dynamic web error cross-referencing loop (`[WEB_SEARCH]` ➔ `[SEARCH_FILES]`)
+  - File investigation tools: `[ANALYZE_TABLE]` (exact computation with `where`/`min`/`max`), `[READ_ROWS]` (line range or time window), `[COMPARE_FILES]` (baseline vs current). All report and consume **file line numbers**, so one tool's output feeds the next
+  - `extractDiagnosticDigest` prepends census → profile → structure ahead of the raw excerpts, and the `GET_FILE` result is capped at the model's file budget. Trimming from the end is safe **because of that ordering**: what gets dropped under pressure is sampled text, never the measurements
 - `blobStorage.service.js` — **New**: wrapper for `@vercel/blob` (`get`, `del`, `head`, `setBlobClient`, `fetchPrivateBlobBuffer`, `deleteBlobFromStorage`)
 - `approvalManager.shared.js` — single `ApprovalManager` instance shared across controllers/services
 - `rateLimitStore.service.js` — **New**: Supabase-backed rate-limit store for `express-rate-limit` (serverless-safe; each `createRateLimitStore()` call returns a fresh instance to satisfy `express-rate-limit`'s store-reuse validator)

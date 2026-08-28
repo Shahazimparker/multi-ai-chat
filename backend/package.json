@@ -16,7 +16,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:real": "vitest run --config vitest.real.config.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "inspect": "node scripts/inspect-log-file.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
