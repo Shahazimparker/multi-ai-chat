@@ -5,6 +5,7 @@
 
 const axios = require('axios');
 const { extractCacheUsage } = require('./promptCache.service');
+const { resolveReasoning } = require('./reasoning.service');
 
 const MISTRAL_CHAT_URL = 'https://api.mistral.ai/v1/chat/completions';
 
@@ -50,7 +51,8 @@ const callMistral = async (modelName, apiKey, messages, signal = null, options =
  * @param {(text: string) => void} onChunk
  * @returns {Promise<{text: string, tokensUsed: number}>}
  */
-const callMistralStream = async (modelName, apiKey, messages, signal = null, onChunk, options = {}) => {
+const callMistralStream = async (modelName, apiKey, messages, signal = null, onChunk, onReasoning, modelConfig = null, reasoningRequest = {}, options = {}) => {
+  const decision = resolveReasoning(modelConfig, reasoningRequest);
   const response = await axios.post(
     MISTRAL_CHAT_URL,
     {
@@ -59,6 +61,7 @@ const callMistralStream = async (modelName, apiKey, messages, signal = null, onC
       max_tokens:  16000,
       temperature: 0.7,
       stream:      true,
+      ...(decision.enabled && decision.effort ? { reasoning_effort: decision.effort } : {}),
       ...(options.promptCacheKey ? { prompt_cache_key: options.promptCacheKey } : {}),
       // Deliberately NO `stream_options: { include_usage: true }` here, unlike
       // the other OpenAI-compatible providers. Mistral validates its request
@@ -103,6 +106,12 @@ const callMistralStream = async (modelName, apiKey, messages, signal = null, onC
           if (delta) {
             fullText += delta;
             if (onChunk) onChunk(delta);
+          }
+          // The Mistral API doesn't standardly stream reasoning content back yet like Groq/DeepSeek
+          // But if they ever add `reasoning_content` or `reasoning` in choices[0].delta, this will handle it.
+          const reasoningDelta = parsed.choices?.[0]?.delta?.reasoning_content || parsed.choices?.[0]?.delta?.reasoning;
+          if (reasoningDelta && onReasoning) {
+            onReasoning(reasoningDelta);
           }
           if (parsed.usage?.total_tokens) {
             tokensUsed = parsed.usage.total_tokens;

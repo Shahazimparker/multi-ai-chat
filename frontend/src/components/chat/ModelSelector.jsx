@@ -108,8 +108,8 @@ const ModelSelector = ({
         setModels(nextModels);
 
         if (!selectedModel && nextModels.length > 0) {
-          // Default to mistral-medium if available, otherwise first model
-          const defaultModel = nextModels.find(m => m.id === 'mistral-medium') || nextModels[0];
+          // Default to glm-5-2 if available, otherwise first model
+          const defaultModel = nextModels.find(m => m.id === 'glm-5-2') || nextModels[0];
           onModelChange(defaultModel);
         }
       })

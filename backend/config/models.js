@@ -163,8 +163,8 @@ const MODELS = {
   },
 
   // ── Mistral AI ────────────────────────────────────────────
-  // Not reasoning models — Magistral is Mistral's reasoning line and is not
-  // wired up here. No `reasoning` block, so the UI greys the Thinking button.
+  // Mistral Small 4, Medium 3.5+, and Large now support native reasoning
+  // via the reasoning_effort parameter.
   // Mistral's free tier is shaped the opposite way to Gemini's and Groq's:
   // token-rich (~1B/month) but request-poor (~2 requests/minute). The scarce
   // resource is REQUESTS, not tokens, so capping context low is exactly wrong
@@ -204,6 +204,20 @@ const MODELS = {
     paid: false,
     maxTokens: 256000,
   },
+  'glm-5-2': {
+    label: 'GLM 5.2 (1M Context)',
+    provider: 'mistral',
+    apiKey: process.env.MISTRAL_API_KEY,
+    model: 'glm-5-2',
+    paid: true,
+    supportsVision: true,
+    maxTokens: 1000000,
+    reasoning: {
+      levels: ['low', 'medium', 'high', 'max'],
+      default: 'medium',
+      canDisable: true,
+    },
+  },
   'mistral-small': {
     label: 'Mistral Small 4 (Vision, Free)',
     provider: 'mistral',
@@ -212,6 +226,11 @@ const MODELS = {
     paid: false,
     supportsVision: true,
     maxTokens: 128000,
+    reasoning: {
+      levels: ['low', 'medium', 'high', 'max'],
+      default: 'medium',
+      canDisable: true,
+    },
   },
   'mistral-medium': {
     label: 'Mistral Medium (Vision, Free)',
@@ -221,6 +240,11 @@ const MODELS = {
     paid: false,
     supportsVision: true,
     maxTokens: 128000,
+    reasoning: {
+      levels: ['low', 'medium', 'high', 'max'],
+      default: 'medium',
+      canDisable: true,
+    },
   },
   'mistral-large': {
     label: 'Mistral Large (Vision, Free)',
@@ -230,6 +254,11 @@ const MODELS = {
     paid: false,
     supportsVision: true,
     maxTokens: 128000,
+    reasoning: {
+      levels: ['low', 'medium', 'high', 'max'],
+      default: 'medium',
+      canDisable: true,
+    },
   },
 
   // ── Anthropic Claude ──────────────────────────────────────

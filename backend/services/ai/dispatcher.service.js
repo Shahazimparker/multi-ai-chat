@@ -171,7 +171,7 @@ const dispatchToAIStream = async (modelConfig, messages, signal = null, onChunk,
     switch (provider) {
       case 'gemini': return callGeminiStream(model, apiKey, messages, s, tick, modelConfig, reasoningRequest);
       case 'groq': return callGroqStream(model, apiKey, messages, s, tick, reasoningTick, modelConfig, reasoningRequest);
-      case 'mistral': return callMistralStream(model, apiKey, messages, s, tick, options);
+      case 'mistral': return callMistralStream(model, apiKey, messages, s, tick, reasoningTick, modelConfig, reasoningRequest, options);
       case 'cohere': return callCohereStream(model, apiKey, messages, s, tick);
       case 'openai': return callOpenAIStream(model, apiKey, messages, s, tick, reasoningTick, options);
       case 'claude': return callClaudeStream(model, apiKey, messages, s, tick, reasoningTick, modelConfig, reasoningRequest);
