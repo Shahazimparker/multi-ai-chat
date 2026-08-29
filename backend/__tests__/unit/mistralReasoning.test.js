@@ -101,6 +101,14 @@ describe('Mistral — reasoning_effort', () => {
     expect(axios.post.mock.calls[0][1].reasoning_effort).toBe('none');
   });
 
+  it('thinks by default on mistral-small when the request says nothing', async () => {
+    vi.spyOn(axios, 'post').mockResolvedValue(okResponse('ok'));
+    // enabledByDefault — a bare API call must match what the UI would send,
+    // and the UI toggle starts on for this model.
+    await callMistral('mistral-small-latest', 'k', MSGS, null, {}, SMALL);
+    expect(axios.post.mock.calls[0][1].reasoning_effort).toBe('high');
+  });
+
   it('sends "high" when thinking is on', async () => {
     vi.spyOn(axios, 'post').mockResolvedValue(okResponse('ok'));
     await callMistral('mistral-small-latest', 'k', MSGS, null, {}, SMALL, { thinkingEnabled: true });
@@ -169,12 +177,30 @@ describe('Mistral — output budget', () => {
     expect(axios.post.mock.calls[0][1].max_tokens).toBe(16000);
   });
 
-  it('keeps mistral-small inside its 50,000 free-tier TPM for one request', () => {
-    // 16000 is the default per_query_limit, so this is the worst-case single
-    // request a default user can send. Exceeding 50,000 means a guaranteed 429.
-    const PER_QUERY_LIMIT = 16000;
-    const FREE_TIER_TPM = 50000;
-    expect(PER_QUERY_LIMIT + outputCapFor(SMALL)).toBeLessThanOrEqual(FREE_TIER_TPM);
+  it('never lets one answer claim more than half a model free-tier minute', () => {
+    // The rule the budgets are derived from: half the TPM for the answer, half
+    // left for the prompt that provoked it. Only mistral-small is actually
+    // bound by TPM; for the rest the half-window bound is tighter.
+    const FREE_TIER_TPM = {
+      'mistral-small': 50000,
+      'mistral-medium': 356250,
+      'mistral-large': 250000,
+      'ministral-14b': 937500,
+      'codestral-2508': 625000,
+      'devstral-2512': 1000000,
+    };
+
+    for (const [id, tpm] of Object.entries(FREE_TIER_TPM)) {
+      expect(MODELS[id], `${id} missing from the registry`).toBeDefined();
+      expect(outputCapFor(MODELS[id]), `${id} can claim over half its minute`)
+        .toBeLessThanOrEqual(tpm / 2);
+    }
+  });
+
+  it('gives mistral-small exactly half its 50,000 TPM', () => {
+    // The one model where TPM binds, and the one where thinking is on by
+    // default — so its trace bills as output on top of the answer.
+    expect(outputCapFor(SMALL)).toBe(25000);
   });
 });
 

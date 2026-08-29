@@ -86,7 +86,7 @@ const reasoningParams = (decision) => {
 // working and not existing at all. Cached tokens bill at ~10% of the normal
 // input rate, the prefix minimum is only 64 tokens, and the cache lives an
 // hour — which makes it the highest-value provider knob here, because
-// mistral-medium is the app's default model.
+// mistral-small is the app's default model.
 const callMistral = async (modelName, apiKey, messages, signal = null, options = {}, modelConfig = null, reasoningRequest = {}) => {
   const decision = resolveReasoning(modelConfig, reasoningRequest);
   const response = await axios.post(

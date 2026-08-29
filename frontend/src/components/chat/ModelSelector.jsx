@@ -108,8 +108,11 @@ const ModelSelector = ({
         setModels(nextModels);
 
         if (!selectedModel && nextModels.length > 0) {
-          // Default to glm-5-2 if available, otherwise first model
-          const defaultModel = nextModels.find(m => m.id === 'glm-5-2') || nextModels[0];
+          // Default to mistral-small if available, otherwise first model.
+          // Must match the backend default in chat.routes.js, or a client that
+          // never touched the picker sends one model while the server assumes
+          // another.
+          const defaultModel = nextModels.find(m => m.id === 'mistral-small') || nextModels[0];
           onModelChange(defaultModel);
         }
       })

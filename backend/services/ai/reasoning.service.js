@@ -45,8 +45,9 @@ const resolveReasoning = (modelConfig, request = {}) => {
   // match what the UI would have sent.
   //
   // The default is OFF: reasoning tokens bill as output, so it is opt-in. A
-  // model has to say `enabledByDefault: true` to start on, which only makes
-  // sense for a provider that cannot turn it off anyway.
+  // model has to say `enabledByDefault: true` to start on — either because the
+  // provider cannot turn it off anyway, or because the model's reasoning path
+  // is the reason it was chosen (mistral-small, the app's default).
   const enabled = capability.canDisable === false
     ? true
     : (typeof request.thinkingEnabled === 'boolean'

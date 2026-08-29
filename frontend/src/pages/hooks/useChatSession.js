@@ -55,8 +55,10 @@ export const useChatSession = ({ refreshTokenStats }) => {
   }, [model, setReasoningEffortFor]);
 
   // Until the user touches the toggle for a model, follow the default the
-  // server reports. That is off everywhere except providers with no off switch
-  // (Gemini), so reasoning is always a deliberate choice where it can be one.
+  // server reports. That is off almost everywhere, so reasoning stays a
+  // deliberate choice — the exceptions are providers with no off switch
+  // (Gemini) and mistral-small, the default model, whose reasoning path is the
+  // point of the model.
   const modelThinkingDefault = Boolean(model?.reasoning?.enabledByDefault);
   const thinkingEnabled = model
     ? (thinkingByModel[model.id] ?? modelThinkingDefault)
