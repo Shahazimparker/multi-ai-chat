@@ -118,7 +118,10 @@ const dispatchToAI = async (modelConfig, messages, signal = null, options = {}) 
     switch (provider) {
       case 'gemini': return callGemini(model, apiKey, messages, s);
       case 'groq': return callGroq(model, apiKey, messages, s);
-      case 'mistral': return callMistral(model, apiKey, messages, s, options);
+      // modelConfig carries the per-model answer budget (maxOutputTokens) and
+      // the reasoning capability, so the non-streaming path sizes max_tokens
+      // and resolves reasoning_effort the same way the streaming one does.
+      case 'mistral': return callMistral(model, apiKey, messages, s, options, modelConfig);
       case 'cohere': return callCohere(model, apiKey, messages, s);
       case 'openai': return callOpenAI(model, apiKey, messages, s, options);
       case 'claude': return callClaude(model, apiKey, messages, s);

@@ -63,18 +63,66 @@ const {
 // with the window rather than sit at a flat figure.
 const LARGE_MODEL_THRESHOLD = 32000;
 
-// A flat reservation is right for large models: a 128K and a 200K model both
-// write replies of the same order, so scaling the reservation with the window
-// just wastes prompt space that history could have used.
+// A flat reservation is the right *default* for large models: a 128K and a 200K
+// model both write replies of the same order, so scaling the reservation with
+// the window just wastes prompt space that history could have used. A model
+// that knows its own answer budget overrides it via `maxOutputTokens`.
 const LARGE_MODEL_OUTPUT_RESERVE = 8192;
+
+/**
+ * How many tokens to hold back for the model's answer.
+ *
+ * This number is half of a contract. The other half is the `max_tokens` the
+ * provider adapter sends, and the two MUST agree: reserve less than the adapter
+ * permits and a full prompt plus a full answer overflows the window; reserve
+ * more and prompt space is wasted. Both halves now read this function, so they
+ * cannot drift apart. Adapters call it through `outputCapFor`.
+ *
+ * Precedence, most specific last-resort first:
+ *   1. CONTEXT_RESERVED_OUTPUT_TOKENS — operator-wide override, unchanged.
+ *   2. modelConfig.maxOutputTokens    — the model's own budget, derived in
+ *      config/models.js from its context window and its free-tier TPM.
+ *   3. The flat (large) or scaled (small) default.
+ *
+ * Always bounded by half the window: a reserve past that leaves less room for
+ * the question than for the answer, which no chat turn wants.
+ */
+const resolveOutputReserve = (modelConfig = {}, modelLimit = 8000) => {
+  const ceiling = Math.floor(modelLimit * 0.5);
+
+  if (CONTEXT_RESERVED_OUTPUT_TOKENS > 0) {
+    return Math.min(CONTEXT_RESERVED_OUTPUT_TOKENS, ceiling);
+  }
+
+  const perModel = modelConfig?.maxOutputTokens;
+  if (Number.isFinite(perModel) && perModel > 0) {
+    return Math.min(perModel, ceiling);
+  }
+
+  return modelLimit >= LARGE_MODEL_THRESHOLD
+    ? LARGE_MODEL_OUTPUT_RESERVE
+    : Math.min(4000, Math.max(800, Math.floor(modelLimit * 0.25)));
+};
+
+/**
+ * The `max_tokens` a provider adapter should send for this model — the same
+ * number `createContextWindow` holds back, by construction.
+ *
+ * @param {object} modelConfig entry from config/models.js
+ * @returns {number}
+ */
+const outputCapFor = (modelConfig = {}) => (
+  resolveOutputReserve(modelConfig, Math.max(1024, modelConfig?.maxTokens || 8000))
+);
 
 /**
  * Derives the hard ceiling a prompt must fit under, plus the low-water mark
  * eviction aims for.
  *
  * `modelConfig.maxTokens` is the context window (128000 / 200000 / 256000 in
- * config/models.js), NOT an output cap — the providers' own max_tokens is set
- * separately in services/ai/*.
+ * config/models.js), NOT an output cap. The output cap is
+ * `modelConfig.maxOutputTokens`, and the provider adapter must send exactly the
+ * `reservedOutputTokens` returned here — see `outputCapFor`.
  *
  * @param {object} modelConfig
  * @param {object} [overrides] - per-call caps, e.g. a user's per_query_limit
@@ -84,11 +132,7 @@ const LARGE_MODEL_OUTPUT_RESERVE = 8192;
 const createContextWindow = (modelConfig = {}, overrides = {}) => {
   const modelLimit = Math.max(1024, modelConfig.maxTokens || 8000);
 
-  const reservedOutputTokens = CONTEXT_RESERVED_OUTPUT_TOKENS > 0
-    ? Math.min(CONTEXT_RESERVED_OUTPUT_TOKENS, Math.floor(modelLimit * 0.5))
-    : (modelLimit >= LARGE_MODEL_THRESHOLD
-      ? LARGE_MODEL_OUTPUT_RESERVE
-      : Math.min(4000, Math.max(800, Math.floor(modelLimit * 0.25))));
+  const reservedOutputTokens = resolveOutputReserve(modelConfig, modelLimit);
 
   // Token counts here are estimates, and estimates drift — worst on exactly the
   // dense log/stack-trace content this app handles most. The margin is what
@@ -394,6 +438,7 @@ const toolLoopHeadroom = (baseMessages, window) => {
 
 module.exports = {
   createContextWindow,
+  outputCapFor,
   fitPromptToWindow,
   describeFitReport,
   toolLoopHeadroom,

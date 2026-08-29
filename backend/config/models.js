@@ -163,8 +163,24 @@ const MODELS = {
   },
 
   // ── Mistral AI ────────────────────────────────────────────
-  // Mistral Small 4, Medium 3.5+, and Large now support native reasoning
-  // via the reasoning_effort parameter.
+  // Reasoning: per docs.mistral.ai/studio-api/conversations/reasoning, ONLY
+  // mistral-small-latest and mistral-medium-3-5 accept `reasoning_effort`, and
+  // the only accepted values are "high" and "none" — not low/medium/max. The
+  // deprecated magistral-* natives are gone. Models below without a `reasoning`
+  // block genuinely cannot think, including mistral-medium-2508 (that is
+  // Medium 3.1, not 3.5) and mistral-large.
+  //
+  // maxOutputTokens is the answer budget. contextWindow.service.js holds back
+  // exactly this much when sizing the prompt, and mistral.service.js sends
+  // exactly this much as `max_tokens` — one number, both halves, so they cannot
+  // drift. Each value below is the smallest of three limits:
+  //   1. free-tier TPM (from admin.mistral.ai/plateforme/limits) minus the
+  //      16000 per_query_limit a default user's prompt can occupy — exceed this
+  //      and one request eats the whole minute's budget and 429s;
+  //   2. half the context window, enforced in contextWindow.service.js;
+  //   3. what the model can usefully write before it starts padding.
+  // Raising one of these costs prompt space: hardCeiling is
+  // (maxTokens - maxOutputTokens) * 0.94.
   // Mistral's free tier is shaped the opposite way to Gemini's and Groq's:
   // token-rich (~1B/month) but request-poor (~2 requests/minute). The scarce
   // resource is REQUESTS, not tokens, so capping context low is exactly wrong
@@ -183,6 +199,10 @@ const MODELS = {
     paid: false,
     supportsVision: true,
     maxTokens: 128000,
+    // 937,500 TPM — rate is nowhere near binding. Held at 16000 because this is
+    // a 14B model: past that length its answers degrade rather than continue,
+    // so the extra budget would buy padding and cost prompt space.
+    maxOutputTokens: 16000,
   },
   'codestral-2508': {
     label: 'Codestral 2508 (Code, Free)',
@@ -191,6 +211,10 @@ const MODELS = {
     model: 'codestral-2508',
     paid: false,
     maxTokens: 256000,
+    // 625,000 TPM at 2.08 RPS — the most generous free allowance Mistral gives
+    // this app, and code generation is the workload that genuinely runs long
+    // (whole files, not paragraphs). 32000 with 224K still left for prompt.
+    maxOutputTokens: 32000,
   },
   // Devstral 2: 123B dense agentic coding model. Deprecated by Mistral on
   // 2026-05-22 — they recommend Mistral Medium 3.5 as the replacement. Kept
@@ -203,6 +227,8 @@ const MODELS = {
     model: 'devstral-2512',
     paid: false,
     maxTokens: 256000,
+    // 1,000,000 TPM — the highest here, and agentic coding output is long.
+    maxOutputTokens: 32000,
   },
   'glm-5-2': {
     label: 'GLM 5.2 (1M Context)',
@@ -212,11 +238,10 @@ const MODELS = {
     paid: true,
     supportsVision: true,
     maxTokens: 1000000,
-    reasoning: {
-      levels: ['low', 'medium', 'high', 'max'],
-      default: 'medium',
-      canDisable: true,
-    },
+    // Free tier shows "-" TPM for this model: there is no free allowance, which
+    // is why `paid: true`. Billed per token, so the cap is about cost control
+    // rather than a rate limit.
+    maxOutputTokens: 32000,
   },
   'mistral-small': {
     label: 'Mistral Small 4 (Vision, Free)',
@@ -226,9 +251,17 @@ const MODELS = {
     paid: false,
     supportsVision: true,
     maxTokens: 128000,
+    // The binding case. mistral-small-2603 gets only 50,000 TPM free — the
+    // tightest allowance of any model here — and it is also the one model whose
+    // reasoning trace bills as output on top of the answer. 16000 prompt +
+    // 32000 answer = 48,000, just inside the minute. This is the number that
+    // makes `reasoning_effort: "high"` affordable rather than a 429.
+    maxOutputTokens: 32000,
+    // Only "high" and "none" exist; the levels list drives the UI dial, and
+    // "off" sends "none" explicitly rather than omitting the parameter.
     reasoning: {
-      levels: ['low', 'medium', 'high', 'max'],
-      default: 'medium',
+      levels: ['high'],
+      default: 'high',
       canDisable: true,
     },
   },
@@ -240,11 +273,15 @@ const MODELS = {
     paid: false,
     supportsVision: true,
     maxTokens: 128000,
-    reasoning: {
-      levels: ['low', 'medium', 'high', 'max'],
-      default: 'medium',
-      canDisable: true,
-    },
+    // 356,250 TPM — rate is not binding, so this is sized for the workload:
+    // the app's default model, carrying general chat and long log analysis.
+    //
+    // NOTE: mistral-medium-2508 (Medium 3.1) has a retirement date of
+    // 2026-08-31 on Mistral's deprecation table, with Mistral Medium 3.5 named
+    // as the replacement. When migrating, `mistral-medium-latest` shows only
+    // 25,000 TPM free — LOWER than small — so maxOutputTokens must drop to
+    // ~8000 at the same time, or one request will exceed the minute.
+    maxOutputTokens: 32000,
   },
   'mistral-large': {
     label: 'Mistral Large (Vision, Free)',
@@ -254,11 +291,11 @@ const MODELS = {
     paid: false,
     supportsVision: true,
     maxTokens: 128000,
-    reasoning: {
-      levels: ['low', 'medium', 'high', 'max'],
-      default: 'medium',
-      canDisable: true,
-    },
+    // 250,000 TPM but only 0.07 RPS — roughly one request every 14 seconds.
+    // Requests, not tokens, are the scarce resource on this model, so each one
+    // is allowed to carry a full-length answer rather than being cut short and
+    // needing a second call the rate limit will not grant for another 14s.
+    maxOutputTokens: 32000,
   },
 
   // ── Anthropic Claude ──────────────────────────────────────

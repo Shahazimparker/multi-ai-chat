@@ -9,8 +9,8 @@ declare module './groq.service' {
 }
 
 declare module './mistral.service' {
-  export function callMistral(modelName: string, apiKey: string, messages: any[], signal?: AbortSignal | null): Promise<any>;
-  export function callMistralStream(modelName: string, apiKey: string, messages: any[], signal?: AbortSignal | null, onChunk?: (text: string) => void): Promise<any>;
+  export function callMistral(modelName: string, apiKey: string, messages: any[], signal?: AbortSignal | null, options?: any, modelConfig?: any, reasoningRequest?: any): Promise<any>;
+  export function callMistralStream(modelName: string, apiKey: string, messages: any[], signal?: AbortSignal | null, onChunk?: (text: string) => void, onReasoning?: (text: string) => void, modelConfig?: any, reasoningRequest?: any, options?: any): Promise<any>;
 }
 
 declare module './cohere.service' {
