@@ -69,4 +69,22 @@ describe('MessageBubble timestamp rendering', () => {
     const timestampEl = container.querySelector('.msg-timestamp');
     expect(timestampEl).toBeNull();
   });
+
+  it('renders copy and download actions for code blocks', () => {
+    const message = {
+      role: 'assistant',
+      content: '```sql\nSELECT * FROM users WHERE active = true;\n```',
+    };
+
+    const { container } = render(<MessageBubble message={message} />);
+
+    const codeWrapper = container.querySelector('.code-block-wrapper');
+    expect(codeWrapper).toBeInTheDocument();
+
+    const copyBtn = screen.getByTitle('Copy code');
+    expect(copyBtn).toBeInTheDocument();
+
+    const downloadBtn = screen.getByTitle('Download as file');
+    expect(downloadBtn).toBeInTheDocument();
+  });
 });

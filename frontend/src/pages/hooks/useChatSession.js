@@ -673,68 +673,8 @@ export const useChatSession = ({ refreshTokenStats }) => {
       }
 
       if (metadata.topicId) topicIdToUse = metadata.topicId;
-      // Start with server-generated binary files (images, PPTs) from done event
+      // Server-generated binary files (images, PPTs, etc.) from done event
       const generatedFiles = Array.isArray(metadata.generatedFiles) ? [...metadata.generatedFiles] : [];
-      if (fullReply) {
-        const fileBlockRegex = /```(\w+)\n([\s\S]*?)```/g;
-        const fileLangs = new Set(['html', 'htm', 'js', 'jsx', 'ts', 'tsx', 'css', 'json', 'xml', 'md', 'svg', 'py', 'sql', 'sh']);
-        let fileMatch;
-        let fileIdx = 0;
-        const extractFileName = (code, lang, idx) => {
-          const ext = lang === 'htm' ? 'html' : lang;
-          const lines = code.split('\n');
-          const firstLine = lines[0]?.trim() || '';
-          const secondLine = lines[1]?.trim() || '';
-          if (lang === 'html' || lang === 'htm') {
-            const titleMatch = code.match(/<title>([^<]+)<\/title>/i);
-            if (titleMatch) return `${titleMatch[1].trim().replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, '_')}.${ext}`;
-          }
-          const commentMatch = firstLine.match(/^(?:\/\/|#|<!--?|%)\s*(.+)/);
-          const commentMatch2 = secondLine.match(/^(?:\/\/|#|<!--?|%)\s*(.+)/);
-          const descComment = commentMatch?.[1] || commentMatch2?.[1];
-          if (descComment) {
-            const name = descComment.trim().replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, '_').substring(0, 40);
-            if (name.length > 3) return `${name}.${ext}`;
-          }
-          const namePatterns = [
-            /(?:export\s+)?(?:default\s+)?(?:function\s+|fn\s+)(\w+)/,
-            /(?:export\s+)?(?:default\s+)?class\s+(\w+)/,
-            /(?:export\s+)?(?:default\s+)?(?:const|let|var)\s+(\w+)/,
-            /def\s+(\w+)/,
-            /(?:export\s+)?default\s+(\w+)/,
-          ];
-          for (const pattern of namePatterns) {
-            const match = code.match(pattern);
-            if (match) return `${match[1]}.${ext}`;
-          }
-          if (lang === 'css') {
-            const selMatch = code.match(/\.([\w-]+)\s*\{/);
-            if (selMatch) return `${selMatch[1]}.css`;
-          }
-          const labels = { html: 'page', js: 'script', jsx: 'component', ts: 'module', tsx: 'component', css: 'styles', json: 'data', xml: 'config', md: 'document', svg: 'graphic', py: 'script', sql: 'query', sh: 'script' };
-          return `${labels[lang] || 'file'}_${idx + 1}.${ext}`;
-        };
-
-        while ((fileMatch = fileBlockRegex.exec(fullReply)) !== null) {
-          const lang = fileMatch[1];
-          if (!fileLangs.has(lang)) continue;
-          const content = fileMatch[2].trim();
-          const fileName = extractFileName(content, lang, fileIdx);
-          try {
-            const res = await api.post('/upload/generate-file', {
-              topicId: topicIdToUse,
-              fileName,
-              content,
-              fileType: lang,
-              messageId: metadata.assistantMessageId || null,
-            });
-            if (res.data?.file) generatedFiles.push(res.data.file);
-          } catch (uploadError) {
-            console.error('[saveGeneratedFile]', uploadError);
-          }
-          fileIdx++;
-        }
-      }
 
       setMessages((prev) => {
         const updated = [...prev];

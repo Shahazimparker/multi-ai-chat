@@ -87,7 +87,8 @@ const mdTableToCSV = (tableMd) => {
 };
 
 const downloadFile = (content, filename, mimeType) => {
-  const BOM = '\uFEFF'; // Excel UTF-8 compat
+  const isCSV = filename.toLowerCase().endsWith('.csv') || mimeType?.includes('csv');
+  const BOM = isCSV ? '\uFEFF' : ''; // Excel UTF-8 compat only for CSV
   const blob = new Blob([BOM + content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -176,9 +177,91 @@ const FileCard = ({ file, onDownload }) => {
   );
 };
 
-// ── CodeBlock component (handles its own copy state) ─────────
+const getFilenameForCode = (code, lang) => {
+  const extMap = {
+    javascript: 'js', js: 'js', jsx: 'jsx',
+    typescript: 'ts', ts: 'ts', tsx: 'tsx',
+    python: 'py', py: 'py',
+    sql: 'sql',
+    html: 'html', htm: 'html',
+    css: 'css', scss: 'scss',
+    json: 'json',
+    xml: 'xml', svg: 'svg',
+    yaml: 'yaml', yml: 'yaml',
+    markdown: 'md', md: 'md',
+    bash: 'sh', sh: 'sh', zsh: 'sh', shell: 'sh',
+    c: 'c', cpp: 'cpp', csharp: 'cs', cs: 'cs',
+    java: 'java', go: 'go', rust: 'rs', rs: 'rs',
+    php: 'php', ruby: 'rb', rb: 'rb',
+    text: 'txt', txt: 'txt', csv: 'csv',
+  };
+  const normalizedLang = String(lang || '').toLowerCase();
+  const ext = extMap[normalizedLang] || (normalizedLang || 'txt');
+
+  const lines = (code || '').split('\n');
+  const firstLine = lines[0]?.trim() || '';
+  const secondLine = lines[1]?.trim() || '';
+  const commentMatch = firstLine.match(/^(?:\/\/|#|<!--?|%|--)\s*(?:FILE:\s*)?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)/i)
+    || secondLine.match(/^(?:\/\/|#|<!--?|%|--)\s*(?:FILE:\s*)?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)/i);
+  if (commentMatch?.[1]) {
+    const raw = commentMatch[1].split(/[\/\\]/).pop();
+    if (raw && /^[a-zA-Z0-9_\-.]+$/.test(raw)) return raw;
+  }
+
+  if (ext === 'html') {
+    const titleMatch = (code || '').match(/<title>([^<]+)<\/title>/i);
+    if (titleMatch?.[1]) {
+      const clean = titleMatch[1].trim().replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, '_');
+      if (clean) return `${clean}.html`;
+    }
+  }
+
+  const defaultNames = {
+    sql: 'query.sql',
+    py: 'script.py',
+    python: 'script.py',
+    js: 'script.js',
+    jsx: 'component.jsx',
+    ts: 'module.ts',
+    tsx: 'component.tsx',
+    html: 'index.html',
+    css: 'styles.css',
+    json: 'data.json',
+    xml: 'data.xml',
+    svg: 'graphic.svg',
+    sh: 'script.sh',
+    bash: 'script.sh',
+    md: 'document.md',
+    csv: 'data.csv',
+  };
+  return defaultNames[normalizedLang] || `snippet.${ext}`;
+};
+
+const getMimeTypeForExt = (ext) => {
+  const mimeMap = {
+    sql: 'application/sql',
+    py: 'text/x-python',
+    js: 'application/javascript',
+    jsx: 'text/javascript',
+    ts: 'application/typescript',
+    tsx: 'text/typescript',
+    html: 'text/html;charset=utf-8',
+    css: 'text/css;charset=utf-8',
+    json: 'application/json',
+    xml: 'application/xml',
+    svg: 'image/svg+xml',
+    sh: 'application/x-sh',
+    md: 'text/markdown;charset=utf-8',
+    csv: 'text/csv;charset=utf-8',
+    txt: 'text/plain;charset=utf-8',
+  };
+  return mimeMap[ext?.toLowerCase()] || 'text/plain;charset=utf-8';
+};
+
+// ── CodeBlock component (handles its own copy & download state) ─────────
 const CodeBlock = ({ code, language, csvContent, onDownloadCSV }) => {
   const [copied, setCopied] = React.useState(false);
+  const [downloaded, setDownloaded] = React.useState(false);
   const [expanded, setExpanded] = React.useState(false);
   const lineCount = React.useMemo(() => code.split('\n').length, [code]);
   const shouldClamp = lineCount > 3;
@@ -190,6 +273,21 @@ const CodeBlock = ({ code, language, csvContent, onDownloadCSV }) => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {}
+  };
+
+  const handleDownload = () => {
+    if (onDownloadCSV && csvContent) {
+      onDownloadCSV();
+      setDownloaded(true);
+      setTimeout(() => setDownloaded(false), 2000);
+      return;
+    }
+    const filename = getFilenameForCode(code, language);
+    const ext = filename.split('.').pop() || 'txt';
+    const mime = getMimeTypeForExt(ext);
+    downloadFile(code, filename, mime);
+    setDownloaded(true);
+    setTimeout(() => setDownloaded(false), 2000);
   };
 
   return (
@@ -209,12 +307,12 @@ const CodeBlock = ({ code, language, csvContent, onDownloadCSV }) => {
         )}
         <button className="code-action-btn" onClick={handleCopy} title="Copy code">
           {copied ? <Check size={13} /> : <Copy size={13} />}
+          <span>{copied ? 'Copied' : 'Copy'}</span>
         </button>
-        {csvContent && (
-          <button className="code-action-btn" onClick={onDownloadCSV} title="Download as CSV">
-            <Download size={13} />
-          </button>
-        )}
+        <button className="code-action-btn" onClick={handleDownload} title="Download as file">
+          {downloaded ? <Check size={13} /> : <Download size={13} />}
+          <span>{downloaded ? 'Downloaded' : 'Download'}</span>
+        </button>
       </div>
     </div>
   );
