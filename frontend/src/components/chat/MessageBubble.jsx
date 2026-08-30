@@ -371,7 +371,7 @@ const CitationsPanel = ({ citations }) => {
 
 // ── Component ────────────────────────────────────────────────
 
-const MessageBubble = ({ message, onSidebarRefresh, onApprovalComplete, onClarificationSubmit }) => {
+const MessageBubble = ({ message, domId, onSidebarRefresh, onApprovalComplete, onClarificationSubmit }) => {
   const [copied, setCopied] = React.useState(false);
 
   const rawTimestamp = message?.created_at || message?.createdAt || message?.timestamp || message?.time;
@@ -492,7 +492,7 @@ const MessageBubble = ({ message, onSidebarRefresh, onApprovalComplete, onClarif
   };
 
   return (
-    <div className={`message-row ${message.role}`}>
+    <div className={`message-row ${message.role}`} id={domId}>
       <div className={`msg-avatar ${message.role}`}>
         {message.role === 'user' ? <User size={16} /> : <Bot size={16} />}
       </div>

@@ -9,7 +9,7 @@ import { Zap } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import './TokenBar.css';
 
-const TokenBar = ({ children }) => {
+const TokenBar = ({ children, trailing }) => {
   const { user } = useAuth();
   if (!user) return null;
 
@@ -48,6 +48,8 @@ const TokenBar = ({ children }) => {
           ({remaining.toLocaleString()} left)
         </span>
       </div>
+
+      {trailing && <div className="token-bar-trailing">{trailing}</div>}
     </div>
   );
 };

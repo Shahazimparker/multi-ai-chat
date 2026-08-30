@@ -1,0 +1,314 @@
+/* ============================================================
+   FILE: frontend/src/components/chat/ChatSearchPanel.css
+   PURPOSE: Toolbar magnifier + right-rail "find in chat" drawer
+   ============================================================ */
+
+.chat-search-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 27px;
+  height: 27px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.chat-search-toggle:hover,
+.chat-search-toggle.active {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+  background: var(--gradient-secondary);
+}
+
+.chat-search-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10005;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.chat-search-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 10006;
+  width: 100%;
+  max-width: 360px;
+  height: 100vh;
+  height: 100dvh;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-tertiary);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  border-left: 1px solid var(--border-primary);
+  box-shadow: -8px 0 32px var(--shadow-lg);
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  font-family: 'Inter', sans-serif;
+}
+
+.chat-search-panel.open { transform: translateX(0); }
+
+/* Off-screen is not enough on its own — a hidden drawer still holds focus
+   stops and is still read out. */
+.chat-search-panel[aria-hidden='true'] { visibility: hidden; }
+
+.chat-search-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 14px 10px;
+}
+
+.chat-search-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.chat-search-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.chat-search-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.chat-search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 0 14px 10px;
+}
+
+.chat-search-box-icon {
+  position: absolute;
+  left: 9px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.chat-search-box input {
+  width: 100%;
+  padding: 8px 28px 8px 29px;
+  box-sizing: border-box;
+  background: var(--bg-input);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.78rem;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.chat-search-box input:focus { border-color: var(--border-active); }
+
+.chat-search-clear {
+  position: absolute;
+  right: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.chat-search-clear:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+.chat-search-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 16px 8px;
+  color: var(--text-tertiary);
+  font-size: 0.7rem;
+}
+
+.chat-search-steps { display: flex; gap: 4px; }
+
+.chat-search-steps button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.chat-search-steps button:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+
+.chat-search-steps button:disabled { opacity: 0.4; cursor: default; }
+
+.chat-search-results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.chat-search-results::-webkit-scrollbar { width: 6px; }
+.chat-search-results::-webkit-scrollbar-thumb {
+  background: var(--border-primary);
+  border-radius: 4px;
+}
+.chat-search-results::-webkit-scrollbar-track { background: transparent; }
+
+.chat-search-empty {
+  margin: 12px 6px;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.chat-search-result {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 9px;
+  box-sizing: border-box;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.chat-search-result:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-primary);
+}
+
+.chat-search-result.active {
+  background: var(--gradient-secondary);
+  border-color: var(--border-active);
+}
+
+.chat-search-result:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 2px;
+}
+
+.chat-search-result-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.65rem;
+  color: var(--text-tertiary);
+}
+
+.chat-search-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.chat-search-who.user { color: var(--accent-cyan); }
+.chat-search-who.assistant { color: var(--accent-purple); }
+
+.chat-search-count {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-primary);
+  font-weight: 600;
+}
+
+.chat-search-when { margin-left: auto; }
+
+.chat-search-snippet {
+  color: var(--text-secondary);
+  font-size: 0.73rem;
+  line-height: 1.5;
+  /* Snippets are already flattened to one line; cap them so a result row stays
+     scannable no matter how long the message was. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.chat-search-snippet mark {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: rgba(251, 191, 36, 0.35);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* ── The jump target ──
+   Applied to the message row itself for a moment after a result is picked, so
+   the eye lands on the right turn instead of hunting the middle of the screen. */
+.message-row.search-hit .msg-bubble {
+  animation: chat-search-flash 1.6s ease-out;
+}
+
+@keyframes chat-search-flash {
+  0%, 45% {
+    box-shadow: 0 0 0 2px var(--accent-pink), 0 0 22px var(--shadow-md);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* A flash is decoration; anyone who asked for less motion still needs to see
+   which message was found, so it becomes a steady outline that fades. */
+@media (prefers-reduced-motion: reduce) {
+  .message-row.search-hit .msg-bubble {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--accent-pink);
+  }
+}
+
+@media (max-width: 768px) {
+  .chat-search-panel { max-width: 100%; }
+}

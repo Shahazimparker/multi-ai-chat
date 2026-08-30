@@ -2,6 +2,7 @@ import React from 'react';
 import { Loader2 } from 'lucide-react';
 import MessageBubble from './MessageBubble';
 import ChatUploadProgress from './ChatUploadProgress';
+import { messageDomId } from './chatSearch';
 
 const ChatMessagesPanel = ({
   messages,
@@ -35,6 +36,8 @@ const ChatMessagesPanel = ({
       messages.map((msg, index) => (
         <MessageBubble
           key={index}
+          // Addressable so a search result can scroll to this exact turn.
+          domId={messageDomId(index)}
           message={msg}
           onApprovalComplete={onApprovalComplete}
           onClarificationSubmit={onClarificationSubmit}

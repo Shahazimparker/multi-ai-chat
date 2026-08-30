@@ -4,6 +4,19 @@ import api, { API_BASE_URL } from '../../config/api';
 import { createSseParser } from '../../utils/sse';
 import { getCsrfToken } from '../../utils/sessionBroadcast';
 
+// Names a conversation opened by its attachments. The typed message wins when
+// there is one — it is what the pipeline would have titled the topic anyway —
+// and a bare upload falls back to what was uploaded, so the sidebar entry is
+// recognisable instead of reading "New chat". The server trims to 60.
+const deriveTopicTitle = (text, files, image) => {
+  const typed = String(text || '').trim();
+  if (typed) return typed;
+  if (files?.length === 1) return files[0].name;
+  if (files?.length > 1) return `${files[0].name} +${files.length - 1} more`;
+  if (image) return 'Pasted image';
+  return 'New chat';
+};
+
 export const useChatSession = ({ refreshTokenStats }) => {
   const [models, setModels] = useState([]);
   const [messages, setMessages] = useState([]);
@@ -421,6 +434,39 @@ export const useChatSession = ({ refreshTokenStats }) => {
 
     try {
       let topicIdToUse = activeTopic?.id || null;
+
+      // Open the conversation BEFORE anything is uploaded into it.
+      //
+      // Attachments are uploaded ahead of the message that carries them, so on
+      // the first turn of a new chat there was no topic yet: files went in with
+      // topic_id NULL and were adopted afterwards by the pipeline's ten-minute
+      // backfill. That left them briefly belonging to no chat — and permanently
+      // so if the send failed or was cancelled — which is exactly what the
+      // Attachments panel, scoped to one conversation, cannot show. Creating the
+      // topic first is what current chat apps do, and it means every file is
+      // scoped from the moment it is stored rather than repaired later.
+      //
+      // Only for sends that actually carry an attachment: a text-only first
+      // message has nothing to scope, and letting the pipeline create its topic
+      // as before keeps a failed send from leaving an empty chat behind.
+      if (!topicIdToUse && (files.length > 0 || image)) {
+        try {
+          const { data } = await api.post('/history/topics', {
+            title: deriveTopicTitle(finalMessage, files, image),
+            model: model?.id || null,
+          });
+          if (data?.topic?.id) {
+            topicIdToUse = data.topic.id;
+            setActiveTopic({ id: topicIdToUse });
+            setSidebarRefresh((prev) => prev + 1);
+          }
+        } catch (topicErr) {
+          // Non-fatal: fall through to the old path, where the pipeline creates
+          // the topic and the backfill adopts the files. Worse, not broken.
+          console.warn('[Chat] Could not open the topic before upload:', topicErr?.message);
+        }
+      }
+
       const uploadedResults = [];
       for (const file of files) {
         setMessages((prev) => {
@@ -445,6 +491,8 @@ export const useChatSession = ({ refreshTokenStats }) => {
       // subsequent /chat/stream call fails or the user aborts the send.
       if (uploadedResults.length > 0) {
         await refreshTokenStats();
+        // These are now this chat's attachments; tell the panel showing them.
+        setSidebarRefresh((prev) => prev + 1);
       }
 
       sessionStorage.removeItem('uploadSessionId');
@@ -467,6 +515,22 @@ export const useChatSession = ({ refreshTokenStats }) => {
       if (uploadedResults.length > 0) {
         const refs = uploadedResults.map((entry) => `[File uploaded: ${entry.fileName}]`).join('\n');
         finalMessage = finalMessage ? `${finalMessage}\n${refs}` : refs;
+      }
+
+      // A pasted image only ever travelled inline in the request body, so once
+      // the composer cleared there was nothing left of it anywhere. Keep a copy
+      // the Attachments panel can show and hand back. Best-effort by design:
+      // failing to archive the screenshot must not stop the message that
+      // carries it, and the model gets the image either way. Skipped on retry —
+      // the first attempt already archived it, and a retry is the same message,
+      // not a second attachment.
+      if (image && !isRetry) {
+        try {
+          await api.post('/upload/attachment', { dataUrl: image, topicId: topicIdToUse });
+          setSidebarRefresh((prev) => prev + 1);
+        } catch (attachErr) {
+          console.warn('[Chat] Pasted image was not archived:', attachErr?.message);
+        }
       }
 
       const headers = { 'Content-Type': 'application/json' };

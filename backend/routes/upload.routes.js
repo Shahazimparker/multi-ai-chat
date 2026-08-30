@@ -144,11 +144,15 @@ const {
   isRiskyFileType,
   listAllUserFiles,
   saveGeneratedFile,
+  saveUserAttachment,
 } = require('../services/fileUpload.service');
 const { generateImage } = require('../services/imageGeneration.service');
 const { generatePPT } = require('../services/pptGeneration.service');
 const { handleUpload } = require('@vercel/blob/client');
 const { isBlobConfigured, fetchPrivateBlobBuffer, isValidVercelBlobUrl } = require('../services/blobStorage.service');
+// Shared with every other route that files something under a client-supplied
+// topic id. chatPipeline.service.js enforces the same rule inline for /chat.
+const { callerOwnsTopic, TOPIC_NOT_FOUND } = require('../services/topicOwnership.service');
 
 
 // Use OS temp dir so uploaded files don't trigger nodemon restarts
@@ -289,6 +293,12 @@ router.post('/process-blob', requireAuth, uploadHeavyLimiter, uploadTimeout, asy
     return res.status(400).json({ error: 'Invalid or unauthorized blob storage URL' });
   }
 
+  // Before the upload session is registered and the SSE stream opens — once
+  // headers are out, this can only be reported as a stream event.
+  if (!(await callerOwnsTopic(topicId, req.user.id))) {
+    return res.status(404).json(TOPIC_NOT_FOUND);
+  }
+
   abortController = new AbortController();
   sessionId = crypto.randomUUID();
   uploadSessions.set(sessionId, {
@@ -422,6 +432,10 @@ router.post('/process-blob', requireAuth, uploadHeavyLimiter, uploadTimeout, asy
 const inMemoryChunkStaging = new Map();
 const CHUNK_STAGING_TTL_MS = 60 * 60 * 1000; // 1 hour TTL for abandoned staged uploads
 
+// Logged once rather than on every sweep: a database without the cleanup
+// function would otherwise print this every 15 minutes forever.
+let warnedMissingChunkCleanup = false;
+
 const sweepExpiredChunkStaging = () => {
   const now = Date.now();
   for (const [uploadId, sess] of inMemoryChunkStaging) {
@@ -429,6 +443,21 @@ const sweepExpiredChunkStaging = () => {
       inMemoryChunkStaging.delete(uploadId);
     }
   }
+
+  // The Map above is per-instance, so on serverless it is usually empty and
+  // sweeping it collects nothing. upload_chunks_staging is the durable half —
+  // base64 slices of a part-uploaded file — and an upload abandoned without
+  // hitting /abort (browser closed, connection dropped) leaves its rows there.
+  // cleanup_expired_upload_chunks() has existed since the staging migration but
+  // nothing ever called it, so those rows accumulated indefinitely.
+  //
+  // Fire-and-forget: this runs on a timer and at the head of a request, and
+  // neither should wait on, or fail because of, garbage collection.
+  supabase.rpc('cleanup_expired_upload_chunks').then(({ error }) => {
+    if (!error || warnedMissingChunkCleanup) return;
+    warnedMissingChunkCleanup = true;
+    console.warn('[Upload] Could not sweep expired upload_chunks_staging rows:', error.message);
+  }, () => { /* transport failure — the next sweep tries again */ });
 };
 
 // Periodic TTL sweep every 15 minutes (unref'd to not hold Node process open)
@@ -586,6 +615,11 @@ router.post('/chunk/:uploadId/finalize', requireAuth, uploadHeavyLimiter, upload
 
     if (!(await callerOwnsUploadSession(uploadId, req))) {
       return res.status(403).json({ error: 'Unauthorized: upload session belongs to another user' });
+    }
+    // Owning the staging session says nothing about owning the topic the
+    // finalized file is filed under; that is a separate id from the body.
+    if (!(await callerOwnsTopic(topicId, req.user.id))) {
+      return res.status(404).json(TOPIC_NOT_FOUND);
     }
     const memSession = inMemoryChunkStaging.get(uploadId);
 
@@ -817,6 +851,18 @@ router.post('/file', requireAuth, uploadHeavyLimiter, uploadTimeout, uploadSingl
     const { topicId, modelId } = req.body;
     const fileName = req.file.originalname;
 
+    // Before the SSE stream opens. Multer has already written the upload to
+    // disk by this point, so a rejection has to take the temp file with it.
+    if (!(await callerOwnsTopic(topicId, req.user.id))) {
+      updateSession({ status: 'error', error: 'Topic not found' });
+      try {
+        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      } catch (cleanupErr) {
+        console.warn('[Upload] Failed to clean temp file:', cleanupErr.message);
+      }
+      return res.status(404).json(TOPIC_NOT_FOUND);
+    }
+
     if (isRiskyFileType(fileName)) {
       updateSession({ status: 'error', error: 'Blocked file type' });
       try {
@@ -948,15 +994,95 @@ router.post('/file', requireAuth, uploadHeavyLimiter, uploadTimeout, uploadSingl
   }
 });
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * GET /api/upload/files
- * List all uploaded files for the current user (cross-chat)
+ * List the current user's files.
+ * Query:
+ *   source=generated → AI artifacts only; source=upload → user attachments
+ *                      only; omitted → everything, as before.
+ *   topicId=<uuid>   → only files belonging to that conversation; omitted →
+ *                      every chat.
+ * Both filters are additionally scoped to req.user.id, so another account's
+ * topic id returns an empty list rather than its files.
  */
 router.get('/files', requireAuth, async (req, res) => {
   try {
-    const result = await listAllUserFiles(req.user.id);
+    const { source, topicId } = req.query;
+    // An unrecognised value must not silently widen to "all files" — that is
+    // how the Attachments panel would end up listing the AI's output.
+    if (source !== undefined && source !== 'generated' && source !== 'upload') {
+      return res.status(400).json({ error: "source must be 'generated' or 'upload'" });
+    }
+    if (topicId !== undefined && !UUID_RE.test(String(topicId))) {
+      return res.status(400).json({ error: 'topicId must be a UUID' });
+    }
+    const result = await listAllUserFiles(req.user.id, 200, { source, topicId });
     res.json(result);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/upload/attachment
+ * Persist an image the user pasted into the composer.
+ * Body: { dataUrl, fileName?, topicId? }
+ *
+ * The paste is sent to the model inline in the chat request and was otherwise
+ * never stored, so it vanished the moment the message was sent. This keeps a
+ * copy the Attachments panel can show and hand back.
+ */
+router.post('/attachment', requireAuth, uploadHeavyLimiter, async (req, res) => {
+  try {
+    const { dataUrl, fileName, topicId } = req.body;
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) {
+      return res.status(400).json({ error: 'dataUrl (a data: URI) is required' });
+    }
+
+    const match = dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,([\s\S]+)$/i);
+    if (!match) {
+      return res.status(400).json({ error: 'Only base64 image data URIs are supported' });
+    }
+
+    const [, mime, b64] = match;
+    const buffer = Buffer.from(b64, 'base64');
+    if (!buffer.length) {
+      return res.status(400).json({ error: 'Attachment is empty' });
+    }
+    // The composer downscales pastes before they get here; this is the backstop
+    // against a hand-rolled request, and matches the RPC's inline-binary ceiling.
+    if (buffer.length > 8 * 1024 * 1024) {
+      return res.status(413).json({ error: 'Pasted image is too large (max 8MB)' });
+    }
+
+    const ext = ({
+      'image/png': 'png',
+      'image/jpeg': 'jpg',
+      'image/gif': 'gif',
+      'image/webp': 'webp',
+      'image/svg+xml': 'svg',
+    })[mime.toLowerCase()] || 'png';
+
+    // The extension comes from the decoded bytes' MIME type, never from the
+    // caller: the stored name is what /download derives its Content-Type from,
+    // and a caller-chosen extension would let PNG bytes be served back under an
+    // extension of the caller's choosing. Only the base name is theirs.
+    if (!(await callerOwnsTopic(topicId, req.user.id))) {
+      return res.status(404).json(TOPIC_NOT_FOUND);
+    }
+
+    const rawBase = sanitizeFilename(fileName || 'pasted-image');
+    const base = rawBase.replace(/\.[^.]{1,10}$/, '') || 'pasted-image';
+
+    const file = await saveUserAttachment(req.user.id, topicId || null, `${base}.${ext}`, buffer, ext);
+    if (!file) {
+      return res.status(500).json({ error: 'Failed to save attachment' });
+    }
+    res.json({ file });
+  } catch (err) {
+    console.error('[upload:attachment]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1123,6 +1249,9 @@ router.post('/generate-file', requireAuth, uploadHeavyLimiter, async (req, res) 
     if (!fileName || !content) {
       return res.status(400).json({ error: 'fileName and content are required' });
     }
+    if (!(await callerOwnsTopic(topicId, req.user.id))) {
+      return res.status(404).json(TOPIC_NOT_FOUND);
+    }
     const safeFileName = sanitizeFilename(fileName);
     const result = await saveGeneratedFile(req.user.id, topicId || null, safeFileName, content, fileType);
     if (!result) {
@@ -1172,6 +1301,9 @@ router.post('/generate-image', requireAuth, uploadHeavyLimiter, async (req, res)
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
       return res.status(400).json({ error: 'prompt is required' });
     }
+    if (!(await callerOwnsTopic(topicId, req.user.id))) {
+      return res.status(404).json(TOPIC_NOT_FOUND);
+    }
     const result = await generateImage(prompt.trim(), req.user.id, topicId || null, { size, quality });
     res.json({ file: result });
   } catch (err) {
@@ -1194,6 +1326,9 @@ router.post('/generate-ppt', requireAuth, uploadHeavyLimiter, async (req, res) =
     }
     if (!Array.isArray(slides) || slides.length === 0) {
       return res.status(400).json({ error: 'slides array is required and must not be empty' });
+    }
+    if (!(await callerOwnsTopic(topicId, req.user.id))) {
+      return res.status(404).json(TOPIC_NOT_FOUND);
     }
     const result = await generatePPT(title.trim(), slides, req.user.id, topicId || null, { subtitle });
     res.json({ file: result });

@@ -646,9 +646,21 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
           embedding: fileVector, embedding_space: embeddingSpace,
         };
         if (blobUrl) fileInsertPayload.blob_url = blobUrl;
+        // The link that makes deleting the RAG row take this row's chunks with
+        // it. Opt-in migration (migration_link_uploaded_files_to_rag.sql), so
+        // the insert falls back without it rather than failing the upload.
+        if (ragLinkColumnExists && ragRecord?.id) fileInsertPayload.rag_record_id = ragRecord.id;
 
-        const { data: fr, error: fileErr } = await supabase
+        let { data: fr, error: fileErr } = await supabase
           .from('uploaded_files').insert(fileInsertPayload).select('id').single();
+
+        if (fileErr && ragLinkColumnExists && isMissingRagLinkColumn(fileErr)) {
+          console.warn('[FileUpload] uploaded_files.rag_record_id not found — run database/migration_link_uploaded_files_to_rag.sql so deleting a file also deletes its chunks. Saving without it.');
+          ragLinkColumnExists = false;
+          delete fileInsertPayload.rag_record_id;
+          ({ data: fr, error: fileErr } = await supabase
+            .from('uploaded_files').insert(fileInsertPayload).select('id').single());
+        }
 
         if (!fileErr && fr) {
           fileRecord = fr;
@@ -698,7 +710,21 @@ const saveFileToRAG = async (fileName, fileType, fileContent, llmAnalysis, userI
         await supabase.from('uploaded_files_rag').delete().eq('id', ragRecord.id);
       }
       if (fileRecord?.id) {
+        // Takes this file's rag_chunks with it (ON DELETE CASCADE).
         await supabase.from('uploaded_files').delete().eq('id', fileRecord.id);
+      }
+      // The bytes outlive the rows otherwise. A cancelled upload left its blob
+      // in storage forever: nothing referenced it, so nothing would ever come
+      // back to collect it, and the user's file stayed on disk after they asked
+      // for it to stop. Last, and best-effort — a storage hiccup here must not
+      // mask the abort the caller is waiting on.
+      if (blobUrl) {
+        try {
+          const { deleteBlobFromStorage } = require('./blobStorage.service');
+          await deleteBlobFromStorage(blobUrl);
+        } catch (blobCleanupErr) {
+          console.warn(`[FileUpload] Orphaned blob left after abort (${blobUrl}):`, blobCleanupErr.message);
+        }
       }
     }
     throw err;
@@ -886,11 +912,24 @@ const processZipFile = async (filePath, fileName, userId, topicId, modelId, sign
       throw new Error(sizeLimitMessage);
     }
   } catch (err) {
-    // On abort/timeout/error, clean up orphaned RAG entries
+    // Clean up whatever this ZIP already wrote, however it ended.
+    //
+    // This used to skip the cleanup when the cause was an abort, on the
+    // assumption that the `signal?.aborted` check after mapConcurrent had
+    // already handled it. That holds only while every abort surfaces there:
+    // one thrown on the way to it — mid-extraction, or past a size limit —
+    // reached this catch instead and left every entry saved so far behind,
+    // with its chunks still retrievable. Cleanup by recorded id is idempotent,
+    // so running it in both places costs nothing and closes the gap.
     const isAbort = err.name === 'AbortError' || err.message === 'Upload cancelled by user';
-    if (!isAbort) {
-      console.error('[FileUpload] ZIP processing interrupted — cleaning up orphaned RAG entries...');
-      onProgress?.({ type: 'progress', phase: 'error', percent: 0, message: 'Upload interrupted. Cleaning up...' });
+    if (savedRagIds.length || savedFileIds.length) {
+      console.log(`[FileUpload] ZIP ${isAbort ? 'cancelled' : 'interrupted'} — cleaning up orphaned RAG entries...`);
+      onProgress?.({
+        type: 'progress',
+        phase: 'error',
+        percent: 0,
+        message: isAbort ? 'Upload cancelled. Cleaning up...' : 'Upload interrupted. Cleaning up...',
+      });
       await cleanupOrphanedRagEntries(savedRagIds, savedFileIds);
     }
     throw err;
@@ -1563,21 +1602,69 @@ const listUserFiles = async (userId, topicId, maxFiles = 200) => {
   }
 };
 
+// `source` ships as an opt-in migration
+// (database/migration_add_file_source.sql). Until it is applied the column does
+// not exist and PostgREST rejects any select or filter naming it, so every read
+// falls back once and remembers for this process — an unapplied migration costs
+// the generated/uploaded split, not the file list.
+// uploaded_files.rag_record_id ships as an opt-in migration
+// (database/migration_link_uploaded_files_to_rag.sql). Same one-shot latch as
+// `source` below: probe once, remember for the process, keep working either way.
+let ragLinkColumnExists = true;
+const isMissingRagLinkColumn = (error) => {
+  if (error?.code !== '42703' && error?.code !== 'PGRST204') return false;
+  const text = `${error?.message || ''} ${error?.details || ''}`.toLowerCase();
+  return text.includes('rag_record_id');
+};
+
+let sourceColumnExists = true;
+// 42703 is Postgres "undefined column" (selects and filters); PGRST204 is
+// PostgREST's "column not in the schema cache" (inserts and updates). Matched
+// on the codes rather than on message text so an unrelated failure that happens
+// to mention a source cannot switch the split off for the whole process.
+const isMissingSourceColumn = (error) => {
+  if (error?.code !== '42703' && error?.code !== 'PGRST204') return false;
+  const text = `${error?.message || ''} ${error?.details || ''}`.toLowerCase();
+  return text.includes('source');
+};
+
 /**
- * List ALL uploaded files for a user across all chats (cross-chat)
+ * List uploaded files for a user — every chat by default, or one chat's when
+ * `topicId` is given.
  * @param {string} userId
  * @param {number} maxFiles - max files to return (default 200)
+ * @param {object} [opts]
+ * @param {'generated'|'upload'} [opts.source] - only files of this origin
+ * @param {string} [opts.topicId] - only files belonging to this conversation
  */
-const listAllUserFiles = async (userId, maxFiles = 200) => {
+const listAllUserFiles = async (userId, maxFiles = 200, opts = {}) => {
   try {
     if (!userId) return { files: [], totalCount: 0 };
 
-    const { data, error, count } = await supabase
-      .from('uploaded_files_rag')
-      .select('id, file_name, file_type, created_at', { count: 'exact' })
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(maxFiles);
+    const { source, topicId } = opts;
+
+    const run = (withSource) => {
+      let query = supabase
+        .from('uploaded_files_rag')
+        .select(
+          withSource
+            ? 'id, file_name, file_type, created_at, source'
+            : 'id, file_name, file_type, created_at',
+          { count: 'exact' },
+        )
+        .eq('user_id', userId);
+      if (withSource && source) query = query.eq('source', source);
+      if (topicId) query = query.eq('topic_id', topicId);
+      return query.order('created_at', { ascending: false }).limit(maxFiles);
+    };
+
+    let { data, error, count } = await run(sourceColumnExists);
+
+    if (error && sourceColumnExists && isMissingSourceColumn(error)) {
+      console.warn('[listAllUserFiles] uploaded_files_rag.source column not found — run database/migration_add_file_source.sql to separate AI artifacts from user attachments. Listing every file.');
+      sourceColumnExists = false;
+      ({ data, error, count } = await run(false));
+    }
 
     if (error) {
       console.error('[listAllUserFiles] error:', error.message);
@@ -1589,6 +1676,7 @@ const listAllUserFiles = async (userId, maxFiles = 200) => {
       file_name: r.file_name,
       file_type: r.file_type,
       created_at: r.created_at,
+      source: r.source || 'upload',
     }));
 
     return { files, totalCount: count || files.length };
@@ -1627,6 +1715,15 @@ const getFileContentById = async (fileId, userId) => {
   }
 };
 
+/**
+ * Delete a file everywhere it exists.
+ *
+ * "Everywhere" is the point: a chunked upload lives in uploaded_files_rag (the
+ * row the UI lists), uploaded_files (the parent of its chunks), rag_chunks (what
+ * RAG actually retrieves) and possibly Vercel Blob. Leaving the chunks behind
+ * means a file the user deleted is still readable by the model, which is the
+ * one thing deleting it was meant to prevent.
+ */
 const deleteUploadedFile = async (fileId, userId) => {
   try {
     const { data: fileRec } = await supabase
@@ -1641,13 +1738,44 @@ const deleteUploadedFile = async (fileId, userId) => {
       await deleteBlobFromStorage(fileRec.blob_url);
     }
 
-    if (fileRec?.file_name && fileRec?.topic_id) {
-      await supabase
+    // Preferred: the explicit link, which names exactly this file's row.
+    // rag_chunks cascades from uploaded_files, so this takes the chunks too.
+    let unlinkedByLink = false;
+    if (fileRec?.id && ragLinkColumnExists) {
+      const { error: linkErr } = await supabase
         .from('uploaded_files')
         .delete()
         .eq('user_id', userId)
-        .eq('topic_id', fileRec.topic_id)
+        .eq('rag_record_id', fileRec.id);
+
+      if (linkErr && isMissingRagLinkColumn(linkErr)) {
+        console.warn('[deleteUploadedFile] uploaded_files.rag_record_id not found — run database/migration_link_uploaded_files_to_rag.sql. Falling back to matching on name.');
+        ragLinkColumnExists = false;
+      } else if (linkErr) {
+        console.warn('[deleteUploadedFile] Linked delete failed:', linkErr.message);
+      } else {
+        unlinkedByLink = true;
+      }
+    }
+
+    // Legacy rows carry no link, so the pairing has to be guessed from the
+    // name. `topic_id` is matched with .is() when null rather than skipped —
+    // skipping is what used to strand the chunks of every unscoped upload.
+    //
+    // This can still take a same-named sibling's row in the same topic, which
+    // is why it only runs when the link was unavailable: over-deleting chunks
+    // costs a re-upload, while under-deleting leaves deleted content readable.
+    if (!unlinkedByLink && fileRec?.file_name) {
+      let query = supabase
+        .from('uploaded_files')
+        .delete()
+        .eq('user_id', userId)
         .eq('file_name', fileRec.file_name);
+      query = fileRec.topic_id
+        ? query.eq('topic_id', fileRec.topic_id)
+        : query.is('topic_id', null);
+      const { error: legacyErr } = await query;
+      if (legacyErr) console.warn('[deleteUploadedFile] Legacy delete failed:', legacyErr.message);
     }
   } catch (lookupErr) {
     console.warn('[deleteUploadedFile] Lookup before delete failed:', lookupErr.message);
@@ -1691,19 +1819,32 @@ const saveGeneratedFile = async (userId, topicId, fileName, content, fileType) =
       }
     }
 
-    const { data, error } = await supabase
+    const buildRow = (withSource) => ({
+      file_name: finalName,
+      file_type: fileType || 'generated',
+      original_content: content,
+      llm_analysis: content,
+      user_id: userId,
+      topic_id: topicId,
+      created_at: new Date().toISOString(),
+      ...(withSource ? { source: 'generated' } : {}),
+    });
+
+    let { data, error } = await supabase
       .from('uploaded_files_rag')
-      .insert({
-        file_name: finalName,
-        file_type: fileType || 'generated',
-        original_content: content,
-        llm_analysis: content,
-        user_id: userId,
-        topic_id: topicId,
-        created_at: new Date().toISOString(),
-      })
+      .insert(buildRow(sourceColumnExists))
       .select()
       .single();
+
+    if (error && sourceColumnExists && isMissingSourceColumn(error)) {
+      console.warn('[saveGeneratedFile] uploaded_files_rag.source column not found — run database/migration_add_file_source.sql. Saving without it.');
+      sourceColumnExists = false;
+      ({ data, error } = await supabase
+        .from('uploaded_files_rag')
+        .insert(buildRow(false))
+        .select()
+        .single());
+    }
 
     if (error) {
       console.error('[saveGeneratedFile] error:', error.message);
@@ -1773,6 +1914,24 @@ const saveGeneratedBinaryFile = async (userId, topicId, fileName, textContent, f
       insertedId = data;
     }
 
+    // insert_rag_document has no source parameter — changing its signature would
+    // break every caller on an unmigrated database, so tag the row afterwards.
+    // A failure here only misfiles the row into Attachments; the file is saved.
+    if (insertedId && sourceColumnExists) {
+      const { error: srcErr } = await supabase
+        .from('uploaded_files_rag')
+        .update({ source: 'generated' })
+        .eq('id', insertedId);
+      if (srcErr) {
+        if (isMissingSourceColumn(srcErr)) {
+          console.warn('[saveGeneratedBinaryFile] uploaded_files_rag.source column not found — run database/migration_add_file_source.sql.');
+          sourceColumnExists = false;
+        } else {
+          console.warn('[saveGeneratedBinaryFile] source tag failed:', srcErr.message);
+        }
+      }
+    }
+
     console.log(`[saveGeneratedBinaryFile] Saved ${fileType} file: ${finalName} (id: ${insertedId})`);
     return {
       file_id: insertedId,
@@ -1782,6 +1941,69 @@ const saveGeneratedBinaryFile = async (userId, topicId, fileName, textContent, f
     };
   } catch (err) {
     console.error('[saveGeneratedBinaryFile] Failed:', err);
+    return null;
+  }
+};
+
+/**
+ * Store a binary the user attached to a message — today, an image pasted into
+ * the composer. Deliberately not processUploadedFile: the model is already
+ * being shown the image inline, so there is nothing to extract, embed, or
+ * charge for. This exists purely so the paste survives the send and stays
+ * viewable and downloadable in the chat's Attachments panel.
+ *
+ * @returns {Promise<{file_id, file_name, file_type, created_at}|null>}
+ */
+const saveUserAttachment = async (userId, topicId, fileName, buffer, fileType) => {
+  try {
+    if (!userId || !fileName || !buffer?.length) return null;
+
+    const fileHash = getFileHash(fileName, `${buffer.length}:${buffer.subarray(0, 512).toString('base64')}`);
+    // Pasted screenshots all arrive as "image.png"; a timestamp keeps them apart
+    // in the panel list without a duplicate-name lookup on every paste.
+    const dot = fileName.lastIndexOf('.');
+    // 2026-08-30T11:00:13.123Z → 20260830T110013. The fractional seconds are
+    // dropped BEFORE the separators go: slicing to a fixed width instead left
+    // the trailing '.' on the stamp, naming every paste "..png".
+    const stamp = new Date().toISOString().replace(/\.\d+Z$/, '').replace(/[-:]/g, '');
+    const finalName = dot > 0
+      ? `${fileName.slice(0, dot)}_${stamp}${fileName.slice(dot)}`
+      : `${fileName}_${stamp}`;
+
+    const { data, error } = await supabase.rpc('insert_rag_document', {
+      p_user_id: userId,
+      p_topic_id: topicId || null,
+      p_file_name: finalName,
+      p_file_hash: fileHash,
+      p_file_type: fileType,
+      p_original_content: `[Pasted ${fileType} attachment: ${finalName}]`,
+      p_llm_analysis: '',
+      p_embedding: null,
+      p_original_file_b64: buffer.toString('base64'),
+    });
+
+    if (error) {
+      console.error('[saveUserAttachment] RPC error:', error.message);
+      return null;
+    }
+
+    let insertedId;
+    if (Array.isArray(data)) {
+      const first = data[0];
+      insertedId = (typeof first === 'object' && first !== null) ? Object.values(first)[0] : first;
+    } else {
+      insertedId = data;
+    }
+
+    console.log(`[saveUserAttachment] Saved ${fileType} attachment: ${finalName} (id: ${insertedId})`);
+    return {
+      file_id: insertedId,
+      file_name: finalName,
+      file_type: fileType,
+      created_at: new Date().toISOString(),
+    };
+  } catch (err) {
+    console.error('[saveUserAttachment] Failed:', err);
     return null;
   }
 };
@@ -1826,6 +2048,7 @@ module.exports = {
   deleteUploadedFile,
   saveGeneratedFile,
   saveGeneratedBinaryFile,
+  saveUserAttachment,
   getTempDir,
   ensureUploadDir,
   getSupportedFileType,

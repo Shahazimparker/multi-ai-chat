@@ -1,0 +1,387 @@
+/* ============================================================
+   FILE: frontend/src/components/chat/AttachmentsPanel.css
+   PURPOSE: Toolbar doc button + right-hand attachments drawer
+   ============================================================ */
+
+/* ── Toolbar button ── */
+.attachments-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.72rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.attachments-toggle:hover,
+.attachments-toggle.active {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+  background: var(--gradient-secondary);
+}
+
+.attachments-toggle-count {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--gradient-button);
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+}
+
+/* ── Drawer ── */
+.attachments-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10005;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.attachments-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 10006;
+  width: 100%;
+  max-width: 360px;
+  height: 100vh;
+  height: 100dvh;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-tertiary);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  border-left: 1px solid var(--border-primary);
+  box-shadow: -8px 0 32px var(--shadow-lg);
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  font-family: 'Inter', sans-serif;
+}
+
+.attachments-panel.open {
+  transform: translateX(0);
+}
+
+/* Off-screen is not enough on its own — a hidden drawer still holds focus
+   stops and is still read out. */
+.attachments-panel[aria-hidden='true'] {
+  visibility: hidden;
+}
+
+.attachments-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 14px 8px;
+}
+
+.attachments-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.attachments-count {
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-primary);
+  color: var(--text-secondary);
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.attachments-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.attachments-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.attachments-subtitle {
+  margin: 0;
+  padding: 0 14px 10px;
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.attachments-search {
+  position: relative;
+  padding: 0 14px 10px;
+}
+
+.attachments-search-icon {
+  position: absolute;
+  top: 8px;
+  left: 23px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.attachments-search input {
+  width: 100%;
+  padding: 7px 10px 7px 29px;
+  box-sizing: border-box;
+  background: var(--bg-input);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.76rem;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.attachments-search input:focus {
+  border-color: var(--border-active);
+}
+
+.attachments-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.attachments-list::-webkit-scrollbar { width: 6px; }
+.attachments-list::-webkit-scrollbar-thumb {
+  background: var(--border-primary);
+  border-radius: 4px;
+}
+.attachments-list::-webkit-scrollbar-track { background: transparent; }
+
+.attachments-empty {
+  margin: 12px 6px;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.attachments-empty.error { color: #f87171; }
+
+/* ── Row ── */
+.attachment-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.attachment-item:hover,
+.attachment-item:focus-within {
+  background: var(--bg-hover);
+  border-color: var(--border-primary);
+}
+
+/* The row's open affordance: thumbnail + name, as one focusable control. */
+.attachment-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.attachment-open:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 2px;
+}
+
+.attachment-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--bg-input);
+  border: 1px solid var(--border-primary);
+  border-radius: 7px;
+  color: var(--text-tertiary);
+}
+
+.attachment-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.attachment-thumb-fallback.failed { opacity: 0.4; }
+
+.attachment-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.attachment-name {
+  color: var(--text-primary);
+  font-size: 0.76rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-meta {
+  color: var(--text-tertiary);
+  font-size: 0.65rem;
+  letter-spacing: 0.02em;
+}
+
+/* Actions stay visible on touch devices, where there is no hover to reveal
+   them. On a pointer they fade in with the row. */
+.attachment-actions {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+@media (hover: hover) {
+  .attachment-actions { opacity: 0; transition: opacity 0.2s ease; }
+  .attachment-item:hover .attachment-actions,
+  .attachment-item:focus-within .attachment-actions { opacity: 1; }
+}
+
+.attachment-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.attachment-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+
+.attachment-btn:disabled { opacity: 0.45; cursor: default; }
+
+.attachment-btn.danger:hover:not(:disabled) {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.5);
+}
+
+/* ── Lightbox ── */
+.attachment-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 10010;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(0, 0, 0, 0.82);
+}
+
+.attachment-lightbox figure {
+  margin: 0;
+  max-width: 100%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.attachment-lightbox img {
+  max-width: 100%;
+  max-height: calc(100vh - 130px);
+  object-fit: contain;
+  border-radius: 10px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+}
+
+.attachment-lightbox figcaption {
+  color: rgba(255, 255, 255, 0.85);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.76rem;
+  text-align: center;
+  word-break: break-all;
+}
+
+.attachment-lightbox-status {
+  padding: 40px 24px;
+  color: rgba(255, 255, 255, 0.75);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.8rem;
+}
+
+.attachment-lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 9px;
+  color: #fff;
+  cursor: pointer;
+}
+
+.attachment-lightbox-close:hover { background: rgba(255, 255, 255, 0.22); }
+
+@media (max-width: 768px) {
+  .attachments-panel { max-width: 100%; }
+  .attachments-toggle span.attachments-toggle-label { display: none; }
+  .attachment-lightbox { padding: 16px; }
+}

@@ -135,20 +135,24 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
     }
   }, []);
 
+  // Artifacts are what the AI produced. Files the user attached or pasted live
+  // in the chat's Attachments panel instead — this list used to be both, so a
+  // chat with a few uploads buried the model's output in them.
+  const fetchArtifacts = useCallback(async () => {
+    const res = await api.get('/upload/files', { params: { source: 'generated' } });
+    const fileList = res.data?.files || [];
+    setArtifacts(fileList.map(f => ({
+      id: f.file_id,
+      name: f.file_name,
+      size: f.file_type || '',
+      created_at: f.created_at,
+    })));
+  }, []);
+
   useEffect(() => {
     if (!user) return;
-    api.get('/upload/files')
-      .then(res => {
-        const fileList = res.data?.files || [];
-        setArtifacts(fileList.map(f => ({
-          id: f.file_id,
-          name: f.file_name,
-          size: f.file_type || '',
-          created_at: f.created_at,
-        })));
-      })
-      .catch(() => {});
-  }, [user, refreshTrigger]);
+    fetchArtifacts().catch(() => {});
+  }, [user, refreshTrigger, fetchArtifacts]);
 
   useEffect(() => {
     if (!user) return;
@@ -169,14 +173,7 @@ const Sidebar = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) => {
     if (activeTopic?.id === id) onNewChat();
     // Refresh artifacts — topic deletion also removes associated generated files from DB
     try {
-      const res = await api.get('/upload/files');
-      const fileList = res.data?.files || [];
-      setArtifacts(fileList.map(f => ({
-        id: f.file_id,
-        name: f.file_name,
-        size: f.file_type || '',
-        created_at: f.created_at,
-      })));
+      await fetchArtifacts();
     } catch {}
   };
 

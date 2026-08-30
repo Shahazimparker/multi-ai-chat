@@ -100,9 +100,11 @@ const MobileNav = ({ activeTopic, onTopicSelect, onNewChat, refreshTrigger }) =>
         }
     }, []);
 
+    // Artifacts are what the AI produced. Files the user attached or pasted live
+    // in the chat's Attachments panel instead — this list used to be both.
     useEffect(() => {
         if (!user) return;
-        api.get('/upload/files')
+        api.get('/upload/files', { params: { source: 'generated' } })
             .then(res => {
                 const fileList = res.data?.files || [];
                 setArtifacts(fileList.map(f => ({

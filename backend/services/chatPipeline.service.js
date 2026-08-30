@@ -28,6 +28,7 @@ const { buildContextMessages, maybeCompressQuery } = require('./context.service'
 const { embedAndStoreMessage, searchMemory } = require('./memory.service');
 const { runOrchestratorBrain } = require('./orchestratorBrain.service');
 const { listUserFiles } = require('./fileUpload.service');
+const { callerOwnsTopic } = require('./topicOwnership.service');
 const { logAnalytics } = require('./analytics.service');
 const { calculateBillableTokens } = require('./tokenAccounting.service');
 const { buildFileContext } = require('./toolProcessor.service');
@@ -530,34 +531,28 @@ const runChatPipeline = async (opts) => {
     // so without this check any authenticated caller could pass another user's
     // topic id and have that conversation loaded into their prompt — and their
     // own turns written back into the victim's topic.
+    //
+    // The lookup itself lives in topicOwnership.service.js, shared with the
+    // upload and file-generation routes, which take the same id from the same
+    // place and file rows under it. One rule, one definition — including the
+    // part that is easy to get subtly wrong on a re-implementation: a failed
+    // lookup (a malformed uuid fails the cast and arrives as an error) answers
+    // the same as a topic that does not exist, so this cannot confirm which
+    // ids are real.
     if (topicId) {
       if (isAnonymous || !user?.id) {
         // Anonymous callers own no topics. Drop the id rather than letting it
         // reach the cache / RAG / file lookups.
         resolvedTopicId = null;
-      } else {
-        const { data: ownedTopic, error: topicLookupError } = await supabase
-          .from('topics')
-          .select('id')
-          .eq('id', topicId)
-          .eq('user_id', user.id)
-          .maybeSingle();
-
-        // A malformed id fails the uuid cast and surfaces as an error here;
-        // both cases get the same response so this can't confirm existence.
-        if (topicLookupError || !ownedTopic) {
-          if (topicLookupError) {
-            console.warn('[ChatPipeline] Topic ownership lookup failed:', topicLookupError.message);
-          }
-          return makePipelineResult({
-            err: new Error('Topic not found'),
-            errorType: 'topic_not_found',
-            userMessage: 'Topic not found.',
-            modelConfig,
-            effectiveModelConfig,
-            resolvedTopicId: null,
-          });
-        }
+      } else if (!(await callerOwnsTopic(topicId, user.id))) {
+        return makePipelineResult({
+          err: new Error('Topic not found'),
+          errorType: 'topic_not_found',
+          userMessage: 'Topic not found.',
+          modelConfig,
+          effectiveModelConfig,
+          resolvedTopicId: null,
+        });
       }
     }
 

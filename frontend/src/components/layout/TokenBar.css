@@ -36,6 +36,15 @@
   min-width: 0;
 }
 
+/* Pinned to the right edge of the bar, opposite the token readout. */
+.token-bar-trailing {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .token-icon  { color: #fbbf24; flex-shrink: 0; }
 .token-label { color: var(--text-secondary); flex-shrink: 0; }
 

@@ -122,6 +122,48 @@ const deleteTopic = async (req, res) => {
   }
 };
 
+// ── POST /api/history/topics — open an empty conversation ──
+//
+// The chat pipeline creates the topic for an ordinary first message, and that
+// stays the normal path. This exists for the one case that cannot wait for it:
+// a first message carrying an attachment. Those files are uploaded before the
+// message is streamed, so without a topic to belong to they land with
+// topic_id NULL and are adopted afterwards by a ten-minute backfill window —
+// which means they are, briefly, in no conversation at all, and any file left
+// unclaimed by a send that never completes stays that way. Handing the client
+// an id up front is what every current chat app does (create the conversation,
+// then attach to it), and it removes the orphan state rather than repairing it.
+const createTopic = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { title, model } = req.body || {};
+    // The column is TEXT, but the sidebar renders this untruncated — and the
+    // pipeline caps its own titles at 60 for the same reason.
+    const safeTitle = String(title || '').trim().slice(0, 60) || 'New chat';
+
+    const { data, error } = await supabase
+      .from('topics')
+      .insert({
+        user_id: user.id,
+        title: safeTitle,
+        model: typeof model === 'string' ? model : null,
+      })
+      .select('id, title, model, created_at, updated_at')
+      .single();
+
+    if (error) {
+      console.error('[History] Create topic error:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.status(201).json({ topic: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 const renameTopic = async (req, res) => {
   try {
     const { id } = req.params;
@@ -154,4 +196,4 @@ const renameTopic = async (req, res) => {
   }
 };
 
-module.exports = { getTopics, getMessages, deleteTopic, renameTopic };
+module.exports = { getTopics, getMessages, createTopic, deleteTopic, renameTopic };
