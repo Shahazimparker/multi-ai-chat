@@ -39,6 +39,16 @@ const buildCookieOptions = (extra = {}) => {
     httpOnly: true,
     secure: isProduction,
     sameSite: isProduction ? 'none' : 'lax',
+    // The frontend and the API are on different *.vercel.app subdomains, and
+    // vercel.app is on the Public Suffix List — so the browser treats them as
+    // separate sites and this is a third-party cookie. SameSite=None is what
+    // makes it send at all, but it is also what makes it a cookie Chrome drops
+    // outright when third-party cookies are blocked (Incognito by default):
+    // login would 200, the cookie would be discarded, and /me would 401 back to
+    // the login screen. Partitioned (CHIPS) opts into being stored under a key
+    // scoped to the top-level site, which those modes still permit. Only one
+    // frontend uses this API, so per-site partitioning costs nothing.
+    partitioned: isProduction,
     path: '/',
     ...extra,
   };

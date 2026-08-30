@@ -46,9 +46,35 @@ export default defineConfig(({ mode }) => ({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
-        navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api\//],
+        // The document is deliberately NOT served from the precache. A cached
+        // response replays the headers it was stored with, and the CSP that
+        // governs this app arrives as a header from frontend/vercel.json — so a
+        // precached index.html pins every client to the policy that was live
+        // when it was cached. Worse, a header-only change alters no built
+        // asset, so sw.js is byte-identical and autoUpdate never fires: the
+        // stale policy would never expire. NetworkFirst keeps the document (and
+        // its headers) fresh, falling back to cache only when offline.
+        //
+        // navigateFallback must be null, not merely absent: vite-plugin-pwa
+        // defaults it to index.html, and workbox matches routes in
+        // registration order — the injected precache NavigationRoute is
+        // registered first and would shadow the NetworkFirst route below.
+        navigateFallback: null,
         runtimeCaching: [
+          {
+            urlPattern: ({ request }) => request.mode === 'navigate',
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'html-documents',
+              networkTimeoutSeconds: 5,
+              expiration: {
+                maxEntries: 20
+              },
+              cacheableResponse: {
+                statuses: [200]
+              }
+            }
+          },
           {
             urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
             handler: 'CacheFirst',
