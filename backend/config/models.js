@@ -44,7 +44,7 @@ const MODELS = {
     model: 'deepseek-v4-flash',
     paid: true,
     supportsVision: true,
-    maxTokens: 128000,
+    maxTokens: 1000000,
     reasoning: { levels: ['high', 'max'], default: 'high', canDisable: true },
   },
   'deepseek-v4-pro': {
@@ -54,7 +54,7 @@ const MODELS = {
     model: 'deepseek-v4-pro',
     paid: true,
     supportsVision: true,
-    maxTokens: 128000,
+    maxTokens: 1000000,
     reasoning: { levels: ['high', 'max'], default: 'high', canDisable: true },
   },
 
@@ -66,33 +66,17 @@ const MODELS = {
   // gpt-oss and Qwen3 are reasoning models taking reasoning_effort
   // low/medium/high. Thinking is disabled by omitting the parameter rather than
   // by sending a disabled value.
-  'groq-gpt-oss-20b': {
-    label: 'Groq GPT-OSS 20B (Free)',
+  'groq-llama-4-scout-17b': {
+    label: 'Groq Llama 4 Scout 17B (Free)',
     provider: 'groq',
     apiKey: process.env.GROQ_API_KEY,
-    model: 'openai/gpt-oss-20b',
+    model: 'llama-4-scout-17b',
     paid: false,
-    maxTokens: 5999,
+    maxTokens: 30000,
     reasoning: { levels: ['low', 'medium', 'high'], default: 'medium', canDisable: true },
   },
-  'groq-gpt-oss-120b': {
-    label: 'Groq GPT-OSS 120B (Free)',
-    provider: 'groq',
-    apiKey: process.env.GROQ_API_KEY,
-    model: 'openai/gpt-oss-120b',
-    paid: false,
-    maxTokens: 5999,
-    reasoning: { levels: ['low', 'medium', 'high'], default: 'medium', canDisable: true },
-  },
-  'groq-qwen3': {
-    label: 'Groq Qwen3.6 27B (Free)',
-    provider: 'groq',
-    apiKey: process.env.GROQ_API_KEY,
-    model: 'qwen/qwen3.6-27b',
-    paid: false,
-    maxTokens: 5999,
-    reasoning: { levels: ['low', 'medium', 'high'], default: 'medium', canDisable: true },
-  },
+
+
 
   // ── Google Gemini ──────────────────────────────────────────
   // Gemini 2.5 Flash/Pro both shut down 2026-10-16
@@ -114,11 +98,25 @@ const MODELS = {
     model: 'gemini-3.7-flash',
     paid: false,
     supportsVision: true,
-    maxTokens: 5999,
+    maxTokens: 1000000,
     // 3.7 dropped "minimal", which 3.6 accepted — sending it now is an error.
     reasoning: {
       levels: ['low', 'medium', 'high'],
       default: 'medium',
+      canDisable: false,
+    },
+  },
+  'gemini-3.6-flash': {
+    label: 'Gemini Flash 3.6 (Free)',
+    provider: 'gemini',
+    apiKey: process.env.GEMINI_API_KEY,
+    model: 'gemini-3.6-flash',
+    paid: false,
+    supportsVision: true,
+    maxTokens: 1000000,
+    reasoning: {
+      levels: ['minimal', 'low', 'medium', 'high'], // 3.6 accepts minimal, unlike 3.7
+      default: 'high',
       canDisable: false,
     },
   },
@@ -131,32 +129,11 @@ const MODELS = {
     model: 'gemini-3.5-flash-lite',
     paid: false,
     supportsVision: true,
-    maxTokens: 5999,
+    maxTokens: 1000000,
     // Defaults to minimal rather than medium — Lite is the cheap, fast tier and
     // Google tunes it for the least reasoning, not a balanced amount.
     reasoning: {
       levels: ['minimal', 'low', 'medium', 'high'],
-      default: 'minimal',
-      canDisable: false,
-    },
-  },
-  'gemini-pro': {
-    label: 'Gemini Pro 3.1 (Preview, Paid)',
-    provider: 'gemini',
-    apiKey: process.env.GEMINI_API_KEY,
-    // Still "-preview"; there is no GA `gemini-3.1-pro` id. Verified against
-    // Google Cloud's model page (2026-08-19), which lists model ID
-    // gemini-3.1-pro-preview at launch stage Public preview.
-    //
-    // Paid, despite being in the same family as the free Flash models: Google's
-    // pricing page shows no Free Tier row for Gemini 3.1 Pro Preview — the Pro
-    // line moved behind billing, leaving Flash and Flash-Lite on the free tier.
-    model: 'gemini-3.1-pro-preview',
-    paid: true,
-    supportsVision: true,
-    maxTokens: 5999,
-    reasoning: {
-      levels: ['low', 'medium', 'high'],
       default: 'high',
       canDisable: false,
     },
@@ -215,7 +192,7 @@ const MODELS = {
     apiKey: process.env.MISTRAL_API_KEY,
     model: 'codestral-2508',
     paid: false,
-    maxTokens: 256000,
+    maxTokens: 600000,
     // 625,000 TPM at 2.08 RPS — rate is nowhere near binding, and the half
     // rule would allow the full 128000 half-window. Deliberately held at 32000
     // instead: this is a 256K model whose value is reading large codebases, and
@@ -225,21 +202,16 @@ const MODELS = {
     // 120,320 of prompt is not.
     maxOutputTokens: 32000,
   },
-  // Devstral 2: 123B dense agentic coding model. Deprecated by Mistral on
-  // 2026-05-22 — they recommend Mistral Medium 3.5 as the replacement. Kept
-  // here because the endpoint still serves it and existing topics may reference
-  // it. Text-only (no vision), function-calling and structured output capable.
-  'devstral-2512': {
-    label: 'Devstral 2512 (Code, Deprecated)',
+  'mistral-glm-5-2': {
+    label: 'GLM-5.2 (Code, Free)',
     provider: 'mistral',
     apiKey: process.env.MISTRAL_API_KEY,
-    model: 'devstral-2512',
+    model: 'zai-glm-5-2',
     paid: false,
-    maxTokens: 256000,
-    // 1,000,000 TPM — the highest here, so rate never binds. Held at 32000 for
-    // the same reason as codestral: agentic coding needs the 210,560-token
-    // prompt ceiling far more than it needs a 128000-token single answer.
-    maxOutputTokens: 32000,
+    maxTokens: 1000000,
+    // Massive 1,000,000 token context window, designed for long-horizon agentic workflows.
+    // Setting maxOutputTokens to 64000 to reserve a large block for code answers.
+    maxOutputTokens: 64000,
   },
   'mistral-small': {
     label: 'Mistral Small 4 (Vision, Free)',
@@ -274,21 +246,23 @@ const MODELS = {
     },
   },
   'mistral-medium': {
-    label: 'Mistral Medium (Vision, Free)',
+    label: 'Mistral Medium 3.5 (Vision, Free)',
     provider: 'mistral',
     apiKey: process.env.MISTRAL_API_KEY,
-    model: 'mistral-medium-2508',
+    model: 'mistral-medium-latest',
     paid: false,
     supportsVision: true,
-    maxTokens: 128000,
-    // 356,250 TPM — half is far past the window, so the window bound wins.
-    //
-    // NOTE: mistral-medium-2508 (Medium 3.1) has a retirement date of
-    // 2026-08-31 on Mistral's deprecation table, with Mistral Medium 3.5 named
-    // as the replacement. When migrating, `mistral-medium-latest` shows only
-    // 25,000 TPM free — LOWER than small — so maxOutputTokens must drop to
-    // 12500 (half of it) at the same time, or one request exceeds the minute.
-    maxOutputTokens: 64000,
+    maxTokens: 256000,
+    // Note: mistral-medium-latest (3.5) only has 25,000 TPM free.
+    // maxOutputTokens must be dropped to 12500 (half of it) so that
+    // (Prompt + Output) fits within the strict 25,000 TPM limit.
+    maxOutputTokens: 12500,
+    reasoning: {
+      levels: ['high'],
+      default: 'high',
+      enabledByDefault: false, // Defaulting to false to save on your strict 25k TPM budget
+      canDisable: true,
+    },
   },
   'mistral-large': {
     label: 'Mistral Large (Vision, Free)',
@@ -320,7 +294,7 @@ const MODELS = {
     model: 'claude-haiku-4-5-20251001',
     paid: true,
     supportsVision: true,
-    maxTokens: 100000,
+    maxTokens: 200000,
     reasoning: { levels: [], default: null, canDisable: true, label: 'Extended thinking' },
   },
   'claude-sonnet-5': {
@@ -362,7 +336,7 @@ const MODELS = {
     model: 'openrouter',
     paid: true,
     unified: true,
-    maxTokens: 128000,
+    maxTokens: 256000,
     models: [],
   },
 };

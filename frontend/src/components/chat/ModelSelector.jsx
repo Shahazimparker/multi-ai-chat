@@ -108,11 +108,11 @@ const ModelSelector = ({
         setModels(nextModels);
 
         if (!selectedModel && nextModels.length > 0) {
-          // Default to mistral-small if available, otherwise first model.
+          // Default to gemini-flash-lite if available, otherwise first model.
           // Must match the backend default in chat.routes.js, or a client that
           // never touched the picker sends one model while the server assumes
           // another.
-          const defaultModel = nextModels.find(m => m.id === 'mistral-small') || nextModels[0];
+          const defaultModel = nextModels.find(m => m.id === 'gemini-flash-lite') || nextModels[0];
           onModelChange(defaultModel);
         }
       })
