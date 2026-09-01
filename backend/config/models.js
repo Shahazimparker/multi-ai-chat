@@ -63,9 +63,8 @@ const MODELS = {
   // were removed here: Groq decommissions both on 2026-08-16, after which they
   // return HTTP 400. See https://console.groq.com/docs/deprecations
   //
-  // gpt-oss and Qwen3 are reasoning models taking reasoning_effort
-  // low/medium/high. Thinking is disabled by omitting the parameter rather than
-  // by sending a disabled value.
+  // Groq's reasoning models take reasoning_effort low/medium/high. Thinking is
+  // disabled by omitting the parameter rather than by sending a disabled value.
   'groq-llama-4-scout-17b': {
     label: 'Groq Llama 4 Scout 17B (Free)',
     provider: 'groq',
@@ -75,8 +74,6 @@ const MODELS = {
     maxTokens: 30000,
     reasoning: { levels: ['low', 'medium', 'high'], default: 'medium', canDisable: true },
   },
-
-
 
   // ── Google Gemini ──────────────────────────────────────────
   // Gemini 2.5 Flash/Pro both shut down 2026-10-16
@@ -193,13 +190,12 @@ const MODELS = {
     model: 'codestral-2508',
     paid: false,
     maxTokens: 600000,
-    // 625,000 TPM at 2.08 RPS — rate is nowhere near binding, and the half
-    // rule would allow the full 128000 half-window. Deliberately held at 32000
-    // instead: this is a 256K model whose value is reading large codebases, and
-    // the reserve comes straight out of prompt space
-    // (hardCeiling 210,560 at 32000, but only 120,320 at 128000). A code answer
-    // that needs more than 32000 tokens is rare; a file that needs more than
-    // 120,320 of prompt is not.
+    // 625,000 TPM at 2.08 RPS — rate is nowhere near binding, so the window
+    // bound wins. Held at 32000 rather than the half-window the rate would
+    // allow: this model earns its keep reading large codebases, and every token
+    // reserved for output comes straight out of prompt space, since hardCeiling
+    // is (maxTokens - maxOutputTokens) * 0.94. A code answer needing more than
+    // 32000 tokens is rare; a file needing the prompt room is not.
     maxOutputTokens: 32000,
   },
   'mistral-glm-5-2': {
@@ -209,8 +205,8 @@ const MODELS = {
     model: 'zai-glm-5-2',
     paid: false,
     maxTokens: 1000000,
-    // Massive 1,000,000 token context window, designed for long-horizon agentic workflows.
-    // Setting maxOutputTokens to 64000 to reserve a large block for code answers.
+    // A 1M-token window aimed at long-horizon agentic work, so prompt space is
+    // not scarce the way it is on codestral — 64000 of output costs little here.
     maxOutputTokens: 64000,
   },
   'mistral-small': {
@@ -253,14 +249,13 @@ const MODELS = {
     paid: false,
     supportsVision: true,
     maxTokens: 256000,
-    // Note: mistral-medium-latest (3.5) only has 25,000 TPM free.
-    // maxOutputTokens must be dropped to 12500 (half of it) so that
-    // (Prompt + Output) fits within the strict 25,000 TPM limit.
+    // mistral-medium-latest (3.5) allows only 25,000 TPM free, so output is
+    // held at half of it — prompt + output has to fit inside the minute.
     maxOutputTokens: 12500,
     reasoning: {
       levels: ['high'],
       default: 'high',
-      enabledByDefault: false, // Defaulting to false to save on your strict 25k TPM budget
+      enabledByDefault: false, // thinking tokens eat the 25k TPM budget too fast
       canDisable: true,
     },
   },

@@ -70,6 +70,53 @@ export const clearCsrfToken = () => {
   }
 };
 
+// ── Auth token (JWT) fallback for cross-site cookie restrictions ─────
+// Only load-bearing when the browser refuses the auth cookie outright: the SPA
+// and the API sit on different *.vercel.app hosts, vercel.app is a public
+// suffix, so the cookie is third-party and some settings drop it even though
+// the server marks it Partitioned. Where the cookie does arrive it still wins
+// — see middleware/auth.js, which slides only a cookie session forward.
+//
+// Unlike the CSRF token above, this one IS a credential, so storing it gives up
+// the httpOnly protection the cookie had: any script on this origin can read
+// it. That is the deliberate price of working at all where the cookie does not.
+const AUTH_STORAGE_KEY = 'auth_token';
+
+export const getAuthToken = () => {
+  try {
+    return localStorage.getItem(AUTH_STORAGE_KEY) || sessionStorage.getItem(AUTH_STORAGE_KEY) || null;
+  } catch {
+    return null;
+  }
+};
+
+export const setAuthToken = (token, rememberMe = false) => {
+  if (!token) return;
+  // Clear both stores first. getAuthToken reads localStorage ahead of
+  // sessionStorage, so a "Remember me" token left by an earlier session would
+  // shadow the one being stored now — and the server trusts whichever Bearer
+  // header it is handed, so the stale one would win outright.
+  clearAuthToken();
+  try {
+    if (rememberMe) {
+      localStorage.setItem(AUTH_STORAGE_KEY, token);
+    } else {
+      sessionStorage.setItem(AUTH_STORAGE_KEY, token);
+    }
+  } catch {
+    /* private mode / quota */
+  }
+};
+
+export const clearAuthToken = () => {
+  try {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch {
+    /* nothing stored */
+  }
+};
+
 /**
  * Signals every other tab that the session is over.
  *

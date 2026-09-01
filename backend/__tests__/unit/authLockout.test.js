@@ -282,4 +282,38 @@ describe('login — lockout integration', () => {
     const mins = await checkAccountLock('bob');
     expect(mins).toBeGreaterThan(0);
   });
+
+  it('returns token, csrfToken and user info on successful login', async () => {
+    vi.spyOn(supabase, 'from').mockImplementation((table) => {
+      if (table === 'login_attempt_counters') return { delete: () => ({ eq: vi.fn().mockResolvedValue({ error: null }) }) };
+      return {
+        ...userLookupChain({
+          id: 'user-3',
+          username: 'charlie',
+          email: 'charlie@example.com',
+          password_hash: hashedPassword,
+          is_active: true,
+          locked_until: null,
+          role: 'user',
+          total_tokens: 1000,
+          used_tokens: 0,
+        }),
+        update: () => ({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+      };
+    });
+    const res = makeRes();
+    res.cookie = vi.fn();
+
+    await login({ body: { username: 'charlie', password: 'CorrectHorseBatteryStaple1!', rememberMe: true } }, res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      token: expect.any(String),
+      csrfToken: expect.any(String),
+      user: expect.objectContaining({
+        id: 'user-3',
+        username: 'charlie',
+        rememberMe: true,
+      }),
+    }));
+  });
 });

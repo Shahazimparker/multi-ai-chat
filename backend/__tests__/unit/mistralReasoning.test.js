@@ -179,15 +179,20 @@ describe('Mistral — output budget', () => {
 
   it('never lets one answer claim more than half a model free-tier minute', () => {
     // The rule the budgets are derived from: half the TPM for the answer, half
-    // left for the prompt that provoked it. Only mistral-small is actually
-    // bound by TPM; for the rest the half-window bound is tighter.
+    // left for the prompt that provoked it. mistral-small and mistral-medium
+    // are the two actually bound by TPM; for the rest the half-window bound is
+    // tighter.
+    //
+    // mistral-glm-5-2 is deliberately absent: its free-tier TPM is unconfirmed,
+    // and a number nobody checked would assert nothing while looking like it did.
     const FREE_TIER_TPM = {
       'mistral-small': 50000,
-      'mistral-medium': 356250,
+      // Medium 3.5 dropped to 25,000 TPM free, down from Medium 3.1's 356,250 --
+      // see the note beside maxOutputTokens in config/models.js.
+      'mistral-medium': 25000,
       'mistral-large': 250000,
       'ministral-14b': 937500,
       'codestral-2508': 625000,
-      'devstral-2512': 1000000,
     };
 
     for (const [id, tpm] of Object.entries(FREE_TIER_TPM)) {

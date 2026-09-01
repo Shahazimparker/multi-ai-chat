@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import api from '../config/api';
 import { useIdleLogout, markActivity, clearActivity, getLastActivity } from '../hooks/useIdleLogout';
-import { broadcastLogout, setCsrfToken, clearCsrfToken } from '../utils/sessionBroadcast';
+import { broadcastLogout, setCsrfToken, clearCsrfToken, setAuthToken, clearAuthToken } from '../utils/sessionBroadcast';
 
 // The backend slides the auth cookie forward whenever a request comes in, so a
 // user who is active but not triggering requests — reading a long answer, say —
@@ -30,12 +30,15 @@ export const AuthProvider = ({ children }) => {
 
   const login = useCallback(async (username, password, rememberMe = false) => {
     const res = await api.post('/auth/login', { username, password, rememberMe });
-    const { csrfToken, user: userData } = res.data;
+    const { token, csrfToken, user: userData } = res.data;
     // The server sets this same value as a cookie as well, and that cookie is
     // what request sites prefer. Keeping the body copy matters anyway: in
     // production the API is a different host, so its cookie is not visible to
     // document.cookie here and this is the only readable source.
     setCsrfToken(csrfToken);
+    // Same story one step further: where the browser drops the auth cookie
+    // outright, this body copy is the only credential the client will ever get.
+    setAuthToken(token, rememberMe);
     markActivity();
     setUser(userData);
     return userData;
@@ -45,11 +48,16 @@ export const AuthProvider = ({ children }) => {
   // callers behave exactly as before; the returned promise lets the idle path
   // wait for the cookie to actually be cleared before it reloads the page.
   const logout = useCallback((reason = 'manual') => {
-    // The token is dropped only once the request is on its way. Axios runs its
-    // request interceptor in a microtask, so clearing it on the line below
-    // would strip X-CSRF-Token off this very request — the server would reject
-    // the logout and the auth cookie would outlive it.
-    const request = api.post('/auth/logout').catch(() => {}).finally(clearCsrfToken);
+    // Both tokens are dropped only once the request is on its way. Axios runs
+    // its request interceptor in a microtask, so clearing them on the lines
+    // below would strip X-CSRF-Token and Authorization off this very request
+    // — the server would reject the logout and the auth cookie would outlive
+    // it. That bites hardest where the cookie is blocked, because there the
+    // Bearer header is the only credential the logout has.
+    const request = api.post('/auth/logout').catch(() => {}).finally(() => {
+      clearCsrfToken();
+      clearAuthToken();
+    });
     clearActivity();
     broadcastLogout(reason);
     setUser(null);

@@ -216,9 +216,10 @@ const login = async (req, res) => {
     // user's session_minutes and slides forward on each request from here on —
     // see middleware/auth.js. The CSRF token is returned in the body too so a
     // non-browser client can read it without parsing Set-Cookie.
-    const { csrfToken } = issueAuthCookie(res, user, rememberMe);
+    const { token, csrfToken } = issueAuthCookie(res, user, rememberMe);
 
     res.json({
+      token,
       csrfToken,
       user: {
         rememberMe: parseRememberMe(rememberMe),

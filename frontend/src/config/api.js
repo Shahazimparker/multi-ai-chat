@@ -4,6 +4,8 @@ import {
   listenForLogout,
   getCsrfToken,
   clearCsrfToken,
+  getAuthToken,
+  clearAuthToken,
 } from '../utils/sessionBroadcast';
 
 // Single source of truth for the backend origin. Exported because a few call
@@ -32,6 +34,8 @@ api.interceptors.request.use((config) => {
       delete config.headers['content-type'];
     }
   }
+  const token = getAuthToken();
+  if (token) config.headers['Authorization'] = `Bearer ${token}`;
   const csrfToken = getCsrfToken();
   if (csrfToken && ['post', 'put', 'delete', 'patch'].includes(config.method)) {
     config.headers['X-CSRF-Token'] = csrfToken;
@@ -83,6 +87,7 @@ api.interceptors.response.use(
       // instead of inheriting this session's deadline.
       localStorage.removeItem('last_activity');
       clearCsrfToken();
+      clearAuthToken();
       if (window.location.pathname !== '/login' && !isRedirecting) {
         isRedirecting = true;
         broadcastLogout('expired');

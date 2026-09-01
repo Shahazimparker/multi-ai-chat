@@ -67,9 +67,11 @@ const csrfProtection = (req, res, next) => {
   // attacker to ride on and nothing to protect.
   if (!hasAuthCredential(req)) return next();
 
-  // A Bearer caller is not a browser: it has no cookie jar for an attacker to
-  // exploit, so there is no cross-site request to forge. Requiring a cookie
-  // here would break API clients for no security gain.
+  // Authorization is not a CORS-safelisted header, so any request carrying one
+  // is preflighted and the origin allowlist turns an attacker away before it is
+  // ever sent. That — not "a Bearer caller is not a browser" — is what
+  // makes the bypass below safe, now that the SPA sends the header too as a
+  // fallback for browsers that drop the cross-site cookie.
   const isBearer = isBearerCaller(req);
   const cookieToken = getCookieValue(req.headers.cookie, CSRF_COOKIE_NAME);
 

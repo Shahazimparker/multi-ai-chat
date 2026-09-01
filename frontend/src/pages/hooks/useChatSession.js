@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { put as vercelBlobPut } from '@vercel/blob/client';
 import api, { API_BASE_URL } from '../../config/api';
 import { createSseParser } from '../../utils/sse';
-import { getCsrfToken } from '../../utils/sessionBroadcast';
+import { getCsrfToken, getAuthToken } from '../../utils/sessionBroadcast';
 
 // Names a conversation opened by its attachments. The typed message wins when
 // there is one — it is what the pipeline would have titled the topic anyway —
@@ -534,6 +534,8 @@ export const useChatSession = ({ refreshTokenStats }) => {
       }
 
       const headers = { 'Content-Type': 'application/json' };
+      const authToken = getAuthToken();
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
       const csrfToken = getCsrfToken();
       if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
       const response = await fetch(`${API_BASE_URL}/chat/stream`, {

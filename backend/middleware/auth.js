@@ -53,7 +53,11 @@ const createAuthMiddleware = ({ optional = false } = {}) => async (req, res, nex
     const authHeader = req.headers.authorization;
     const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
     const cookieToken = getCookieValue(req.headers.cookie, AUTH_COOKIE_NAME);
-    const token = bearerToken || cookieToken;
+    // Cookie first when both arrive. The SPA attaches a Bearer header as a
+    // fallback for browsers that drop the cross-site cookie, so a Bearer header
+    // no longer implies a non-browser caller — and verifying the client's
+    // stored copy over the cookie would skip the sliding refresh below.
+    const token = cookieToken || bearerToken;
     if (!token) return reject(401, 'No token provided');
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -82,10 +86,12 @@ const createAuthMiddleware = ({ optional = false } = {}) => async (req, res, nex
     req.rememberMe = parseRememberMe(decoded.rememberMe);
 
     // Sliding session: an active user should not be logged out mid-task just
-    // because a fixed clock started at login ran out. Only cookie-authenticated
-    // requests are refreshed — a Bearer caller holds its own token and would
-    // never see the new one.
-    if (!bearerToken && cookieToken) {
+    // because a fixed clock started at login ran out. Only requests carrying
+    // the cookie are refreshed — a Bearer-only caller holds its own token and
+    // would never see the new one. Gating this on the *absence* of a Bearer
+    // header would disable sliding sessions for every browser, now that the SPA
+    // sends one alongside the cookie.
+    if (cookieToken) {
       const csrfCookie = getCookieValue(req.headers.cookie, CSRF_COOKIE_NAME);
       const remember = parseRememberMe(decoded.rememberMe);
       const sessionSeconds = getSessionSeconds(user, remember);
